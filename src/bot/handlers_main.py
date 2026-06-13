@@ -28,7 +28,6 @@ from src.bot.tracking import TrackingMixin
 from src.bot.poll_manager import PollMixin
 from src.bot.commands.user_cmds import UserCommandsMixin
 from src.bot.commands.quiz_cmds import QuizCommandsMixin
-from src.bot.commands.leaderboard_cmds import LeaderboardMixin
 from src.bot.commands.admin_cmds import AdminCommandsMixin
 
 logger = logging.getLogger(__name__)
@@ -39,7 +38,6 @@ class TelegramQuizBot(
     TrackingMixin,
     UserCommandsMixin,
     QuizCommandsMixin,
-    LeaderboardMixin,
     AdminCommandsMixin,
 ):
 
@@ -143,8 +141,6 @@ class TelegramQuizBot(
             await self.cmd_help(update, context, edit_msg=edit_msg)
         elif screen == "achievements":
             await self.cmd_achievements(update, context, edit_msg=edit_msg)
-        elif screen == "leaderboard":
-            await self._show_leaderboard(update, context, mode="global", page=1, edit_msg=edit_msg)
         elif screen == "categories":
             await self.cmd_categories(update, context, edit_msg=edit_msg)
         elif screen == "info":
@@ -240,8 +236,7 @@ class TelegramQuizBot(
         kb = InlineKeyboardMarkup([
             [InlineKeyboardButton("🎓 Start Quiz",      callback_data="play_quiz"),
              InlineKeyboardButton("🎓 My Profile",        callback_data="my_profile")],
-            [InlineKeyboardButton("🎓 Leaderboard",     callback_data="leaderboard"),
-             InlineKeyboardButton("❓ Help",             callback_data="help")],
+            [InlineKeyboardButton("❓ Help",             callback_data="help")],
             [InlineKeyboardButton("🎓 Join CLAT Vision", url="https://t.me/CLAT_Vision")],
         ])
 
@@ -307,8 +302,6 @@ class TelegramQuizBot(
         app.add_handler(CommandHandler("stats",        self.cmd_stats))
         app.add_handler(CommandHandler("achievements", self.cmd_achievements))
         app.add_handler(CommandHandler("botstats",     self.cmd_botstats))
-        app.add_handler(CommandHandler("leaderboard", self.cmd_leaderboard))
-        app.add_handler(CommandHandler("lb",          self.cmd_leaderboard))
         app.add_handler(CommandHandler("categories",  self.cmd_categories))
         app.add_handler(CommandHandler("ping",        self.cmd_ping))
         app.add_handler(CommandHandler("info",        self.cmd_info))
@@ -378,7 +371,6 @@ class TelegramQuizBot(
                 BotCommand("stats",        "📈 Your detailed stats"),
                 BotCommand("achievements", "🏅 Badges & milestones"),
                 BotCommand("botstats",     "📊 Bot-wide statistics"),
-                BotCommand("leaderboard",  "🔱 Global leaderboard"),
                 BotCommand("categories",   "📚 Browse quiz categories"),
                 BotCommand("help",         "📖 Command center"),
                 BotCommand("start",        "🚀 Welcome screen"),
@@ -458,17 +450,6 @@ class TelegramQuizBot(
         except Exception:
             pass
 
-    def _get_user_rank_position(self, user_id: int) -> Optional[int]:
-        """Return global rank position (1-indexed) or None — always from DB."""
-        if self.db:
-            try:
-                info = self.db.get_user_rank_in_period(user_id, days=36500)
-                rank = info.get("rank", 0)
-                return rank if rank > 0 else None
-            except Exception:
-                pass
-        return None
-
     # ─── CALLBACK HANDLER ─────────────────────────────────────
 
     async def handle_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -490,46 +471,9 @@ class TelegramQuizBot(
             # Quiz sends a poll — do NOT edit the current message
             await self.cmd_quiz(update, context)
 
-        elif data == "leaderboard":
-            await self._show_leaderboard(update, context, mode="global", page=1,
-                                         edit_msg=query.message)
-
         elif data == "my_profile":
             if uid: self._nav_push(uid, "stats")
             await self.cmd_stats(update, context, edit_msg=query.message)
-
-        elif data == "lb_noop":
-            pass  # disabled nav button — already answered
-
-        elif data and data.startswith("lb_myrank_"):
-            parts = data.split("_")
-            mode  = parts[2] if len(parts) > 2 else "global"
-            if mode not in ("global", "weekly", "monthly"):
-                mode = "global"
-            await self._show_my_rank(update, context, mode=mode, edit_msg=query.message)
-
-        elif data and data.startswith("lbp_"):
-            parts = data.split("_")
-            mode  = parts[1] if len(parts) > 1 else "global"
-            try:
-                pg = int(parts[2]) if len(parts) > 2 else 1
-            except ValueError:
-                pg = 1
-            if mode not in ("global", "weekly", "monthly", "group"):
-                mode = "global"
-            await self._show_leaderboard(update, context, mode=mode, page=pg,
-                                         edit_msg=query.message)
-
-        # ── Legacy aliases (kept for old messages) ──
-        elif data == "lb_global":
-            await self._show_leaderboard(update, context, mode="global", page=1,
-                                         edit_msg=query.message)
-        elif data == "lb_weekly":
-            await self._show_leaderboard(update, context, mode="weekly", page=1,
-                                         edit_msg=query.message)
-        elif data == "lb_monthly":
-            await self._show_leaderboard(update, context, mode="monthly", page=1,
-                                         edit_msg=query.message)
 
         elif data == "achievements":
             if uid: self._nav_push(uid, "achievements")

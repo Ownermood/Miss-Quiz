@@ -24,7 +24,7 @@ RATE_LIMITS = {
     'medium': {
         'per_minute': 10,
         'per_hour': 50,
-        'commands': ['mystats', 'leaderboard', 'category', 'stats', 'status', 'myrank']
+        'commands': ['mystats', 'category', 'stats', 'status']
     },
     'light': {
         'per_minute': 15,

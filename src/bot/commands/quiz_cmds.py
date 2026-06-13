@@ -181,8 +181,7 @@ class QuizCommandsMixin(object):
         kb = InlineKeyboardMarkup([
             [InlineKeyboardButton("🎓 Play Quiz",      callback_data="play_quiz"),
              InlineKeyboardButton("🎓 My Profile",     callback_data="my_profile")],
-            [InlineKeyboardButton("🎓 Achievements",   callback_data="achievements"),
-             InlineKeyboardButton("🎓 Leaderboard",    callback_data="leaderboard")],
+            [InlineKeyboardButton("🎓 Achievements",   callback_data="achievements")],
             self._nav_row(back_screen="home"),
         ])
         await self._smart_edit(update, text, kb, edit_msg=edit_msg)
@@ -292,7 +291,7 @@ class QuizCommandsMixin(object):
 
         kb = InlineKeyboardMarkup([
             [InlineKeyboardButton("🎓 Play Quiz",     callback_data="play_quiz"),
-             InlineKeyboardButton("🎓 Leaderboard",   callback_data="leaderboard")],
+             InlineKeyboardButton("🎓 My Profile",    callback_data="my_profile")],
             self._nav_row(back_screen="home"),
         ])
         if edit_msg:

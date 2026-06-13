@@ -40,8 +40,7 @@ class UserCommandsMixin(object):
         kb = InlineKeyboardMarkup([
             [InlineKeyboardButton("🎓 Start Quiz",       callback_data="play_quiz"),
              InlineKeyboardButton("🎓 My Profile",         callback_data="my_profile")],
-            [InlineKeyboardButton("🎓 Leaderboard",      callback_data="leaderboard"),
-             InlineKeyboardButton("❓ Help",              callback_data="help")],
+            [InlineKeyboardButton("❓ Help",              callback_data="help")],
             [InlineKeyboardButton("🎓 Join CLAT Vision",  url="https://t.me/CLAT_Vision")],
         ])
 
@@ -96,12 +95,6 @@ class UserCommandsMixin(object):
             f"│  /achievements  ›  Badges &amp; milestones\n"
             f"╰──────────────────────────────────────────╯\n\n"
 
-            f"🏆  <b>𝐂𝐎𝐌𝐏𝐄𝐓𝐈𝐓𝐈𝐎𝐍</b>\n"
-            f"╭──────────────────────────────────────────╮\n"
-            f"│  /leaderboard  ›  Global rankings\n"
-            f"│  /lb                  ›  Quick shortcut\n"
-            f"╰──────────────────────────────────────────╯\n\n"
-
             f"🔧  <b>𝐒𝐘𝐒𝐓𝐄𝐌</b>\n"
             f"╭──────────────────────────────────────────╮\n"
             f"│  /ping    ›  Latency check\n"
@@ -136,7 +129,6 @@ class UserCommandsMixin(object):
 
         kb = InlineKeyboardMarkup([
             [InlineKeyboardButton("🎓 Play Quiz",   callback_data="play_quiz"),
-             InlineKeyboardButton("🎓 Leaderboard", callback_data="leaderboard"),
              InlineKeyboardButton("ℹ️ Bot Info",    callback_data="info")],
             self._nav_row(back_screen="home"),
         ])

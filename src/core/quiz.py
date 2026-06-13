@@ -51,9 +51,6 @@ class QuizManager:
 
         # Cache
         self._cached_questions       = None
-        self._cached_leaderboard     = None
-        self._leaderboard_cache_time = None
-        self._cache_duration         = timedelta(minutes=5)
 
         # Tracking
         self.recent_questions  = defaultdict(lambda: deque(maxlen=50))
@@ -234,8 +231,6 @@ class QuizManager:
         """Reload questions from MongoDB, fix cache."""
         try:
             self._cached_questions       = None
-            self._cached_leaderboard     = None
-            self._leaderboard_cache_time = None
             self.recent_questions.clear()
             self.last_question_time.clear()
             self.available_questions.clear()
@@ -355,70 +350,6 @@ class QuizManager:
                 "current_score": 0, "today_quizzes": 0, "week_quizzes": 0,
                 "month_quizzes": 0, "current_streak": 0, "longest_streak": 0,
             }
-
-    # ─── Leaderboard ─────────────────────────────────────────────────────────
-
-    def get_leaderboard(self, limit: int = 10) -> List[Dict]:
-        try:
-            now = datetime.now()
-            if (self._cached_leaderboard and self._leaderboard_cache_time
-                    and now - self._leaderboard_cache_time < self._cache_duration):
-                return self._cached_leaderboard[:limit]
-
-            entries = []
-            for uid, score in sorted(self.scores.items(), key=lambda x: x[1], reverse=True)[:limit]:
-                uid_str = str(uid)
-                s       = self.stats.get(uid_str, {})
-                total   = s.get("total_quizzes", 0)
-                acc     = round(score / total * 100, 1) if total > 0 else 0
-                entries.append({
-                    "user_id":        uid,
-                    "score":          score,
-                    "correct_answers": score,
-                    "total_attempts": total,
-                    "accuracy":       acc,
-                })
-
-            self._cached_leaderboard     = entries
-            self._leaderboard_cache_time = now
-            return entries
-        except Exception as e:
-            logger.error(f"get_leaderboard: {e}")
-            return []
-
-    def get_group_leaderboard(self, chat_id: int) -> Dict:
-        try:
-            gid       = str(chat_id)
-            entries   = []
-            total_att = 0
-            total_cor = 0
-
-            for uid_str, s in self.stats.items():
-                g = s.get("groups", {}).get(gid)
-                if not g:
-                    continue
-                t, c = g.get("total", 0), g.get("correct", 0)
-                if t == 0:
-                    continue
-                total_att += t
-                total_cor += c
-                entries.append({
-                    "user_id":         int(uid_str),
-                    "correct_answers": c,
-                    "total_attempts":  t,
-                    "accuracy":        round(c / t * 100, 1),
-                })
-
-            entries.sort(key=lambda x: x["correct_answers"], reverse=True)
-            group_acc = round(total_cor / total_att * 100, 1) if total_att else 0
-            return {
-                "leaderboard":    entries[:10],
-                "total_quizzes":  total_att,
-                "group_accuracy": group_acc,
-            }
-        except Exception as e:
-            logger.error(f"get_group_leaderboard: {e}")
-            return {"leaderboard": [], "total_quizzes": 0, "group_accuracy": 0}
 
     # ─── Compatibility shims (used by dev_commands) ──────────────────────────
 

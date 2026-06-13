@@ -20,10 +20,6 @@ def make_manager(questions=None):
     mgr.active_chats             = []
     mgr.stats                    = {}
     mgr._cached_questions        = None
-    mgr._cached_leaderboard      = None
-    mgr._leaderboard_cache_time  = None
-    from datetime import timedelta
-    mgr._cache_duration          = timedelta(minutes=5)
     from collections import defaultdict, deque
     mgr.recent_questions         = defaultdict(lambda: deque(maxlen=50))
     mgr.last_question_time       = defaultdict(dict)

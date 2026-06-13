@@ -57,7 +57,7 @@ class DatabaseManager:
             self.users_col.create_index([("last_seen", DESCENDING)])
             self.users_col.create_index([("last_activity", DESCENDING)])
             self.users_col.create_index([("total_answers", DESCENDING)])
-            # Compound index for leaderboard ranking query
+            # Compound index for ranking query
             self.users_col.create_index([
                 ("total_marks", DESCENDING),
                 ("correct_answers", DESCENDING),
@@ -66,7 +66,7 @@ class DatabaseManager:
             self.groups_col.create_index("chat_id", unique=True)
             self.groups_col.create_index([("last_active", DESCENDING)])
             self.poll_map_col.create_index("poll_id", unique=True)
-            # Compound indexes for time-based activity queries (critical for leaderboards)
+            # Compound indexes for time-based activity queries
             self.activities_col.create_index([("type", ASCENDING), ("timestamp", DESCENDING)])
             self.activities_col.create_index([("type", ASCENDING), ("is_correct", ASCENDING), ("timestamp", DESCENDING)])
             self.activities_col.create_index([("type", ASCENDING), ("user_id", ASCENDING), ("timestamp", DESCENDING)])
@@ -452,7 +452,7 @@ class DatabaseManager:
         except Exception as e:
             logger.error(f"_check_achievements error: {e}")
 
-    # Canonical leaderboard sort order
+    # Canonical sort order for ranking queries
     _LB_SORT = [
         ("total_marks",      DESCENDING),
         ("correct_answers",  DESCENDING),
@@ -484,52 +484,6 @@ class DatabaseManager:
         except Exception as e:
             logger.error(f"get_user_rank error: {e}")
             return {"global_rank": 0, "total_users": 0}
-
-    def get_neighbor_ranks(self, user_id: int) -> Dict:
-        """Returns the users ranked just above and below the given user."""
-        try:
-            user_doc = self.users_col.find_one({"user_id": user_id},
-                                               {"total_marks": 1}) or {}
-            marks = user_doc.get("total_marks", 0)
-            rank  = self.users_col.count_documents({"total_marks": {"$gt": marks}}) + 1
-
-            above = below = None
-            if rank > 1:
-                above = self.users_col.find_one(
-                    {"total_marks": {"$gt": marks}},
-                    {"user_id": 1, "name": 1, "username": 1, "total_marks": 1},
-                    sort=self._LB_SORT)
-            below_doc = list(
-                self.users_col.find(
-                    {"total_marks": {"$lt": marks}},
-                    {"user_id": 1, "name": 1, "username": 1, "total_marks": 1})
-                .sort(self._LB_SORT)
-                .limit(1))
-            if below_doc:
-                below = below_doc[0]
-            return {"rank": rank, "above": above, "below": below}
-        except Exception as e:
-            logger.error(f"get_neighbor_ranks error: {e}")
-            return {"rank": 0, "above": None, "below": None}
-
-    def get_leaderboard_page(self, mode: str = "global", limit: int = 10, offset: int = 0) -> List[Dict]:
-        """Return paginated leaderboard sorted by total_marks → correct_answers → quizzes_attempted → last_activity."""
-        try:
-            if mode in ("weekly", "monthly"):
-                days   = 7 if mode == "weekly" else 30
-                cutoff = (datetime.utcnow() - timedelta(days=days)).isoformat()
-                query  = {"last_activity": {"$gte": cutoff[:10]}}
-            else:
-                query = {}
-            return list(
-                self.users_col.find(query, {"_id": 0})
-                .sort(self._LB_SORT)
-                .skip(offset)
-                .limit(limit)
-            )
-        except Exception as e:
-            logger.error(f"get_leaderboard_page error: {e}")
-            return []
 
     def get_user_achievements(self, user_id: int) -> List[Dict]:
         """Returns the user's achievements list."""
@@ -1012,80 +966,3 @@ class DatabaseManager:
         except Exception as e:
             logger.error(f"get_user error: {e}")
             return None
-
-    def get_leaderboard_by_period(self, days: int, limit: int = 10) -> List[Dict]:
-        """Return top users from users_col sorted by correct_answers → quizzes_attempted → last_activity."""
-        try:
-            query = {}
-            if days < 36500:
-                cutoff = (datetime.utcnow() - timedelta(days=days)).strftime("%Y-%m-%d")
-                query  = {"last_activity": {"$gte": cutoff}}
-            sort = [
-                ("correct_answers",  DESCENDING),
-                ("quizzes_attempted", DESCENDING),
-                ("last_activity",    DESCENDING),
-            ]
-            docs = list(
-                self.users_col.find(query, {"_id": 0,
-                    "user_id": 1, "correct_answers": 1, "total_questions": 1,
-                    "quizzes_attempted": 1, "last_activity": 1})
-                .sort(sort)
-                .limit(limit)
-            )
-            results = []
-            for d in docs:
-                correct  = d.get("correct_answers", 0)
-                total_q  = d.get("total_questions", 0) or 0
-                acc      = round(correct / total_q * 100, 1) if total_q > 0 else 0
-                results.append({
-                    "user_id":         d["user_id"],
-                    "correct_answers": correct,
-                    "total_attempts":  d.get("quizzes_attempted", 0),
-                    "accuracy":        acc,
-                })
-            return results
-        except Exception as e:
-            logger.error(f"get_leaderboard_by_period error: {e}")
-            return []
-
-    def get_user_rank_in_period(self, user_id: int, days: int) -> Dict:
-        """Return {rank, correct, total, accuracy, above_correct} from users_col."""
-        try:
-            user_doc = self.users_col.find_one({"user_id": user_id},
-                {"correct_answers": 1, "total_questions": 1,
-                 "quizzes_attempted": 1, "last_activity": 1}) or {}
-
-            correct = user_doc.get("correct_answers", 0)
-            total_q = user_doc.get("total_questions", 0) or 0
-            quizzes = user_doc.get("quizzes_attempted", 0)
-            acc     = round(correct / total_q * 100, 1) if total_q > 0 else 0
-
-            if quizzes == 0:
-                return {"rank": 0, "correct": 0, "total": 0,
-                        "accuracy": 0, "above_correct": None}
-
-            query = {}
-            if days < 36500:
-                cutoff = (datetime.utcnow() - timedelta(days=days)).strftime("%Y-%m-%d")
-                query  = {"last_activity": {"$gte": cutoff}}
-
-            query["correct_answers"] = {"$gt": correct}
-            higher = self.users_col.count_documents(query)
-
-            above_doc = self.users_col.find_one(
-                {**query},
-                {"correct_answers": 1},
-                sort=[("correct_answers", ASCENDING)])
-            above_correct = above_doc.get("correct_answers") if above_doc else None
-
-            return {
-                "rank":          higher + 1,
-                "correct":       correct,
-                "total":         quizzes,
-                "accuracy":      acc,
-                "above_correct": above_correct,
-            }
-        except Exception as e:
-            logger.error(f"get_user_rank_in_period error: {e}")
-            return {"rank": 0, "correct": 0, "total": 0,
-                    "accuracy": 0, "above_correct": None}
