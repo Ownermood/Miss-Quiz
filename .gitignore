@@ -52,6 +52,8 @@ data/bot.lock
 # Logs
 *.log
 .pytest_cache/
+.coverage
+htmlcov/
 
 # Secrets
 .secrets
