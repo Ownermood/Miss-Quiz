@@ -484,10 +484,6 @@ class TelegramQuizBot(
             if uid: self._nav_push(uid, "info")
             await self.cmd_info(update, context, edit_msg=query.message)
 
-        elif data == "back_start":
-            if uid: self._nav_clear(uid)
-            await self.cmd_start(update, context, edit_msg=query.message)
-
         elif data == "nav_home":
             if uid: self._nav_clear(uid)
             await self.cmd_start(update, context, edit_msg=query.message)
