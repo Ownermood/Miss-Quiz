@@ -84,38 +84,51 @@ class UI:
         return medals.get(pos, f"  {pos}.")
 
     # ── Category system ───────────────────────────────────────
-    CATS = {
-        "general knowledge": ("🌍", "General Knowledge"),
-        "current affairs":   ("📰", "Current Affairs"),
-        "static gk":         ("📚", "Static GK"),
-        "science":           ("🔬", "Science & Technology"),
-        "technology":        ("🔬", "Science & Technology"),
-        "history":           ("📜", "History"),
-        "geography":         ("🗺️", "Geography"),
-        "economics":         ("💰", "Economics"),
-        "political science": ("🏛️", "Political Science"),
-        "constitution & law":("⚖️", "Constitution & Law"),
-        "constitution":      ("📖", "Constitution"),
-        "arts":              ("🎭", "Arts & Literature"),
-        "literature":        ("🎭", "Arts & Literature"),
-        "sports":            ("🎮", "Sports & Games"),
-        "games":             ("🎮", "Sports & Games"),
-        "legal":             ("⚖️", "Legal Reasoning"),
-        "english":           ("📖", "English"),
-        "gk":                ("🌍", "General Knowledge"),
-        "current":           ("📰", "Current Affairs"),
-        "polity":            ("🏛️", "Polity"),
-        "math":              ("🔢", "Mathematics"),
-        "reasoning":         ("🧠", "Logical Reasoning"),
-        "default":           ("📚", "General"),
-    }
+
+    # Single source of truth for all quiz categories.
+    # Import this list everywhere categories need to be listed or displayed.
+    QUIZ_CATEGORIES = [
+        ("General Knowledge",    "🌍"),
+        ("Current Affairs",      "📰"),
+        ("Static GK",            "📚"),
+        ("Science & Technology", "🔬"),
+        ("History",              "📜"),
+        ("Geography",            "🗺️"),
+        ("Economics",            "💰"),
+        ("Political Science",    "🏛️"),
+        ("Constitution",         "📖"),
+        ("Constitution & Law",   "⚖️"),
+        ("Arts & Literature",    "🎭"),
+        ("Sports & Games",       "🎮"),
+    ]
+
+    # Lookup dict for cat_emoji() — built from QUIZ_CATEGORIES plus
+    # common shorthand aliases so old question data still resolves correctly.
+    CATS: dict = {name.lower(): (emoji, name) for name, emoji in QUIZ_CATEGORIES}
+    CATS.update({
+        # shorthand aliases kept for backwards compatibility with stored data
+        "science":    ("🔬", "Science & Technology"),
+        "technology": ("🔬", "Science & Technology"),
+        "arts":       ("🎭", "Arts & Literature"),
+        "literature": ("🎭", "Arts & Literature"),
+        "sports":     ("🎮", "Sports & Games"),
+        "games":      ("🎮", "Sports & Games"),
+        "gk":         ("🌍", "General Knowledge"),
+        "current":    ("📰", "Current Affairs"),
+        "polity":     ("🏛️", "Political Science"),
+        "history":    ("📜", "History"),
+        "geography":  ("🗺️", "Geography"),
+        "economics":  ("💰", "Economics"),
+        "default":    ("📚", "General"),
+    })
 
     @staticmethod
     def cat_emoji(cat: str) -> str:
         cat_lower = (cat or "").lower()
-        # Try exact match first, then substring (longer keys match before shorter)
+        # Exact match first, then substring (prevents "constitution" stealing
+        # the match from "constitution & law").
         for k, (emoji, _) in UI.CATS.items():
-            if k == "default":
+            if k == "default" or k in cat_lower is False:
                 continue
             if cat_lower == k:
                 return emoji

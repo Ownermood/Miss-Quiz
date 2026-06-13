@@ -14,6 +14,8 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 from telegram.constants import ParseMode
 
+from src.bot.ui import UI
+
 logger = logging.getLogger(__name__)
 
 
@@ -320,7 +322,9 @@ Example:
             if category == "none":
                 category = None
             else:
-                category = category.replace("_", " ")
+                # Reverse the encoding applied in _show_category_selector:
+                # spaces → underscores, & → "and"
+                category = category.replace("_", " ").replace(" and ", " & ")
 
             if context.user_data is not None:
                 quiz_data = context.user_data.get(f'editing_quiz_{quiz_id}')
@@ -344,15 +348,13 @@ Example:
             await self._save_quiz_changes(update, context, quiz_id)
 
     async def _show_category_selector(self, update: Update, context: ContextTypes.DEFAULT_TYPE, quiz_id: int) -> None:
-        """Show category selection keyboard."""
-        categories = ["General Knowledge", "Science", "History", "Geography", "Sports",
-                      "Entertainment", "Technology", "Mathematics", "Literature", "Art"]
-
+        """Show category selection keyboard using the canonical QUIZ_CATEGORIES list."""
         keyboard = []
         row = []
-        for cat in categories:
-            cat_key = cat.replace(" ", "_")
-            row.append(InlineKeyboardButton(cat, callback_data=f"edit_quiz_set_category_{quiz_id}_{cat_key}"))
+        for name, emoji in UI.QUIZ_CATEGORIES:
+            cat_key = name.replace(" ", "_").replace("&", "and")
+            label = f"{emoji}  {name}"
+            row.append(InlineKeyboardButton(label, callback_data=f"edit_quiz_set_category_{quiz_id}_{cat_key}"))
             if len(row) == 2:
                 keyboard.append(row)
                 row = []

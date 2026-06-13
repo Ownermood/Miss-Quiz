@@ -137,53 +137,20 @@ class UserCommandsMixin(object):
 
     async def cmd_categories(self, update: Update, context: ContextTypes.DEFAULT_TYPE,
                               edit_msg=None):
-        # Live category list + question counts straight from the database
-        cats = []
-        if self.db:
-            cats = self.db.get_category_counts()
-        if not cats and self.quiz_manager:
-            counts: dict = {}
-            for q in self.quiz_manager.questions:
-                c = q.get("category") or "General"
-                counts[c] = counts.get(c, 0) + 1
-            cats = [{"_id": c, "count": n}
-                    for c, n in sorted(counts.items(), key=lambda x: -x[1])]
-
-        total_q = sum(c.get("count", 0) for c in cats)
-        LINE = "━" * 38
-
-        if cats:
-            cat_lines = ""
-            for c in cats:
-                name  = (c.get("_id") or "General")
-                safe  = name.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-                emoji = UI.cat_emoji(name)
-                count = c.get("count", 0)
-                cat_lines += f"│  {emoji}  {safe}  ›  <b>{count:,}</b>\n"
-
-            text = (
-                f"📚  <b>𝐕𝐈𝐄𝐖  𝐂𝐀𝐓𝐄𝐆𝐎𝐑𝐈𝐄𝐒</b>\n"
-                f"{LINE}\n\n"
-                f"📑  <b>𝐀𝐕𝐀𝐈𝐋𝐀𝐁𝐋𝐄  𝐐𝐔𝐈𝐙  𝐂𝐀𝐓𝐄𝐆𝐎𝐑𝐈𝐄𝐒</b>\n"
-                f"╭──────────────────────────────────────╮\n"
-                f"{cat_lines}"
-                f"│\n"
-                f"│  📊  Total Questions  ›  <b>{total_q:,}</b>\n"
-                f"╰──────────────────────────────────────╯\n\n"
-                f"{LINE}\n"
-                f"🎯  Stay tuned!  More quizzes coming soon!\n"
-                f"🛠  Use <code>/quiz &lt;category&gt;</code> to play a topic!\n"
-                f"{LINE}"
-            )
-        else:
-            text = (
-                f"📚  <b>𝐕𝐈𝐄𝐖  𝐂𝐀𝐓𝐄𝐆𝐎𝐑𝐈𝐄𝐒</b>\n"
-                f"{LINE}\n\n"
-                f"📭  No categories yet — question bank is empty.\n\n"
-                f"🛠  Use /addquiz or /importquiz to add questions.\n"
-                f"{LINE}"
-            )
-
+        DIV = "═" * 32
+        cat_lines = "\n".join(
+            f"•  {name}  {emoji}" for name, emoji in UI.QUIZ_CATEGORIES
+        )
+        text = (
+            f"📚  <b>𝗩𝗜𝗘𝗪  𝗖𝗔𝗧𝗘𝗚𝗢𝗥𝗜𝗘𝗦</b>\n"
+            f"{DIV}\n\n"
+            f"📑  <b>𝗔𝗩𝗔𝗜𝗟𝗔𝗕𝗟𝗘  𝗤𝗨𝗜𝗭  𝗖𝗔𝗧𝗘𝗚𝗢𝗥𝗜𝗘𝗦</b>\n\n"
+            f"{cat_lines}\n\n"
+            f"{DIV}\n"
+            f"🎯  Stay tuned!  More quizzes coming soon!\n"
+            f"🛠  Need help?  Use /help for more commands!\n"
+            f"{DIV}"
+        )
         kb = InlineKeyboardMarkup([
             [InlineKeyboardButton("🎓 Start Quiz", callback_data="play_quiz"),
              InlineKeyboardButton("🎓 Commands",   callback_data="help")],

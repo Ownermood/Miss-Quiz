@@ -365,7 +365,7 @@ def _make(question: str, options: List[str], correct: int) -> Dict:
         "question":       question,
         "options":        [str(o).strip() for o in options],
         "correct_answer": correct,
-        "category":       "General",
+        "category":       "General Knowledge",
     }
 
 
@@ -374,38 +374,62 @@ def _make(question: str, options: List[str], correct: int) -> Dict:
 # ══════════════════════════════════════════════════════════════════════════
 
 _CAT_KW = {
-    "Legal Reasoning": [
-        "article", "constitution", "ipc", "crpc", "act", "court", "supreme",
-        "amendment", "fundamental right", "directive", "habeas", "mandamus",
+    "Constitution & Law": [
+        "ipc", "crpc", "act", "court", "supreme", "amendment",
+        "fundamental right", "directive", "habeas", "mandamus",
         "writ", "bail", "cognizable", "tort", "contract", "negligence",
-        "liability", "section", "judgement", "decree",
+        "liability", "section", "judgement", "decree", "law", "legal",
+    ],
+    "Constitution": [
+        "article", "constitution", "schedule", "preamble", "citizenship",
+        "fundamental duty", "dpsp", "lok sabha", "rajya sabha", "parliament",
     ],
     "Current Affairs": [
         "recently", "2024", "2025", "2026", "latest", "appointed", "elected",
         "inaugurated", "launched", "scheme", "mission", "prime minister",
         "president", "government",
     ],
-    "English": [
-        "synonym", "antonym", "grammar", "passage", "comprehension", "sentence",
-        "phrase", "idiom", "verb", "noun", "adjective", "tense", "vocabulary",
-        "word", "meaning", "spelling",
-    ],
-    "Logical Reasoning": [
-        "series", "pattern", "sequence", "analogy", "syllogism", "conclusion",
-        "inference", "assumption", "assertion", "coding", "blood relation",
-        "direction", "ranking",
-    ],
-    "GK": [
-        "capital", "country", "state", "river", "mountain", "ocean", "planet",
-        "invention", "discovered", "largest", "smallest", "national", "award",
+    "Political Science": [
+        "parliament", "governor", "election", "vote", "panchayat", "federal",
+        "judicial", "executive", "legislative", "polity", "democracy",
+        "republic", "cabinet", "ministry",
     ],
     "History": [
         "ancient", "medieval", "mughal", "british", "independence", "1947",
         "freedom fighter", "battle", "empire", "dynasty", "revolt", "treaty",
+        "colonial", "partition",
     ],
-    "Polity": [
-        "parliament", "rajya sabha", "lok sabha", "governor", "election",
-        "vote", "panchayat", "federal", "judicial", "executive", "legislative",
+    "Geography": [
+        "capital", "country", "state", "river", "mountain", "ocean",
+        "latitude", "longitude", "peninsula", "plateau", "desert", "island",
+        "climate", "soil", "forest",
+    ],
+    "Science & Technology": [
+        "planet", "invention", "discovered", "atom", "cell", "element",
+        "chemical", "formula", "biology", "physics", "chemistry", "orbit",
+        "satellite", "dna", "enzyme",
+    ],
+    "Economics": [
+        "gdp", "inflation", "budget", "tax", "revenue", "fiscal", "monetary",
+        "rbi", "bank", "interest rate", "market", "demand", "supply",
+        "poverty", "unemployment",
+    ],
+    "General Knowledge": [
+        "largest", "smallest", "national", "award", "capital of", "founded",
+        "headquarter", "who is", "which country", "first woman", "first man",
+    ],
+    "Static GK": [
+        "emblem", "anthem", "symbol", "flag", "dance", "festival", "language",
+        "bird", "animal", "flower", "sport", "currency", "slogan",
+    ],
+    "Arts & Literature": [
+        "author", "book", "novel", "poem", "poet", "literature", "music",
+        "dance", "painting", "sculpture", "art", "theatre", "cinema",
+    ],
+    "Sports & Games": [
+        "cricket", "football", "tennis", "hockey", "badminton", "chess",
+        "olympics", "world cup", "trophy", "player", "stadium", "medal",
+        "tournament", "championship",
     ],
 }
 
