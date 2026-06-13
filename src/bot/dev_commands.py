@@ -1509,7 +1509,7 @@ class DeveloperCommands:
                 self.db.save_broadcast({
                     "broadcast_id":  broadcast_id,
                     "user_id":       update.effective_user.id,
-                    "messages":      sent_messages,
+                    "messages":      {str(k): v for k, v in sent_messages.items()},
                     "admin_id":      update.effective_user.id,
                     "message_text":  message_text,
                     "total_targets": total_targets,
@@ -1571,7 +1571,10 @@ class DeveloperCommands:
                 )
             logger.error(f"Error in broadcast_confirm: {e}", exc_info=True)
             if update.message:
-                reply = await update.message.reply_text("❌ Error sending broadcast")
+                reply = await update.message.reply_text(
+                    f"❌ Error sending broadcast\n\n<code>{html.escape(str(e)[:300])}</code>",
+                    parse_mode=ParseMode.HTML,
+                )
                 await self.auto_clean_message(update.message, reply)
     
     async def delbroadcast(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
