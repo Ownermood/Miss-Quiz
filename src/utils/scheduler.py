@@ -1,10 +1,13 @@
 """
-Auto Quiz Scheduler — sends a new quiz every 30 minutes,
-deletes the previous one. Persists poll IDs in MongoDB for restart safety.
+Auto Quiz Scheduler — delivers a new quiz to every registered group every 30 minutes.
+No quiz timer: polls stay open until replaced by the next delivery cycle.
+Deletes the previous quiz before posting the new one.
+Persists full state in MongoDB so delivery resumes correctly after restarts.
 """
 
 import logging
 import asyncio
+from datetime import datetime
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 logger = logging.getLogger(__name__)
@@ -18,34 +21,55 @@ class AutoQuizScheduler:
         self.db           = db_manager
         self.interval     = interval_minutes
         self.scheduler    = AsyncIOScheduler()
-        self.last_poll_ids: dict = {}  # chat_id -> message_id (in-memory cache)
-        self._load_persisted_poll_ids()
+        # In-memory cache: chat_id -> {message_id, quiz_id, poll_id, sent_time}
+        self._active_quiz: dict = {}
+        self._load_persisted_state()
 
-    def _load_persisted_poll_ids(self):
-        """Load persisted auto-quiz poll IDs from MongoDB on startup."""
+    # ── Persistence ───────────────────────────────────────────────────────────
+
+    def _load_persisted_state(self):
+        """Load per-group active quiz state from MongoDB on startup."""
         if not self.db:
             return
         try:
-            docs = list(self.db.db["auto_quiz_state"].find({}, {"_id": 0}))
+            docs = self.db.get_all_active_quiz_states()
             for doc in docs:
-                self.last_poll_ids[doc["chat_id"]] = doc["message_id"]
+                chat_id = doc.get("chat_id")
+                if chat_id:
+                    self._active_quiz[chat_id] = {
+                        "message_id": doc.get("message_id"),
+                        "quiz_id":    doc.get("quiz_id"),
+                        "poll_id":    doc.get("poll_id"),
+                        "sent_time":  doc.get("sent_time"),
+                    }
             if docs:
-                logger.info(f"Loaded {len(docs)} persisted auto-quiz poll IDs")
+                logger.info(f"[SCHEDULER] Restored state for {len(docs)} groups on startup")
         except Exception as e:
-            logger.warning(f"Could not load persisted poll IDs: {e}")
+            logger.warning(f"[SCHEDULER] Could not load persisted state: {e}")
 
-    def _persist_poll_id(self, chat_id: int, message_id: int):
-        """Save auto-quiz poll ID to MongoDB for restart persistence."""
-        if not self.db:
-            return
-        try:
-            self.db.db["auto_quiz_state"].update_one(
-                {"chat_id": chat_id},
-                {"$set": {"chat_id": chat_id, "message_id": message_id}},
-                upsert=True
+    def _save_active_quiz(self, chat_id: int, message_id: int,
+                          quiz_id=None, poll_id: str = None):
+        state = {
+            "message_id": message_id,
+            "quiz_id":    quiz_id,
+            "poll_id":    poll_id,
+            "sent_time":  datetime.utcnow().isoformat(),
+        }
+        self._active_quiz[chat_id] = state
+        if self.db:
+            self.db.save_active_quiz(
+                chat_id=chat_id,
+                message_id=message_id,
+                quiz_id=quiz_id,
+                poll_id=poll_id,
             )
-        except Exception as e:
-            logger.warning(f"Could not persist poll ID for {chat_id}: {e}")
+
+    def _clear_active_quiz(self, chat_id: int):
+        self._active_quiz.pop(chat_id, None)
+        if self.db:
+            self.db.clear_active_quiz(chat_id)
+
+    # ── Scheduler lifecycle ───────────────────────────────────────────────────
 
     def start(self):
         self.scheduler.add_job(
@@ -56,39 +80,82 @@ class AutoQuizScheduler:
             replace_existing=True,
         )
         self.scheduler.start()
-        logger.info(f"✅ AutoQuizScheduler started — interval: {self.interval} min")
+        logger.info(f"[SCHEDULER] Started — interval: {self.interval} min")
 
     def stop(self):
         self.scheduler.shutdown(wait=False)
-        logger.info("AutoQuizScheduler stopped")
+        logger.info("[SCHEDULER] Stopped")
+
+    # ── Cleanup ───────────────────────────────────────────────────────────────
+
+    async def _delete_previous_quiz(self, chat_id: int):
+        """Delete the previously sent quiz poll for a group. Non-fatal."""
+        state  = self._active_quiz.get(chat_id, {})
+        msg_id = state.get("message_id")
+        if not msg_id:
+            return
+        try:
+            await self.bot.application.bot.delete_message(
+                chat_id=chat_id, message_id=msg_id)
+            logger.info(
+                f"[SCHEDULER] Cleaned up previous quiz "
+                f"msg_id={msg_id} in chat {chat_id}"
+            )
+        except Exception as e:
+            logger.warning(
+                f"[SCHEDULER] Could not delete previous quiz "
+                f"msg_id={msg_id} in chat {chat_id}: {e}"
+            )
+
+    async def _mark_group_inactive(self, chat_id: int):
+        """Flag a group as inactive when the bot is blocked or removed."""
+        if self.db:
+            try:
+                self.db.groups_col.update_one(
+                    {"chat_id": chat_id},
+                    {"$set": {"active_status": "inactive", "bot_blocked": True,
+                              "bot_blocked_at": datetime.utcnow().isoformat()}}
+                )
+                logger.info(f"[SCHEDULER] Marked group {chat_id} as inactive")
+            except Exception as e:
+                logger.warning(
+                    f"[SCHEDULER] Could not update inactive status "
+                    f"for {chat_id}: {e}"
+                )
+
+    # ── Delivery ──────────────────────────────────────────────────────────────
 
     async def _send_auto_quiz(self):
         if self.db:
             groups = self.db.get_all_groups()
-            chats = [g.get("chat_id") for g in groups if g.get("chat_id")]
+            chats = [
+                g["chat_id"] for g in groups
+                if g.get("chat_id")
+                and g.get("active_status") != "inactive"
+            ]
         else:
             chats = list(self.quiz_manager.active_chats)
+
         if not chats:
-            logger.info("No active groups — skipping auto quiz")
+            logger.info("[SCHEDULER] No active groups — skipping delivery cycle")
             return
 
+        logger.info(f"[SCHEDULER] Starting delivery cycle for {len(chats)} groups")
+        sent = failed = skipped = 0
+
+        from telegram import Poll
         for chat_id in chats:
             try:
                 question = self.quiz_manager.get_random_question(chat_id=chat_id)
                 if not question:
-                    logger.warning(f"No questions available for auto quiz in {chat_id}")
+                    logger.warning(
+                        f"[SCHEDULER] No questions available for {chat_id} — skipping"
+                    )
+                    skipped += 1
                     continue
 
-                # Delete the previous auto-quiz poll
-                old_msg_id = self.last_poll_ids.get(chat_id)
-                if old_msg_id:
-                    try:
-                        await self.bot.application.bot.delete_message(
-                            chat_id=chat_id,
-                            message_id=old_msg_id
-                        )
-                    except Exception as e:
-                        logger.warning(f"Could not delete old auto-quiz for {chat_id}: {e}")
+                # Remove previous quiz before posting the new one
+                await self._delete_previous_quiz(chat_id)
 
                 options     = question.get("options", [])
                 correct_idx = question.get("correct_answer", 0)
@@ -96,18 +163,27 @@ class AutoQuizScheduler:
                 q_id        = question.get("id")
                 explanation = f"✅ {options[correct_idx]}\n📚 {category}  ·  🆔 Q#{q_id}"
 
-                from telegram import Poll
                 msg = await self.bot.application.bot.send_poll(
-                    chat_id          = chat_id,
-                    question         = question.get("question", "Quiz Question"),
-                    options          = options,
-                    type             = Poll.QUIZ,
-                    correct_option_id= correct_idx,
-                    explanation      = explanation[:200],
-                    is_anonymous     = False,
+                    chat_id           = chat_id,
+                    question          = question.get("question", "Quiz Question"),
+                    options           = options,
+                    type              = Poll.QUIZ,
+                    correct_option_id = correct_idx,
+                    explanation       = explanation[:200],
+                    is_anonymous      = False,
                 )
-                self.last_poll_ids[chat_id] = msg.message_id
-                self._persist_poll_id(chat_id, msg.message_id)
+
+                poll_id_str = str(msg.poll.id)
+
+                # Persist active quiz state
+                self._save_active_quiz(
+                    chat_id=chat_id,
+                    message_id=msg.message_id,
+                    quiz_id=q_id,
+                    poll_id=poll_id_str,
+                )
+
+                # Persist poll mapping for answer tracking
                 poll_entry = {
                     "chat_id":           chat_id,
                     "correct_option_id": correct_idx,
@@ -119,15 +195,38 @@ class AutoQuizScheduler:
                 if self.db and q_id:
                     try:
                         self.db.save_poll_mapping(
-                            str(msg.poll.id), q_id, poll_data=poll_entry)
+                            poll_id_str, q_id, poll_data=poll_entry)
                     except Exception:
                         pass
-                # Also update runtime bot_data for immediate poll answer handling
                 try:
-                    self.bot.application.bot_data[f"poll_{msg.poll.id}"] = poll_entry
+                    self.bot.application.bot_data[f"poll_{poll_id_str}"] = poll_entry
                 except Exception:
                     pass
-                logger.info(f"Auto quiz sent to {chat_id} — msg_id: {msg.message_id}")
+
+                logger.info(
+                    f"[SCHEDULER] Delivered to {chat_id} — "
+                    f"msg_id={msg.message_id}  Q#{q_id}  cat={category}"
+                )
+                sent += 1
 
             except Exception as e:
-                logger.error(f"Auto quiz failed for {chat_id}: {e}")
+                err = str(e)
+                if any(kw in err for kw in ("Forbidden", "bot was blocked",
+                                             "bot was kicked", "chat not found",
+                                             "have no rights")):
+                    logger.warning(
+                        f"[SCHEDULER] Bot blocked/removed from {chat_id} "
+                        f"— marking inactive. Error: {err}"
+                    )
+                    await self._mark_group_inactive(chat_id)
+                    self._clear_active_quiz(chat_id)
+                else:
+                    logger.error(
+                        f"[SCHEDULER] Failed to deliver to {chat_id}: {e}"
+                    )
+                failed += 1
+
+        logger.info(
+            f"[SCHEDULER] Delivery cycle complete — "
+            f"sent={sent}  failed={failed}  skipped={skipped}"
+        )

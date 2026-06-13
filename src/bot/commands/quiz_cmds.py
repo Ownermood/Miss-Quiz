@@ -63,7 +63,6 @@ class QuizCommandsMixin(object):
             type              = Poll.QUIZ,
             correct_option_id = correct_idx,
             is_anonymous      = False,
-            open_period       = 30,
             explanation       = (
                 f"✅ {options[correct_idx]}\n"
                 f"📚 {cat}  ·  🆔 Q#{q_id}"

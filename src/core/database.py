@@ -34,13 +34,14 @@ class DatabaseManager:
         self.client.admin.command('ping')
         self.db = self.client[db_name]
 
-        self.questions_col  = self.db["questions"]
-        self.users_col      = self.db["users"]
-        self.groups_col     = self.db["groups"]
-        self.broadcasts_col = self.db["broadcasts"]
-        self.activities_col = self.db["activities"]
-        self.developers_col = self.db["developers"]
-        self.poll_map_col   = self.db["poll_map"]
+        self.questions_col       = self.db["questions"]
+        self.users_col           = self.db["users"]
+        self.groups_col          = self.db["groups"]
+        self.broadcasts_col      = self.db["broadcasts"]
+        self.activities_col      = self.db["activities"]
+        self.developers_col      = self.db["developers"]
+        self.poll_map_col        = self.db["poll_map"]
+        self.auto_quiz_state_col = self.db["auto_quiz_state"]
 
         self._ensure_indexes()
         logger.info(f"✅ MongoDB connected: {url} / db={db_name}")
@@ -64,6 +65,7 @@ class DatabaseManager:
             ])
             self.groups_col.create_index("chat_id", unique=True)
             self.groups_col.create_index([("last_active", DESCENDING)])
+            self.auto_quiz_state_col.create_index("chat_id", unique=True)
             self.poll_map_col.create_index("poll_id", unique=True)
             # Compound indexes for time-based activity queries
             self.activities_col.create_index([("type", ASCENDING), ("timestamp", DESCENDING)])
@@ -698,6 +700,52 @@ class DatabaseManager:
         except Exception as e:
             logger.error(f"get_analytics_data error: {e}")
             return {}
+
+    # ── Auto Quiz State ───────────────────────────────────────────────────────
+
+    def get_active_quiz_state(self, chat_id: int) -> Optional[Dict]:
+        """Return the active quiz state document for a group, or None."""
+        try:
+            return self.auto_quiz_state_col.find_one({"chat_id": chat_id}, {"_id": 0})
+        except Exception as e:
+            logger.error(f"get_active_quiz_state error: {e}")
+            return None
+
+    def get_all_active_quiz_states(self) -> List[Dict]:
+        """Return active quiz state for all groups (used on startup)."""
+        try:
+            return list(self.auto_quiz_state_col.find({}, {"_id": 0}))
+        except Exception as e:
+            logger.error(f"get_all_active_quiz_states error: {e}")
+            return []
+
+    def save_active_quiz(self, chat_id: int, message_id: int,
+                         quiz_id: int = None, poll_id: str = None) -> None:
+        """Persist the active quiz state for a group."""
+        try:
+            doc: Dict = {
+                "chat_id":    chat_id,
+                "message_id": message_id,
+                "sent_time":  datetime.utcnow().isoformat(),
+            }
+            if quiz_id is not None:
+                doc["quiz_id"] = quiz_id
+            if poll_id is not None:
+                doc["poll_id"] = poll_id
+            self.auto_quiz_state_col.update_one(
+                {"chat_id": chat_id},
+                {"$set": doc},
+                upsert=True,
+            )
+        except Exception as e:
+            logger.error(f"save_active_quiz error: {e}")
+
+    def clear_active_quiz(self, chat_id: int) -> None:
+        """Remove the active quiz state for a group (bot blocked / group inactive)."""
+        try:
+            self.auto_quiz_state_col.delete_one({"chat_id": chat_id})
+        except Exception as e:
+            logger.error(f"clear_active_quiz error: {e}")
 
     # ── Utility ───────────────────────────────────────────────────────────────
 
