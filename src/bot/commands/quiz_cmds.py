@@ -57,8 +57,8 @@ class QuizCommandsMixin(object):
         cat_emoji = UI.cat_emoji(cat)
         q_id      = question.get("id")
 
-        # ── Delete previous quiz in this group before sending ────
-        if chat.type in ("group", "supergroup") and self.db:
+        # ── Delete previous quiz in this chat before sending ─────
+        if self.db:
             try:
                 prev = self.db.get_active_quiz_state(track_id)
                 if prev and prev.get("message_id"):
@@ -109,8 +109,8 @@ class QuizCommandsMixin(object):
             self._pickle_save(f"poll_{poll_id}", poll_entry)
             self._poll_stats["stored"] += 1
 
-            # Track active quiz per group so next /quiz (or scheduler) can clean it up
-            if chat.type in ("group", "supergroup") and self.db:
+            # Track active quiz so next /quiz call can clean it up (works in DMs and groups)
+            if self.db:
                 try:
                     self.db.save_active_quiz(
                         chat_id=track_id,
