@@ -5,7 +5,7 @@ import logging
 import asyncio
 import threading
 from datetime import datetime
-from flask import Flask, render_template, jsonify, request, Response
+from flask import Flask, render_template, jsonify, request
 from telegram import Update
 
 logging.basicConfig(level=logging.INFO)
@@ -254,20 +254,6 @@ def api_delete_question(qid):
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
-@app.route('/api/metrics')
-def api_metrics():
-    try:
-        if db_manager:
-            data = db_manager.get_metrics_summary()
-            if quiz_manager:
-                data['total_questions'] = len(quiz_manager.questions)
-            return jsonify(data)
-        return jsonify({'error': 'DB not ready'}), 500
-    except Exception as e:
-        logger.error(f"api_metrics: {e}")
-        return jsonify({'error': str(e)}), 500
-
-
 @app.route('/api/users')
 def api_users():
     if not _check_api_auth():
@@ -317,20 +303,3 @@ def api_reload():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
-@app.route('/metrics')
-def prometheus_metrics():
-    try:
-        uptime = (datetime.now() - app_start_time).total_seconds()
-        lines  = [f"bot_uptime_seconds {uptime:.0f}"]
-        if db_manager:
-            d = db_manager.get_metrics_summary()
-            for k, v in d.items():
-                try:
-                    lines.append(f"bot_{k} {float(v):.2f}")
-                except (TypeError, ValueError):
-                    pass
-        if quiz_manager:
-            lines.append(f"bot_questions_loaded {len(quiz_manager.questions)}")
-        return Response('\n'.join(lines) + '\n', mimetype='text/plain')
-    except Exception as e:
-        return Response(f"# Error: {e}\n", mimetype='text/plain'), 500

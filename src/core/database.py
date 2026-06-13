@@ -41,7 +41,6 @@ class DatabaseManager:
         self.activities_col = self.db["activities"]
         self.developers_col = self.db["developers"]
         self.poll_map_col   = self.db["poll_map"]
-        self.performance_col= self.db["performance"]
 
         self._ensure_indexes()
         logger.info(f"✅ MongoDB connected: {url} / db={db_name}")
@@ -71,8 +70,6 @@ class DatabaseManager:
             self.activities_col.create_index([("type", ASCENDING), ("is_correct", ASCENDING), ("timestamp", DESCENDING)])
             self.activities_col.create_index([("type", ASCENDING), ("user_id", ASCENDING), ("timestamp", DESCENDING)])
             self.activities_col.create_index([("timestamp", DESCENDING)])
-            self.performance_col.create_index([("metric", ASCENDING), ("timestamp", DESCENDING)])
-            self.performance_col.create_index([("timestamp", DESCENDING)])
             self.broadcasts_col.create_index([("created_at", DESCENDING)])
         except Exception as e:
             logger.warning(f"Index creation warning: {e}")
@@ -591,104 +588,11 @@ class DatabaseManager:
         except Exception as e:
             logger.error(f"log_activity error: {e}")
 
-    def get_recent_activities(self, limit: int = 50, activity_type: str = None) -> List[Dict]:
-        query = {} if not activity_type else {"type": activity_type}
-        return list(self.activities_col.find(query, {"_id": 0})
-                    .sort("timestamp", DESCENDING).limit(limit))
-
     def get_user_engagement_stats(self) -> Dict:
         return {
             "total_users": self.users_col.count_documents({}),
             "active_7d": self.get_active_users_count(7),
             "active_30d": self.get_active_users_count(30)
-        }
-
-    # ── Performance ───────────────────────────────────────────────────────────
-
-    def log_performance_metric(self, metric: str, value: float, extra: Dict = None):
-        doc = {"metric": metric, "value": value,
-               "timestamp": datetime.utcnow().isoformat(), **(extra or {})}
-        self.performance_col.insert_one(doc)
-
-    def get_response_time_trends(self, hours: int = 24) -> List[Dict]:
-        cutoff = (datetime.utcnow() - timedelta(hours=hours)).isoformat()
-        return list(self.performance_col.find(
-            {"metric": "response_time", "timestamp": {"$gte": cutoff}}, {"_id": 0}
-        ).sort("timestamp", ASCENDING))
-
-    def get_memory_usage_history(self, hours: int = 24) -> List[Dict]:
-        cutoff = (datetime.utcnow() - timedelta(hours=hours)).isoformat()
-        return list(self.performance_col.find(
-            {"metric": "memory", "timestamp": {"$gte": cutoff}}, {"_id": 0}
-        ).sort("timestamp", ASCENDING))
-
-    def get_api_call_counts(self, hours: int = 24) -> Dict:
-        cutoff = (datetime.utcnow() - timedelta(hours=hours)).isoformat()
-        result = {}
-        for row in self.activities_col.aggregate([
-            {"$match": {"type": "api_call", "timestamp": {"$gte": cutoff}}},
-            {"$group": {"_id": "$endpoint", "count": {"$sum": 1}}}
-        ]):
-            result[row["_id"]] = row["count"]
-        return result
-
-    # ── Metrics summary (used by /metrics endpoint) ───────────────────────────
-
-    def get_metrics_summary(self) -> Dict:
-        cutoff_24h = (datetime.utcnow() - timedelta(hours=24)).isoformat()
-        cutoff_7d  = (datetime.utcnow() - timedelta(days=7)).isoformat()
-
-        total_questions = self.questions_col.count_documents({})
-        total_users     = self.users_col.count_documents({})
-        total_groups    = self.groups_col.count_documents({})
-        total_broadcasts= self.broadcasts_col.count_documents({})
-        active_24h      = self.users_col.count_documents({"last_seen": {"$gte": cutoff_24h}})
-        active_7d       = self.users_col.count_documents({"last_seen": {"$gte": cutoff_7d}})
-        active_groups   = self.groups_col.count_documents({"last_active": {"$gte": cutoff_24h}})
-
-        quiz_24h   = self.activities_col.count_documents(
-            {"type": "quiz_answer", "timestamp": {"$gte": cutoff_24h}})
-        correct_24h= self.activities_col.count_documents(
-            {"type": "quiz_answer", "is_correct": True, "timestamp": {"$gte": cutoff_24h}})
-        accuracy_24h = (correct_24h / quiz_24h * 100) if quiz_24h else 0
-
-        commands_24h = self.activities_col.count_documents(
-            {"type": "command", "timestamp": {"$gte": cutoff_24h}})
-        errors_24h   = self.activities_col.count_documents(
-            {"type": "error", "timestamp": {"$gte": cutoff_24h}})
-        total_24h    = self.activities_col.count_documents({"timestamp": {"$gte": cutoff_24h}})
-        error_rate   = (errors_24h / total_24h * 100) if total_24h else 0
-        rate_limits  = self.activities_col.count_documents(
-            {"type": "rate_limit", "timestamp": {"$gte": cutoff_24h}})
-
-        # Average response time
-        rt_docs = list(self.performance_col.find(
-            {"metric": "response_time", "timestamp": {"$gte": cutoff_24h}}, {"value": 1}))
-        avg_rt = (sum(d["value"] for d in rt_docs) / len(rt_docs)) if rt_docs else 0
-
-        # Broadcast success rate
-        bc_ok  = self.activities_col.count_documents(
-            {"type": "broadcast_sent", "timestamp": {"$gte": cutoff_24h}})
-        bc_fail= self.activities_col.count_documents(
-            {"type": "broadcast_failed", "timestamp": {"$gte": cutoff_24h}})
-        bc_total= bc_ok + bc_fail
-        bc_rate = (bc_ok / bc_total * 100) if bc_total else 100
-
-        return {
-            "total_questions":       total_questions,
-            "total_users":           total_users,
-            "total_groups":          total_groups,
-            "total_broadcasts":      total_broadcasts,
-            "active_users_24h":      active_24h,
-            "active_users_7d":       active_7d,
-            "active_groups":         active_groups,
-            "quiz_attempts_24h":     quiz_24h,
-            "quiz_accuracy_24h":     round(accuracy_24h, 2),
-            "commands_24h":          commands_24h,
-            "error_rate_24h":        round(error_rate, 2),
-            "rate_limit_violations_24h": rate_limits,
-            "avg_response_time_24h": round(avg_rt, 2),
-            "broadcast_success_rate": round(bc_rate, 2),
         }
 
     def get_analytics_data(self) -> Dict:
@@ -830,80 +734,6 @@ class DatabaseManager:
         if permissions is not None:
             data["bot_permissions"] = permissions
         self.groups_col.update_one({"chat_id": chat_id}, {"$set": data})
-    def format_relative_time(self, timestamp_str: str) -> str:
-        try:
-            ts = datetime.fromisoformat(timestamp_str)
-            delta = datetime.utcnow() - ts
-            if delta.days > 0:
-                return f"{delta.days}d ago"
-            elif delta.seconds >= 3600:
-                return f"{delta.seconds // 3600}h ago"
-            elif delta.seconds >= 60:
-                return f"{delta.seconds // 60}m ago"
-            else:
-                return "just now"
-        except Exception:
-            return timestamp_str
-
-    # ── Compatibility wrappers (for dev_commands.py legacy calls) ─────────────
-
-    def get_quiz_stats_by_period(self, period) -> Dict:
-        """Accept 'today','week','month','all' strings or int days."""
-        mapping = {'today': 1, 'week': 7, 'month': 30, 'all': 36500}
-        if isinstance(period, str):
-            days = mapping.get(period, 7)
-        else:
-            days = int(period) if period else 7
-        cutoff  = (datetime.utcnow() - timedelta(days=days)).isoformat()
-        count   = self.activities_col.count_documents(
-            {"type": "quiz_answer", "timestamp": {"$gte": cutoff}})
-        correct = self.activities_col.count_documents(
-            {"type": "quiz_answer", "is_correct": True, "timestamp": {"$gte": cutoff}})
-        return {"answers": count, "correct": correct, "period_days": days,
-                "total_quizzes": count, "correct_answers": correct}
-
-    def get_performance_summary(self, hours=24) -> Dict:
-        """Accept optional hours param."""
-        cutoff = (datetime.utcnow() - timedelta(hours=hours)).isoformat()
-        result = {}
-        for row in self.performance_col.aggregate([
-            {"$match": {"timestamp": {"$gte": cutoff}}},
-            {"$group": {"_id": "$metric", "avg": {"$avg": "$value"}, "count": {"$sum": 1}}}
-        ]):
-            result[row["_id"]] = {"avg": row["avg"], "count": row["count"]}
-        return result
-
-    def get_activity_stats(self, days=7) -> Dict:
-        """Accepts int days."""
-        cutoff = (datetime.utcnow() - timedelta(days=days)).isoformat()
-        total  = self.activities_col.count_documents({"timestamp": {"$gte": cutoff}})
-        by_type = {}
-        for row in self.activities_col.aggregate([
-            {"$match": {"timestamp": {"$gte": cutoff}}},
-            {"$group": {"_id": "$type", "count": {"$sum": 1}}}
-        ]):
-            by_type[row["_id"]] = row["count"]
-        return {"total": total, "by_type": by_type}
-
-    def get_error_rate_stats(self, hours=24) -> Dict:
-        """Accept hours param."""
-        cutoff = (datetime.utcnow() - timedelta(hours=hours)).isoformat()
-        errors = self.activities_col.count_documents(
-            {"type": "error", "timestamp": {"$gte": cutoff}})
-        total  = self.activities_col.count_documents({"timestamp": {"$gte": cutoff}})
-        return {"errors": errors, "total": total,
-                "rate": (errors / total * 100) if total else 0}
-
-    def get_command_usage_stats(self, days=7) -> Dict:
-        """Accept days param."""
-        cutoff = (datetime.utcnow() - timedelta(days=days)).isoformat()
-        result = {}
-        for row in self.activities_col.aggregate([
-            {"$match": {"type": "command", "timestamp": {"$gte": cutoff}}},
-            {"$group": {"_id": "$command", "count": {"$sum": 1}}}
-        ]):
-            result[row["_id"]] = row["count"]
-        return result
 
     def add_developer(self, user_id: int, username: str = "", name: str = "",
                       first_name: str = "", last_name: str = "",

@@ -116,7 +116,6 @@ class UserCommandsMixin(object):
                 f"│  /bc                 ›  Broadcast shortcut\n"
                 f"│  /delbroadcast  ›  Delete last broadcast\n"
                 f"│  /botstats    ›  Platform analytics\n"
-                f"│  /devstats    ›  Developer metrics\n"
                 f"│  /reload        ›  Sync from database\n"
                 f"│  /restart       ›  Restart bot\n"
                 f"╰──────────────────────────────────────────╯\n"

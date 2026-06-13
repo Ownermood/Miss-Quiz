@@ -402,8 +402,7 @@ class AdminCommandsMixin(object):
             f"<b>COMMANDS</b>\n"
             f"{UI.THIN}\n"
             f"  /addquiz   /delquiz   /editquiz\n"
-            f"  /broadcast /reload    /restart\n"
-            f"  /devstats  /activity  /performance\n\n"
+            f"  /broadcast /reload    /restart\n\n"
             f"{UI.LINE}\n"
             f"  Owner ID: <code>{OWNER_ID}</code>"
         )
