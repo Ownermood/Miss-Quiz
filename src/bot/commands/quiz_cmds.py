@@ -57,6 +57,23 @@ class QuizCommandsMixin(object):
         cat_emoji = UI.cat_emoji(cat)
         q_id      = question.get("id")
 
+        # ── Delete previous quiz in this group before sending ────
+        if chat.type in ("group", "supergroup") and self.db:
+            try:
+                prev = self.db.get_active_quiz_state(track_id)
+                if prev and prev.get("message_id"):
+                    try:
+                        await context.bot.delete_message(
+                            chat_id=chat.id, message_id=prev["message_id"])
+                        logger.info(
+                            f"cmd_quiz: deleted previous quiz "
+                            f"msg_id={prev['message_id']} in {chat.id}"
+                        )
+                    except Exception as de:
+                        logger.warning(f"cmd_quiz: could not delete previous quiz: {de}")
+            except Exception as e:
+                logger.warning(f"cmd_quiz: prev-quiz lookup failed: {e}")
+
         poll_kwargs = dict(
             question          = f"{cat_emoji} {question['question']}",
             options           = options,
@@ -86,11 +103,23 @@ class QuizCommandsMixin(object):
             }
             context.bot_data[f"poll_{poll_id}"] = poll_entry
 
-            # Persist to MongoDB (primary) and pickle backup (secondary)
+            # Persist poll mapping (primary: MongoDB, secondary: pickle)
             if self.db and q_id:
                 self.db.save_poll_mapping(str(poll_id), q_id, poll_data=poll_entry)
             self._pickle_save(f"poll_{poll_id}", poll_entry)
             self._poll_stats["stored"] += 1
+
+            # Track active quiz per group so next /quiz (or scheduler) can clean it up
+            if chat.type in ("group", "supergroup") and self.db:
+                try:
+                    self.db.save_active_quiz(
+                        chat_id=track_id,
+                        message_id=poll_msg.message_id,
+                        quiz_id=q_id,
+                        poll_id=str(poll_id),
+                    )
+                except Exception as e:
+                    logger.warning(f"cmd_quiz: save_active_quiz failed: {e}")
 
             if chat.type in ("group", "supergroup"):
                 try:

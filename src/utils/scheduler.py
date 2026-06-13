@@ -89,9 +89,20 @@ class AutoQuizScheduler:
     # ── Cleanup ───────────────────────────────────────────────────────────────
 
     async def _delete_previous_quiz(self, chat_id: int):
-        """Delete the previously sent quiz poll for a group. Non-fatal."""
-        state  = self._active_quiz.get(chat_id, {})
-        msg_id = state.get("message_id")
+        """Delete the previously sent quiz poll for a group. Non-fatal.
+
+        Checks in-memory cache first; falls back to DB so quizzes sent
+        via /quiz command (which updates only DB) are also cleaned up.
+        """
+        state = self._active_quiz.get(chat_id)
+        if not state and self.db:
+            # /quiz command may have sent the last quiz — check DB
+            try:
+                state = self.db.get_active_quiz_state(chat_id) or {}
+            except Exception:
+                state = {}
+
+        msg_id = state.get("message_id") if state else None
         if not msg_id:
             return
         try:
@@ -128,23 +139,25 @@ class AutoQuizScheduler:
     async def _send_auto_quiz(self):
         if self.db:
             groups = self.db.get_all_groups()
-            chats = [
-                g["chat_id"] for g in groups
+            # Build list of (chat_id, thread_id) tuples; include thread_id for forum groups
+            group_targets = [
+                (g["chat_id"], g.get("message_thread_id"))
+                for g in groups
                 if g.get("chat_id")
                 and g.get("active_status") != "inactive"
             ]
         else:
-            chats = list(self.quiz_manager.active_chats)
+            group_targets = [(cid, None) for cid in self.quiz_manager.active_chats]
 
-        if not chats:
+        if not group_targets:
             logger.info("[SCHEDULER] No active groups — skipping delivery cycle")
             return
 
-        logger.info(f"[SCHEDULER] Starting delivery cycle for {len(chats)} groups")
+        logger.info(f"[SCHEDULER] Starting delivery cycle for {len(group_targets)} groups")
         sent = failed = skipped = 0
 
         from telegram import Poll
-        for chat_id in chats:
+        for chat_id, thread_id in group_targets:
             try:
                 question = self.quiz_manager.get_random_question(chat_id=chat_id)
                 if not question:
@@ -154,7 +167,7 @@ class AutoQuizScheduler:
                     skipped += 1
                     continue
 
-                # Remove previous quiz before posting the new one
+                # Remove previous quiz (from scheduler or /quiz command) before posting
                 await self._delete_previous_quiz(chat_id)
 
                 options     = question.get("options", [])
@@ -163,7 +176,7 @@ class AutoQuizScheduler:
                 q_id        = question.get("id")
                 explanation = f"✅ {options[correct_idx]}\n📚 {category}  ·  🆔 Q#{q_id}"
 
-                msg = await self.bot.application.bot.send_poll(
+                send_kwargs = dict(
                     chat_id           = chat_id,
                     question          = question.get("question", "Quiz Question"),
                     options           = options,
@@ -172,10 +185,14 @@ class AutoQuizScheduler:
                     explanation       = explanation[:200],
                     is_anonymous      = False,
                 )
+                if thread_id:
+                    send_kwargs["message_thread_id"] = thread_id
+
+                msg = await self.bot.application.bot.send_poll(**send_kwargs)
 
                 poll_id_str = str(msg.poll.id)
 
-                # Persist active quiz state
+                # Persist active quiz state (message_id + thread_id for next cleanup)
                 self._save_active_quiz(
                     chat_id=chat_id,
                     message_id=msg.message_id,
@@ -189,7 +206,7 @@ class AutoQuizScheduler:
                     "correct_option_id": correct_idx,
                     "category":          category,
                     "question_id":       q_id,
-                    "thread_id":         None,
+                    "thread_id":         thread_id,
                     "tracking_id":       chat_id,
                 }
                 if self.db and q_id:
