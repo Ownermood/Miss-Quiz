@@ -420,9 +420,14 @@ def guess_category(q: str) -> str:
 #  BULK IMPORT COORDINATOR
 # ══════════════════════════════════════════════════════════════════════════
 
+MAX_IMPORT_PER_FILE = 500
+
 def bulk_import(text: str, quiz_manager) -> Dict:
     parser   = SmartQuizParser()
     raw      = parser.parse(text)
+    if len(raw) > MAX_IMPORT_PER_FILE:
+        logger.warning(f"Import truncated: {len(raw)} detected, max={MAX_IMPORT_PER_FILE}")
+        raw = raw[:MAX_IMPORT_PER_FILE]
     existing = {q["question"].strip().lower() for q in quiz_manager.questions}
 
     imported, skipped, failed = 0, 0, 0

@@ -76,7 +76,7 @@ class Config:
         telegram_token = os.environ.get("TELEGRAM_TOKEN", "")
         session_secret = os.environ.get("SESSION_SECRET", "")
         
-        owner_id = int(os.environ.get("OWNER_ID", "8403136097"))
+        owner_id = int(os.environ.get("OWNER_ID", "0"))
         if owner_id == 0 and validate:
             logger.warning("⚠️ OWNER_ID not set - bot will work but admin features disabled")
         
@@ -170,7 +170,7 @@ class Config:
 # New code should use Config.load() and read from the instance instead.
 # ---------------------------------------------------------------------------
 
-OWNER_ID: int = int(os.environ.get("OWNER_ID", "8403136097"))
+OWNER_ID: int = int(os.environ.get("OWNER_ID", "0"))
 DATABASE_PATH: str = os.path.abspath(os.environ.get("DATABASE_PATH", "data/quiz_bot.db"))
 
 WIFU_ID: Optional[int] = None

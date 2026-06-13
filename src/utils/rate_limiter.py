@@ -8,6 +8,8 @@ algorithm to track command usage per user with different limits for different co
 import time
 import logging
 from collections import defaultdict, deque
+# NOTE: This rate limiter is currently unused. If integrated into async handlers,
+# replace threading.Lock() with asyncio.Lock() to avoid blocking the event loop.
 from threading import Lock
 from typing import Dict, List, Tuple, Optional
 

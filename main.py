@@ -19,12 +19,13 @@ try:
 except Exception:
     pass
 
+from logging.handlers import RotatingFileHandler as _RFH
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
         logging.StreamHandler(),
-        logging.FileHandler('bot.log')
+        _RFH('bot.log', maxBytes=10*1024*1024, backupCount=3),
     ]
 )
 logger = logging.getLogger(__name__)

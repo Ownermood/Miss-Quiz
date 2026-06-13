@@ -1,6 +1,5 @@
 """
 MongoDB DatabaseManager for Telegram Quiz Bot
-Owner ID: 8403136097
 """
 
 import logging

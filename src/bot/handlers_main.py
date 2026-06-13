@@ -164,18 +164,23 @@ class TelegramQuizBot(
         logger.info("✅ Bot initialized — polling mode")
 
     async def initialize_webhook(self, token: str, webhook_url: str):
+        import os as _os
         self.application = Application.builder().token(token).build()
         self._register_handlers()
         await self.application.initialize()
-        await self.application.bot.set_webhook(url=webhook_url)
+        _secret = _os.environ.get("WEBHOOK_SECRET_TOKEN", "")
+        await self.application.bot.set_webhook(
+            url=webhook_url,
+            secret_token=_secret if _secret else None,
+        )
         await self._set_commands()
-        logger.info(f"✅ Bot initialized — webhook: {webhook_url}")
+        logger.info("✅ Bot initialized — webhook configured")
 
     # ─── Startup tasks (called after application.start()) ────
 
     def run_startup_tasks(self):
         """Schedule startup broadcast + owner alert as background tasks."""
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         loop.create_task(self._send_owner_alert())
         loop.create_task(self._send_startup_broadcast())
 
@@ -219,7 +224,11 @@ class TelegramQuizBot(
                 logger.warning(f"[STARTUP] Owner alert to {uid} failed: {e}")
 
     async def _send_startup_broadcast(self):
-        """Send greeting to all PM-accessible users on startup."""
+        """Send greeting to all PM-accessible users on startup.
+        Disabled by default — set STARTUP_BROADCAST=1 to enable."""
+        import os as _os
+        if _os.environ.get("STARTUP_BROADCAST", "0") != "1":
+            return
         if not self.db:
             return
         users = self.db.get_pm_accessible_users()

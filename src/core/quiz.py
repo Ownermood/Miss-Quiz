@@ -161,15 +161,15 @@ class QuizManager:
         added, db_saved = 0, 0
         duplicates, errors = [], []
 
+        existing = {ex["question"].strip().lower() for ex in self.questions}
+
         for q in questions:
             question = q.get("question", "").strip()
             options  = q.get("options", [])
             correct  = q.get("correct_answer", 0)
             category = q.get("category", "General")
 
-            # Duplicate check
-            existing = [ex["question"].strip() for ex in self.questions]
-            if question in existing:
+            if question.lower() in existing:
                 duplicates.append(question)
                 continue
 
@@ -181,6 +181,7 @@ class QuizManager:
                         "options": options, "correct_answer": correct, "category": category
                     })
                     self.questions.append(new_q)
+                    existing.add(question.lower())
                     added    += 1
                     db_saved += 1
                 else:
@@ -212,7 +213,8 @@ class QuizManager:
                 db_id,
                 data.get("question", ""),
                 data.get("options", []),
-                data.get("correct_answer", 0)
+                data.get("correct_answer", 0),
+                category=data.get("category") or None
             )
             if ok:
                 for q in self.questions:
@@ -270,13 +272,14 @@ class QuizManager:
             s["daily_activity"][today]["correct"] += 1
             self.scores[user_id]   = self.scores.get(user_id, 0) + 1
 
-            if s["last_correct_date"] == today:
-                s["current_streak"] += 1
-            elif s.get("last_correct_date") == (
-                datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d"):
-                s["current_streak"] += 1
+            yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+            last_cd = s.get("last_correct_date")
+            if last_cd == today:
+                pass  # already played today — streak unchanged
+            elif last_cd == yesterday:
+                s["current_streak"] += 1  # consecutive day
             else:
-                s["current_streak"] = 1
+                s["current_streak"] = 1   # gap or first time
 
             s["last_correct_date"] = today
             if s["current_streak"] > s["longest_streak"]:

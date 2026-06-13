@@ -19,7 +19,11 @@ app = Flask(
     template_folder=os.path.join(root_dir, 'templates'),
     static_folder=os.path.join(root_dir, 'static'),
 )
-app.secret_key = os.environ.get("SESSION_SECRET", "fallback_secret_dev")
+_raw_secret = os.environ.get("SESSION_SECRET", "")
+if not _raw_secret:
+    import secrets as _sec
+    _raw_secret = _sec.token_hex(32)
+app.secret_key = _raw_secret
 
 # Module-level singletons
 quiz_manager   = None
@@ -65,6 +69,15 @@ def create_app(injected_db=None, injected_quiz=None):
 
 def get_app():
     return app
+
+
+def _check_api_auth():
+    """Return True if the request has a valid API key. Falls through in dev mode (no key set)."""
+    api_key = os.environ.get("ADMIN_API_KEY", "")
+    if not api_key:
+        return True  # dev mode — no key configured
+    req_key = request.headers.get("X-Admin-Key", "") or request.args.get("api_key", "")
+    return bool(req_key and req_key == api_key)
 
 
 # ── Bot lifecycle (webhook mode) ──────────────────────────────────────────────
@@ -145,6 +158,14 @@ def webhook():
             logger.error("[WEBHOOK] bot not ready — returning 500")
             return jsonify({'status': 'error', 'message': 'Bot not initialized'}), 500
 
+        # Validate webhook secret token if configured
+        _expected_secret = os.environ.get("WEBHOOK_SECRET_TOKEN", "")
+        if _expected_secret:
+            received_secret = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
+            if received_secret != _expected_secret:
+                logger.warning("[WEBHOOK] Invalid secret token — rejecting request")
+                return jsonify({'status': 'error', 'message': 'Forbidden'}), 403
+
         update_data = request.get_json(force=True)
         if not update_data:
             return jsonify({'status': 'ok'}), 200
@@ -164,6 +185,8 @@ def webhook():
 
 @app.route('/api/questions', methods=['GET'])
 def api_get_questions():
+    if not _check_api_auth():
+        return jsonify({'error': 'Unauthorized'}), 401
     if not quiz_manager:
         return jsonify({'error': 'Not ready'}), 500
     return jsonify({'questions': quiz_manager.questions, 'total': len(quiz_manager.questions)})
@@ -171,6 +194,8 @@ def api_get_questions():
 
 @app.route('/api/questions', methods=['POST'])
 def api_add_question():
+    if not _check_api_auth():
+        return jsonify({'error': 'Unauthorized'}), 401
     try:
         if not quiz_manager:
             return jsonify({'success': False, 'error': 'Not ready'}), 500
@@ -204,6 +229,8 @@ def api_add_question():
 
 @app.route('/api/questions/<int:qid>', methods=['PUT'])
 def api_edit_question(qid):
+    if not _check_api_auth():
+        return jsonify({'error': 'Unauthorized'}), 401
     try:
         if not quiz_manager:
             return jsonify({'success': False, 'error': 'Not ready'}), 500
@@ -216,6 +243,8 @@ def api_edit_question(qid):
 
 @app.route('/api/questions/<int:qid>', methods=['DELETE'])
 def api_delete_question(qid):
+    if not _check_api_auth():
+        return jsonify({'error': 'Unauthorized'}), 401
     try:
         if not quiz_manager:
             return jsonify({'success': False, 'error': 'Not ready'}), 500
@@ -241,6 +270,8 @@ def api_metrics():
 
 @app.route('/api/users')
 def api_users():
+    if not _check_api_auth():
+        return jsonify({'error': 'Unauthorized'}), 401
     try:
         if not db_manager:
             return jsonify({'users': [], 'error': 'DB not ready'}), 500
@@ -252,6 +283,8 @@ def api_users():
 
 @app.route('/api/broadcast', methods=['POST'])
 def api_broadcast():
+    if not _check_api_auth():
+        return jsonify({'error': 'Unauthorized'}), 401
     try:
         if not db_manager:
             return jsonify({'error': 'DB not ready'}), 500
@@ -262,16 +295,19 @@ def api_broadcast():
         users  = db_manager.get_pm_accessible_users()
         groups = db_manager.get_all_groups()
         return jsonify({
-            'queued': True, 'users': len(users), 'groups': len(groups),
-            'total': len(users) + len(groups), 'sent': 0, 'failed': 0,
-            'note': 'Use /broadcast command in Telegram for live sending.'
-        })
+            'status': 'not_sent',
+            'users': len(users), 'groups': len(groups),
+            'total': len(users) + len(groups),
+            'note': 'Broadcast must be triggered via Telegram /broadcast command. This endpoint is for preview only.'
+        }), 202
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
 
 @app.route('/api/reload', methods=['POST'])
 def api_reload():
+    if not _check_api_auth():
+        return jsonify({'error': 'Unauthorized'}), 401
     try:
         if not quiz_manager:
             return jsonify({'success': False, 'error': 'Not ready'}), 500

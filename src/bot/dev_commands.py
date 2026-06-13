@@ -644,7 +644,9 @@ class DeveloperCommands:
                     if poll_data:
                         diagnostics += f"\n**🎯 Quiz Data:**\n"
                         diagnostics += f"• Question ID: `{poll_data.get('question_id', 'N/A')}`\n"
-                        diagnostics += f"• Correct Answer: Option {poll_data.get('correct_option_id', 'N/A') + 1}\n"
+                        _cid = poll_data.get('correct_option_id')
+                        _cid_str = str(_cid + 1) if isinstance(_cid, int) else 'N/A'
+                        diagnostics += f"• Correct Answer: Option {_cid_str}\n"
                         diagnostics += f"• Answers: {len(poll_data.get('user_answers', {}))}\n"
                     else:
                         diagnostics += f"• Status: ⚠️ Poll data expired/unavailable\n"
@@ -1091,10 +1093,11 @@ class DeveloperCommands:
         try:
             if not await self.check_access(update):
                 await self.send_unauthorized_message(update)
-            
+                return
+
             if not update.effective_user or not update.effective_chat or not update.message:
                 return
-            
+
             # Determine media type and recipient counts for logging (PM-accessible users only)
             users = self.db.get_pm_accessible_users()
             groups = self.db.get_all_groups()
