@@ -11,9 +11,10 @@ from typing import Optional
 from telegram import Update, LinkPreviewOptions
 
 # ── Module-level constants ─────────────────────────────────────────────────────
-OWNER_ID   = int(os.environ.get("OWNER_ID", "8403136097"))
+OWNER_ID   = int(os.environ.get("OWNER_ID", "0"))
 OWNER_NAME = "🌷 𝐂𝐋𝐀𝐓 𝐎𝐖𝐍𝐄𝐑 🌷"
-OWNER_LINK = OWNER_NAME  # plain text only — tg profile links expose user bios
+OWNER_LINK = (f'<a href="tg://user?id={OWNER_ID}">{OWNER_NAME}</a>'
+              if OWNER_ID else OWNER_NAME)
 COMMUNITY  = "@CLAT_Vision"
 _NO_PREVIEW = LinkPreviewOptions(is_disabled=True)
 
@@ -106,8 +107,19 @@ class UI:
     # ── Inline mention ────────────────────────────────────────
     @staticmethod
     def mention(user_id: int, name: str) -> str:
-        """Return a bold display name. No tg:// link — avoids profile card previews."""
-        return f'<b>{html.escape(str(name))}</b>'
+        """HTML inline mention — clicking opens the user's Telegram profile."""
+        safe = html.escape(str(name))
+        if user_id:
+            return f'<a href="tg://user?id={user_id}">{safe}</a>'
+        return f'<b>{safe}</b>'
+
+    @staticmethod
+    def mention_md(user_id: int, name: str) -> str:
+        """Markdown inline mention — for messages sent with parse_mode=MARKDOWN."""
+        if user_id and name and str(name) not in ('Unknown', ''):
+            safe = str(name).replace('[', '\\[').replace(']', '\\]')
+            return f'[{safe}](tg://user?id={user_id})'
+        return f'@{name}' if name and str(name) not in ('Unknown', '') else str(name)
 
     # ── Display name (HTML-safe) ──────────────────────────────
     @staticmethod

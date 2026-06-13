@@ -18,6 +18,7 @@ from telegram.ext import ContextTypes
 from telegram.constants import ParseMode
 from src.core import config
 from src.core.database import DatabaseManager
+from src.bot.ui import UI
 
 logger = logging.getLogger(__name__)
 
@@ -627,10 +628,12 @@ class DeveloperCommands:
                 diagnostics += f"• Timestamp: {replied_msg.date}\n"
                 
                 if replied_msg.from_user:
+                    _u = replied_msg.from_user
+                    _nm = _u.full_name or _u.first_name or f"@{_u.username}" or "N/A"
                     diagnostics += f"\n**👤 User Info:**\n"
-                    diagnostics += f"• User ID: `{replied_msg.from_user.id}`\n"
-                    diagnostics += f"• Username: @{replied_msg.from_user.username or 'N/A'}\n"
-                    diagnostics += f"• Name: {replied_msg.from_user.first_name or 'N/A'}\n"
+                    diagnostics += f"• User ID: `{_u.id}`\n"
+                    diagnostics += f"• Name: {UI.mention_md(_u.id, _nm)}\n"
+                    diagnostics += f"• Username: @{_u.username or 'N/A'}\n"
                 
                 # Check if it's a quiz
                 if replied_msg.poll:
@@ -1021,16 +1024,16 @@ class DeveloperCommands:
                         time_ago = self.format_relative_time(activity.get('timestamp', ''))
                         activity_type = activity.get('activity_type', 'unknown')
                         username = activity.get('username', 'Unknown')
-                        # Escape underscores in username to prevent Markdown issues
-                        safe_username = username.replace('_', '\\_') if username else 'Unknown'
+                        uid = activity.get('user_id')
+                        mention = UI.mention_md(uid, username)
                         command = activity.get('command', '')
-                        
+
                         if activity_type == 'command' and command:
-                            activity_feed += f"• {time_ago}: @{safe_username} used {command}\n"
+                            activity_feed += f"• {time_ago}: {mention} used {command}\n"
                         elif activity_type == 'quiz_sent':
                             activity_feed += f"• {time_ago}: Quiz sent\n"
                         elif activity_type == 'quiz_answered':
-                            activity_feed += f"• {time_ago}: @{safe_username} answered quiz\n"
+                            activity_feed += f"• {time_ago}: {mention} answered quiz\n"
                         elif activity_type == 'broadcast':
                             activity_feed += f"• {time_ago}: Broadcast sent\n"
                         elif activity_type == 'error':
@@ -2151,29 +2154,33 @@ class DeveloperCommands:
                 time_ago = self.db.format_relative_time(activity['timestamp'])
                 activity_type = activity.get('type') or activity.get('activity_type', 'unknown')
                 username = activity.get('username', 'Unknown')
-                
+                uid = activity.get('user_id')
+                mention = UI.mention_md(uid, username)
+
                 if activity_type == 'command':
                     details = activity.get('details', {})
                     cmd = details.get('command', 'unknown') if isinstance(details, dict) else 'unknown'
-                    activity_feed += f"• {time_ago}: @{username} /{cmd}\n"
+                    activity_feed += f"• {time_ago}: {mention} /{cmd}\n"
                 elif activity_type == 'quiz_sent':
                     activity_feed += f"• {time_ago}: Quiz sent\n"
                 elif activity_type == 'quiz_answered':
-                    activity_feed += f"• {time_ago}: @{username} answered\n"
+                    activity_feed += f"• {time_ago}: {mention} answered\n"
                 elif activity_type == 'broadcast':
                     activity_feed += f"• {time_ago}: Broadcast sent\n"
                 elif activity_type == 'error':
                     activity_feed += f"• {time_ago}: Error logged\n"
                 else:
                     activity_feed += f"• {time_ago}: {activity_type}\n"
-            
+
             if not activity_feed:
                 activity_feed = "No recent activity"
-            
+
             most_active_text = ""
             for i, user in enumerate(most_active[:5], 1):
-                name = user.get('name') or user.get('first_name') or user.get('username') or f"User{user['user_id']}"
-                most_active_text += f"{i}. {name}: {user.get('total_answers', 0)} answers\n"
+                uid = user.get('user_id')
+                name = user.get('name') or user.get('first_name') or user.get('username') or f"User{str(uid)[-4:]}"
+                mention = UI.mention_md(uid, name)
+                most_active_text += f"{i}. {mention}: {user.get('total_answers', 0)} answers\n"
             if not most_active_text:
                 most_active_text = "No active users yet"
             
@@ -2298,12 +2305,13 @@ Type: {activity_type.upper()}
                 user_id = activity.get('user_id')
                 username = activity.get('username', 'Unknown')
                 chat_title = activity.get('chat_title', '')
-                
+                mention = UI.mention_md(user_id, username)
+
                 details = activity.get('details', {})
                 if isinstance(details, dict):
                     if activity_type_str == 'command':
                         cmd = details.get('command', 'unknown')
-                        activity_text += f"[{time_ago}] @{username}: /{cmd}\n"
+                        activity_text += f"[{time_ago}] {mention}: /{cmd}\n"
                     elif activity_type_str == 'quiz_sent':
                         if chat_title:
                             activity_text += f"[{time_ago}] Quiz sent to {chat_title}\n"
@@ -2312,7 +2320,7 @@ Type: {activity_type.upper()}
                     elif activity_type_str == 'quiz_answered':
                         correct = details.get('is_correct', False)
                         emoji = "✅" if correct else "❌"
-                        activity_text += f"[{time_ago}] {emoji} @{username} answered\n"
+                        activity_text += f"[{time_ago}] {emoji} {mention} answered\n"
                     elif activity_type_str == 'broadcast':
                         recipients = details.get('total_recipients', 0)
                         activity_text += f"[{time_ago}] Broadcast to {recipients} recipients\n"
