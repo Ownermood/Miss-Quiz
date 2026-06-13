@@ -145,25 +145,11 @@ class QuizCommandsMixin(object):
         xp_pct          = min(100, int(xp_in_level / xp_needed * 100))
         xp_bar          = UI.mini_bar(xp_pct)
 
-        # Global rank
-        global_rank  = 0
-        total_users  = 0
-        if self.db:
-            try:
-                rank_info   = self.db.get_user_rank(user.id)
-                global_rank = rank_info.get("global_rank", 0)
-                total_users = rank_info.get("total_users", 0)
-            except Exception as e:
-                logger.error(f"cmd_score get_user_rank: {e}")
-
-        rank_str = f"#{global_rank}  of  {total_users}" if global_rank else "—"
-
         text = (
             f"🏆  <b>𝐒𝐂𝐎𝐑𝐄𝐂𝐀𝐑𝐃</b>\n"
             f"{UI.LINE}\n\n"
             f"👤  {mention}\n\n"
             f"{UI.LINE}\n\n"
-            f"🥇  Rank        ›  {rank_str}\n"
             f"📈  Accuracy    ›  {accuracy}%\n"
             f"🎯  Avg Score   ›  {avg_score}\n\n"
             f"🔥  Streak      ›  {streak} days\n"
@@ -460,44 +446,6 @@ class QuizCommandsMixin(object):
             lines += [f"{'━'*38}", f"⚡  {COMMUNITY}  ·  CLAT Vision Analytics"]
             text = "\n".join(lines)
 
-        elif page == "top":
-            top5 = []
-            if self.db:
-                try:
-                    top5 = list(self.db.users_col.find(
-                        {}, {"user_id": 1, "name": 1, "username": 1,
-                             "total_marks": 1, "correct_answers": 1,
-                             "quizzes_completed": 1, "xp": 1})
-                        .sort(self.db._LB_SORT)
-                        .limit(5))
-                except Exception:
-                    pass
-            lines = [
-                f"📊  <b>𝐁𝐎𝐓  𝐀𝐍𝐀𝐋𝐘𝐓𝐈𝐂𝐒</b>",
-                f"{'━'*38}",
-                f"",
-                f"🏆  <b>𝐓𝐎𝐏  𝟓  𝐏𝐋𝐀𝐘𝐄𝐑𝐒</b>",
-                f"╭──────────────────────────────────────╮",
-            ]
-            medals = ["🥇", "🥈", "🥉", "  4.", "  5."]
-            for i, u in enumerate(top5):
-                uid   = u.get("user_id")
-                nm    = (u.get("name") or u.get("username") or f"User{str(uid)[-4:]}")[:16]
-                men   = UI.mention(uid, nm) if uid else "—"
-                pts   = u.get("total_marks", 0)
-                cor   = u.get("correct_answers", 0)
-                qz    = u.get("quizzes_completed", 0)
-                lines.append(f"│  {medals[i]}  {men}  ⭐{pts:,}  ✅{cor:,}  🎯{qz}")
-            if not top5:
-                lines.append(f"│  No players yet — be the first!")
-            lines += [
-                f"╰──────────────────────────────────────╯",
-                f"",
-                f"{'━'*38}",
-                f"⚡  {COMMUNITY}  ·  CLAT Vision Analytics",
-            ]
-            text = "\n".join(lines)
-
         else:  # overview (default — matches example exactly)
             u_total    = d.get("u_total", 0)
             u_pm       = d.get("u_pm", 0)
@@ -597,8 +545,7 @@ class QuizCommandsMixin(object):
         kb = InlineKeyboardMarkup([
             [_tab("📊 Overview", "overview"),
              _tab("👥 Users",    "users"),
-             _tab("🎯 Quiz",     "quiz"),
-             _tab("🏆 Top",      "top")],
+             _tab("🎯 Quiz",     "quiz")],
             [InlineKeyboardButton("🔄 Refresh", callback_data=f"bs_refresh_{page}"),
              InlineKeyboardButton("🏠 Home",    callback_data="nav_home")],
         ])
