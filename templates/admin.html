@@ -1,0 +1,465 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CLAT Vision — Admin Panel</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:        #0f1117;
+      --surface:   #1a1d27;
+      --surface2:  #242736;
+      --border:    #2e3247;
+      --accent:    #6c63ff;
+      --accent2:   #a78bfa;
+      --success:   #22c55e;
+      --danger:    #ef4444;
+      --warn:      #f59e0b;
+      --text:      #e2e8f0;
+      --muted:     #64748b;
+      --radius:    10px;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      font-size: 14px;
+      min-height: 100vh;
+    }
+
+    /* ── Layout ─────────────────────────────────────── */
+    .layout { display: flex; min-height: 100vh; }
+
+    .sidebar {
+      width: 220px;
+      background: var(--surface);
+      border-right: 1px solid var(--border);
+      padding: 24px 0;
+      position: fixed;
+      top: 0; left: 0; bottom: 0;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .logo {
+      padding: 0 20px 24px;
+      border-bottom: 1px solid var(--border);
+    }
+    .logo h1 { font-size: 16px; font-weight: 700; color: var(--accent2); }
+    .logo span { font-size: 11px; color: var(--muted); }
+
+    .nav { flex: 1; padding: 16px 0; }
+    .nav-item {
+      display: flex; align-items: center; gap: 10px;
+      padding: 10px 20px;
+      color: var(--muted);
+      cursor: pointer;
+      border-radius: 0;
+      transition: all 0.15s;
+      font-size: 13px;
+    }
+    .nav-item:hover { background: var(--surface2); color: var(--text); }
+    .nav-item.active { background: var(--surface2); color: var(--accent2); border-left: 3px solid var(--accent); }
+    .nav-item .icon { font-size: 16px; width: 20px; text-align: center; }
+
+    .sidebar-footer {
+      padding: 16px 20px;
+      border-top: 1px solid var(--border);
+      font-size: 11px;
+      color: var(--muted);
+    }
+
+    .main {
+      margin-left: 220px;
+      flex: 1;
+      padding: 28px;
+      min-height: 100vh;
+    }
+
+    /* ── Header ─────────────────────────────────────── */
+    .page-header {
+      display: flex; align-items: center; justify-content: space-between;
+      margin-bottom: 24px;
+    }
+    .page-header h2 { font-size: 20px; font-weight: 600; }
+    .status-badge {
+      display: inline-flex; align-items: center; gap: 6px;
+      background: rgba(34,197,94,0.15);
+      color: var(--success);
+      border: 1px solid rgba(34,197,94,0.3);
+      border-radius: 20px;
+      padding: 4px 12px;
+      font-size: 12px;
+    }
+    .status-dot {
+      width: 6px; height: 6px;
+      border-radius: 50%;
+      background: var(--success);
+      animation: pulse 2s infinite;
+    }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+
+    /* ── Cards ──────────────────────────────────────── */
+    .stat-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 16px;
+      margin-bottom: 28px;
+    }
+
+    .stat-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 20px;
+    }
+    .stat-card .label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 8px; }
+    .stat-card .value { font-size: 28px; font-weight: 700; color: var(--text); }
+    .stat-card .sub { font-size: 11px; color: var(--muted); margin-top: 4px; }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 20px;
+      margin-bottom: 20px;
+    }
+    .card-header {
+      display: flex; align-items: center; justify-content: space-between;
+      margin-bottom: 16px;
+      padding-bottom: 12px;
+      border-bottom: 1px solid var(--border);
+    }
+    .card-header h3 { font-size: 15px; font-weight: 600; }
+
+    /* ── Table ──────────────────────────────────────── */
+    .table-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; }
+    th {
+      text-align: left; padding: 10px 12px;
+      font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em;
+      color: var(--muted);
+      border-bottom: 1px solid var(--border);
+    }
+    td {
+      padding: 12px 12px;
+      border-bottom: 1px solid rgba(46,50,71,0.5);
+      font-size: 13px;
+    }
+    tr:last-child td { border-bottom: none; }
+    tr:hover td { background: rgba(255,255,255,0.02); }
+
+    .badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 500;
+    }
+    .badge-purple { background: rgba(108,99,255,0.2); color: var(--accent2); }
+    .badge-green  { background: rgba(34,197,94,0.15); color: var(--success); }
+    .badge-yellow { background: rgba(245,158,11,0.15); color: var(--warn); }
+
+    /* ── Buttons ─────────────────────────────────────── */
+    .btn {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 8px 16px;
+      border-radius: 6px;
+      border: none;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 500;
+      transition: all 0.15s;
+    }
+    .btn-primary { background: var(--accent); color: #fff; }
+    .btn-primary:hover { background: #5b52e0; }
+    .btn-danger { background: rgba(239,68,68,0.15); color: var(--danger); border: 1px solid rgba(239,68,68,0.3); }
+    .btn-danger:hover { background: rgba(239,68,68,0.25); }
+    .btn-sm { padding: 5px 10px; font-size: 12px; }
+    .btn-ghost { background: var(--surface2); color: var(--text); border: 1px solid var(--border); }
+    .btn-ghost:hover { border-color: var(--accent); color: var(--accent2); }
+
+    /* ── Form ────────────────────────────────────────── */
+    .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    .form-group { margin-bottom: 14px; }
+    .form-group label { display: block; margin-bottom: 6px; font-size: 12px; color: var(--muted); }
+    .form-group input, .form-group select, .form-group textarea {
+      width: 100%;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 9px 12px;
+      color: var(--text);
+      font-size: 13px;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+    .form-group input:focus, .form-group select:focus, .form-group textarea:focus {
+      border-color: var(--accent);
+    }
+    .form-group textarea { min-height: 80px; resize: vertical; }
+    .form-row { display: flex; gap: 10px; align-items: flex-end; }
+    .form-row .form-group { flex: 1; margin-bottom: 0; }
+
+    /* ── Tabs ────────────────────────────────────────── */
+    .tabs { display: flex; gap: 4px; margin-bottom: 20px; border-bottom: 1px solid var(--border); }
+    .tab {
+      padding: 10px 18px;
+      cursor: pointer;
+      font-size: 13px;
+      color: var(--muted);
+      border-bottom: 2px solid transparent;
+      transition: all 0.15s;
+    }
+    .tab:hover { color: var(--text); }
+    .tab.active { color: var(--accent2); border-bottom-color: var(--accent); }
+
+    /* ── Toast ───────────────────────────────────────── */
+    #toast-container {
+      position: fixed; bottom: 24px; right: 24px;
+      display: flex; flex-direction: column; gap: 8px;
+      z-index: 9999;
+    }
+    .toast {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px 18px;
+      font-size: 13px;
+      min-width: 240px;
+      animation: slideIn 0.2s ease;
+    }
+    .toast.success { border-left: 3px solid var(--success); }
+    .toast.error   { border-left: 3px solid var(--danger); }
+    @keyframes slideIn { from { transform: translateX(100%); opacity:0 } to { transform: translateX(0); opacity:1 } }
+
+    /* ── Section visibility ──────────────────────────── */
+    .section { display: none; }
+    .section.active { display: block; }
+
+    /* ── Loader ──────────────────────────────────────── */
+    .loading { color: var(--muted); text-align: center; padding: 32px; }
+    .spinner { display: inline-block; width: 20px; height: 20px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.7s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Search ──────────────────────────────────────── */
+    .search-bar {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 8px 14px;
+      color: var(--text);
+      font-size: 13px;
+      outline: none;
+      width: 240px;
+    }
+    .search-bar:focus { border-color: var(--accent); }
+
+    /* ── Pagination ──────────────────────────────────── */
+    .pagination { display: flex; gap: 6px; align-items: center; justify-content: flex-end; margin-top: 14px; }
+    .page-btn {
+      padding: 5px 10px;
+      border-radius: 5px;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      color: var(--text);
+      cursor: pointer;
+      font-size: 12px;
+    }
+    .page-btn:disabled { opacity: 0.4; cursor: default; }
+    .page-btn.current { background: var(--accent); border-color: var(--accent); }
+
+    @media (max-width: 768px) {
+      .sidebar { width: 60px; }
+      .nav-item span { display: none; }
+      .logo h1, .logo span, .sidebar-footer { display: none; }
+      .main { margin-left: 60px; }
+      .form-grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+
+<div class="layout">
+  <!-- Sidebar -->
+  <aside class="sidebar">
+    <div class="logo">
+      <h1>🎓 CLAT Vision</h1>
+      <span>Admin Panel</span>
+    </div>
+    <nav class="nav">
+      <div class="nav-item active" data-section="dashboard">
+        <span class="icon">📊</span><span>Dashboard</span>
+      </div>
+      <div class="nav-item" data-section="questions">
+        <span class="icon">📚</span><span>Questions</span>
+      </div>
+      <div class="nav-item" data-section="users">
+        <span class="icon">👥</span><span>Users</span>
+      </div>
+      <div class="nav-item" data-section="broadcast">
+        <span class="icon">📡</span><span>Broadcast</span>
+      </div>
+    </nav>
+    <div class="sidebar-footer">v1.0.0 · MongoDB</div>
+  </aside>
+
+  <!-- Main content -->
+  <main class="main">
+
+    <!-- ── DASHBOARD ── -->
+    <section class="section active" id="sec-dashboard">
+      <div class="page-header">
+        <h2>Dashboard</h2>
+        <span class="status-badge"><span class="status-dot"></span> Bot Online</span>
+      </div>
+
+      <div class="stat-grid" id="stat-grid">
+        <div class="stat-card"><div class="label">Questions</div><div class="value" id="stat-questions">—</div><div class="sub">In database</div></div>
+        <div class="stat-card"><div class="label">Total Users</div><div class="value" id="stat-users">—</div><div class="sub">Registered</div></div>
+        <div class="stat-card"><div class="label">Attempts (24h)</div><div class="value" id="stat-attempts">—</div><div class="sub">Quiz answers</div></div>
+        <div class="stat-card"><div class="label">Accuracy (24h)</div><div class="value" id="stat-acc">—</div><div class="sub">Correct %</div></div>
+      </div>
+
+      <div class="card">
+        <div class="card-header"><h3>Quick Actions</h3></div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap">
+          <button class="btn btn-primary" onclick="nav('questions')">➕ Add Question</button>
+          <button class="btn btn-ghost" onclick="reloadQuestions()">🔄 Reload DB Cache</button>
+          <button class="btn btn-ghost" onclick="nav('broadcast')">📡 Send Broadcast</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── QUESTIONS ── -->
+    <section class="section" id="sec-questions">
+      <div class="page-header">
+        <h2>Question Bank</h2>
+        <button class="btn btn-primary" onclick="showAddForm()">➕ Add Question</button>
+      </div>
+
+      <!-- Add/Edit Form -->
+      <div class="card" id="add-form" style="display:none">
+        <div class="card-header">
+          <h3 id="form-title">Add Question</h3>
+          <button class="btn btn-ghost btn-sm" onclick="hideAddForm()">✕ Close</button>
+        </div>
+        <div>
+          <div class="form-group">
+            <label>Question Text</label>
+            <textarea id="q-text" placeholder="Enter the question…"></textarea>
+          </div>
+          <div class="form-grid">
+            <div class="form-group"><label>Option A</label><input id="opt-0" placeholder="Option A" /></div>
+            <div class="form-group"><label>Option B</label><input id="opt-1" placeholder="Option B" /></div>
+            <div class="form-group"><label>Option C</label><input id="opt-2" placeholder="Option C" /></div>
+            <div class="form-group"><label>Option D</label><input id="opt-3" placeholder="Option D" /></div>
+          </div>
+          <div class="form-grid">
+            <div class="form-group">
+              <label>Correct Answer</label>
+              <select id="q-correct">
+                <option value="0">Option A</option>
+                <option value="1">Option B</option>
+                <option value="2">Option C</option>
+                <option value="3">Option D</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>Category</label>
+              <select id="q-category">
+                <option>Legal Reasoning</option>
+                <option>English</option>
+                <option>General Knowledge</option>
+                <option>Current Affairs</option>
+                <option>Polity</option>
+                <option>Mathematics</option>
+                <option>Logical Reasoning</option>
+                <option>History</option>
+                <option>General</option>
+              </select>
+            </div>
+          </div>
+          <div style="display:flex;gap:10px;margin-top:4px">
+            <button class="btn btn-primary" onclick="submitQuestion()">💾 Save Question</button>
+            <button class="btn btn-ghost" onclick="hideAddForm()">Cancel</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Table -->
+      <div class="card">
+        <div class="card-header">
+          <h3>All Questions <span id="q-count-badge" style="color:var(--muted);font-weight:400;font-size:13px"></span></h3>
+          <input class="search-bar" id="q-search" placeholder="🔍 Search questions…" oninput="filterQuestions()" />
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>ID</th><th>Question</th><th>Category</th><th>Answer</th><th style="text-align:right">Actions</th>
+              </tr>
+            </thead>
+            <tbody id="questions-tbody">
+              <tr><td colspan="5" class="loading"><span class="spinner"></span></td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="pagination" id="q-pagination"></div>
+      </div>
+    </section>
+
+    <!-- ── USERS ── -->
+    <section class="section" id="sec-users">
+      <div class="page-header"><h2>Users</h2></div>
+      <div class="card">
+        <div class="card-header">
+          <h3>Leaderboard</h3>
+          <input class="search-bar" id="u-search" placeholder="🔍 Search users…" oninput="filterUsers()" />
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>#</th><th>User</th><th>Score</th><th>Attempts</th><th>Accuracy</th></tr>
+            </thead>
+            <tbody id="users-tbody">
+              <tr><td colspan="5" class="loading"><span class="spinner"></span></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── BROADCAST ── -->
+    <section class="section" id="sec-broadcast">
+      <div class="page-header"><h2>Broadcast</h2></div>
+      <div class="card">
+        <div class="card-header"><h3>Send Message</h3></div>
+        <p style="color:var(--muted);font-size:13px;margin-bottom:16px">
+          Sends a message to all PM-accessible users and registered groups.<br>
+          Supports HTML: <code style="background:var(--bg);padding:2px 6px;border-radius:4px">&lt;b&gt; &lt;i&gt; &lt;code&gt;</code>
+        </p>
+        <div class="form-group">
+          <label>Message</label>
+          <textarea id="bc-text" placeholder="Type your broadcast message here…" style="min-height:120px"></textarea>
+        </div>
+        <div id="bc-preview" style="display:none;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:14px;margin-bottom:14px;font-size:13px"></div>
+        <div style="display:flex;gap:10px">
+          <button class="btn btn-ghost" onclick="previewBroadcast()">👁 Preview</button>
+          <button class="btn btn-primary" onclick="sendBroadcast()">📡 Send Broadcast</button>
+        </div>
+        <div id="bc-result" style="margin-top:16px"></div>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<div id="toast-container"></div>
+
+<script src="/static/js/admin.js"></script>
+</body>
+</html>

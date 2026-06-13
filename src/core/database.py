@@ -17,6 +17,8 @@ try:
     PYMONGO_AVAILABLE = True
 except ImportError:
     PYMONGO_AVAILABLE = False
+    ASCENDING  = 1
+    DESCENDING = -1
     logger.error("pymongo not installed. Run: pip install pymongo")
 
 
