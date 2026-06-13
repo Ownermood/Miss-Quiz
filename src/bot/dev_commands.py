@@ -925,7 +925,7 @@ class DeveloperCommands:
 
             # Determine media type and recipient counts for logging (PM-accessible users only)
             users = self.db.get_pm_accessible_users()
-            groups = self.db.get_all_groups()
+            groups = self.db.get_active_groups()
             total_targets = len(users) + len(groups)
             
             # Determine initial media type for logging
@@ -963,9 +963,9 @@ class DeveloperCommands:
                 replied_message = update.message.reply_to_message
                 
                 users = self.db.get_pm_accessible_users()
-                groups = self.db.get_all_groups()
+                groups = self.db.get_active_groups()
                 total_targets = len(users) + len(groups)
-                
+
                 # Detect media type
                 media_type = None
                 media_file_id = None
@@ -1039,9 +1039,9 @@ class DeveloperCommands:
                 cleaned_text, reply_markup = self.parse_inline_buttons(message_text)
                 
                 users = self.db.get_pm_accessible_users()
-                groups = self.db.get_all_groups()
+                groups = self.db.get_active_groups()
                 total_targets = len(users) + len(groups)
-                
+
                 confirm_text = f"📢 Broadcast Confirmation\n\n"
                 confirm_text += f"Message: {cleaned_text[:200]}{'...' if len(cleaned_text) > 200 else ''}\n\n"
                 
@@ -1134,8 +1134,8 @@ class DeveloperCommands:
             status = await update.message.reply_text("📢 Sending broadcast...")
             
             # Get PM-accessible users and active groups for broadcast
-            users = self.db.get_pm_accessible_users()  # Only users with PM access
-            groups = self.db.get_all_groups()  # Active groups only
+            users = self.db.get_pm_accessible_users()
+            groups = self.db.get_active_groups()  # excludes bot_blocked/inactive
             
             success_count = 0
             fail_count = 0

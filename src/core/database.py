@@ -503,6 +503,12 @@ class DatabaseManager:
     def get_all_groups(self) -> List[Dict]:
         return list(self.groups_col.find({}, {"_id": 0}))
 
+    def get_active_groups(self) -> List[Dict]:
+        """Return all groups that have not been marked inactive by the scheduler."""
+        return list(self.groups_col.find(
+            {"active_status": {"$ne": "inactive"}}, {"_id": 0}
+        ))
+
     def get_registered_group_ids(self) -> set:
         """Return the set of chat_ids already in groups_col."""
         return {

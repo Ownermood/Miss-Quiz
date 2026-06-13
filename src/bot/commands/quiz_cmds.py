@@ -4,7 +4,6 @@ QuizCommandsMixin — /quiz /score /stats /achievements /botstats
 
 import asyncio
 import logging
-import time
 from typing import Optional
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, Poll
@@ -387,15 +386,13 @@ class QuizCommandsMixin(object):
         else:
             wait = None
 
-        q_total  = self._q_count()
-        d        = {}
-        dbs      = {}
-        bc_total = 0
+        q_total = self._q_count()
+        d       = {}
+        dbs     = {}
         if self.db:
             try:
-                d        = self.db.get_analytics_data()
-                dbs      = self.db.get_db_stats()
-                bc_total = self.db.broadcasts_col.count_documents({})
+                d   = self.db.get_analytics_data()
+                dbs = self.db.get_db_stats()
             except Exception as e:
                 logger.error(f"cmd_botstats: {e}")
 
@@ -413,14 +410,6 @@ class QuizCommandsMixin(object):
         g_new_m    = d.get("g_new_m",    0)
         q_cats     = d.get("q_cats",     0)
 
-        up = int(time.time() - self._start_ts)
-        if up >= 86400:
-            uptime_str = f"{up // 86400}d {(up % 86400) // 3600}h"
-        elif up >= 3600:
-            uptime_str = f"{up // 3600}h {(up % 3600) // 60}m"
-        else:
-            uptime_str = f"{up // 60}m {up % 60}s"
-
         LINE = "━" * 38
         text = (
             f"📊  <b>𝐂𝐋𝐀𝐓 𝐕𝐈𝐒𝐈𝐎𝐍  •  𝐁𝐎𝐓 𝐀𝐍𝐀𝐋𝐘𝐓𝐈𝐂𝐒</b>\n"
@@ -428,10 +417,10 @@ class QuizCommandsMixin(object):
 
             f"👥  <b>𝐔𝐒𝐄𝐑  𝐒𝐓𝐀𝐓𝐈𝐒𝐓𝐈𝐂𝐒</b>\n"
             f"╭──────────────────────────────────────╮\n"
-            f"│  Total Users      ›  <b>{UI.fmt_num(u_total)}</b>\n"
-            f"│  Reachable Users  ›  <b>{u_pm}</b>\n"
-            f"│  Active Today     ›  <b>{u_active_d}</b>\n"
-            f"│  Active This Week ›  <b>{u_active_w}</b>\n"
+            f"│  Total Users      ›  <b>{u_total:,}</b>\n"
+            f"│  Reachable Users  ›  <b>{u_pm:,}</b>\n"
+            f"│  Active Today     ›  <b>{u_active_d:,}</b>\n"
+            f"│  Active This Week ›  <b>{u_active_w:,}</b>\n"
             f"│  New Today        ›  <b>+{u_new_d}</b>\n"
             f"│  New This Week    ›  <b>+{u_new_w}</b>\n"
             f"│  New This Month   ›  <b>+{u_new_m}</b>\n"
@@ -439,8 +428,8 @@ class QuizCommandsMixin(object):
 
             f"💬  <b>𝐆𝐑𝐎𝐔𝐏  𝐍𝐄𝐓𝐖𝐎𝐑𝐊</b>\n"
             f"╭──────────────────────────────────────╮\n"
-            f"│  Total Groups     ›  <b>{UI.fmt_num(g_total)}</b>\n"
-            f"│  Admin Groups     ›  <b>{g_admin}</b>\n"
+            f"│  Total Groups     ›  <b>{g_total:,}</b>\n"
+            f"│  Admin Groups     ›  <b>{g_admin:,}</b>\n"
             f"│  New Today        ›  <b>+{g_new_d}</b>\n"
             f"│  New This Week    ›  <b>+{g_new_w}</b>\n"
             f"│  New This Month   ›  <b>+{g_new_m}</b>\n"
@@ -448,19 +437,10 @@ class QuizCommandsMixin(object):
 
             f"📚  <b>𝐂𝐎𝐍𝐓𝐄𝐍𝐓  𝐋𝐈𝐁𝐑𝐀𝐑𝐘</b>\n"
             f"╭──────────────────────────────────────╮\n"
-            f"│  Questions        ›  <b>{UI.fmt_num(q_total)}</b>\n"
-            f"│  Categories       ›  <b>{q_cats}</b>\n"
-            f"│  Collections      ›  <b>{dbs.get('collections', '—')}</b>\n"
-            f"│  Documents        ›  <b>{UI.fmt_num(dbs.get('objects', 0))}</b>\n"
-            f"╰──────────────────────────────────────╯\n\n"
-
-            f"⚙️  <b>𝐒𝐘𝐒𝐓𝐄𝐌  𝐇𝐄𝐀𝐋𝐓𝐇</b>\n"
-            f"╭──────────────────────────────────────╮\n"
-            f"│  Database Size    ›  <b>{dbs.get('data_mb', 0)} MB</b>\n"
-            f"│  Storage Used     ›  <b>{dbs.get('storage_mb', 0)} MB</b>\n"
-            f"│  Broadcasts Sent  ›  <b>{bc_total}</b>\n"
-            f"│  Uptime           ›  <b>{uptime_str}</b>\n"
-            f"│  Status           ›  <b>ONLINE</b>\n"
+            f"│  Questions        ›  <b>{q_total:,}</b>\n"
+            f"│  Categories       ›  <b>{q_cats:,}</b>\n"
+            f"│  Collections      ›  <b>{dbs.get('collections', 0):,}</b>\n"
+            f"│  Documents        ›  <b>{dbs.get('objects', 0):,}</b>\n"
             f"╰──────────────────────────────────────╯\n\n"
 
             f"{LINE}\n"
