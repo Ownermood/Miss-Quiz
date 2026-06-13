@@ -1388,6 +1388,8 @@ class DeveloperCommands:
             
             else:  # text broadcast with buttons and placeholders
                 base_message_text = context.user_data.get('broadcast_message') if context.user_data else None
+                if base_message_text:
+                    base_message_text = DeveloperCommands._embed_links(base_message_text)
                 reply_markup = context.user_data.get('broadcast_buttons') if context.user_data else None
                 
                 # Send to users (PM)
@@ -2011,6 +2013,16 @@ Quiz ID #{quiz_id} doesn't exist.
                     reply_markup=reply_markup
                 )
     
+    @staticmethod
+    def _embed_links(text: str) -> str:
+        """Convert 'Name (https://url)' patterns to Markdown '[Name](url)' hyperlinks."""
+        return re.sub(
+            r'^(.+?)\s*\((https?://[^\s)]+)\)\s*$',
+            r'[\1](\2)',
+            text,
+            flags=re.MULTILINE
+        )
+
     def _format_quiz_editor(self, quiz: dict) -> str:
         """Format quiz data for editor display"""
         options_text = ""
