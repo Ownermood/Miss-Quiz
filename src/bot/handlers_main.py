@@ -353,7 +353,7 @@ class TelegramQuizBot(
                 app.add_handler(CommandHandler("broadcast_confirm",  self._dev.broadcast_confirm))
                 app.add_handler(CommandHandler("delbroadcast_confirm", self._dev.delbroadcast_confirm))
                 app.add_handler(CallbackQueryHandler(
-                    self._dev.handle_edit_quiz_callback, pattern="^eq_"))
+                    self._dev.handle_edit_quiz_callback, pattern="^edit_quiz_"))
                 app.add_handler(MessageHandler(
                     filters.TEXT & ~filters.COMMAND, self._dev.handle_text_input))
                 logger.info("DeveloperCommands ✅")
