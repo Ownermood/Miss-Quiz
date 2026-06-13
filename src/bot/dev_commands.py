@@ -1521,52 +1521,20 @@ class DeveloperCommands:
                 })
                 logger.info(f"Saved broadcast {broadcast_id} to database with {len(sent_messages)} messages")
             
-            # Get stats for result message (from all users, not just PM users)
-            all_users = self.db.get_all_users_stats()
-            pm_users_count = sum(1 for user in all_users if user.get('has_pm_access') == 1)
-            group_only_users = sum(1 for user in all_users if user.get('has_pm_access') == 0 or user.get('has_pm_access') is None)
-            total_users_count = pm_users_count + group_only_users
-            total_groups_count = len(groups)
-            
-            # Get quiz performance stats
-            quiz_stats_today = self.db.get_quiz_stats_by_period('today')
-            quiz_stats_week = self.db.get_quiz_stats_by_period('week')
-            quiz_stats_month = self.db.get_quiz_stats_by_period('month')
-            all_time_stats = self.db.get_quiz_stats_by_period('all')
-            
-            quizzes_today = quiz_stats_today.get('total_quizzes', 0)
-            quizzes_week = quiz_stats_week.get('total_quizzes', 0)
-            quizzes_month = quiz_stats_month.get('total_quizzes', 0)
-            quizzes_total = all_time_stats.get('total_quizzes', 0)
-            
-            # Build optimized result message
-            result_text = f"✅ Broadcast completed!\n\n"
-            result_text += f"📱 PM Sent: {pm_sent}\n"
-            result_text += f"👥 Groups Sent: {group_sent}\n"
-            result_text += f"━━━━━━━━━━━━━━━\n"
-            result_text += f"✅ Total Sent: {success_count}\n"
+            # Build result message
+            result_text = "✅  <b>Broadcast Completed</b>\n"
+            result_text += "━━━━━━━━━━━━━━━\n\n"
+            result_text += f"📱  PM Sent       ›  <b>{pm_sent}</b>\n"
+            result_text += f"👥  Groups Sent   ›  <b>{group_sent}</b>\n"
+            result_text += f"✅  Total Sent    ›  <b>{success_count}</b>\n"
             if skipped_count > 0:
-                result_text += f"🗑️ Auto-Cleaned: {skipped_count} (kicked/inactive)\n"
+                result_text += f"🗑️  Auto-Cleaned  ›  <b>{skipped_count}</b>  (blocked/inactive)\n"
             if fail_count > 0:
-                result_text += f"⚠️ Skipped: {fail_count} (access restricted)\n"
+                result_text += f"⚠️  Skipped       ›  <b>{fail_count}</b>  (no access)\n"
+            result_text += "\n━━━━━━━━━━━━━━━\n"
+            result_text += "Use /delbroadcast to undo."
             
-            result_text += f"\n📊 𝗕𝗼𝘁 𝗦𝘁𝗮𝘁𝘀\n"
-            result_text += f"━━━━━━━━━━━━━━━━━━━━\n"
-            result_text += f"• 🌐 Total Groups: {total_groups_count} groups\n"
-            result_text += f"• 👤 PM Users: {pm_users_count} users\n"
-            result_text += f"• 👥 Group-only Users: {group_only_users} users\n"
-            result_text += f"• 👥 Total Users: {total_users_count} users\n\n"
-            result_text += f"════════════════════\n"
-            result_text += f"🤖 𝗢𝘃𝗲𝗿𝗮𝗹𝗹 𝗣𝗲𝗿𝗳𝗼𝗿𝗺𝗮𝗻𝗰𝗲\n"
-            result_text += f"────────────────────\n"
-            result_text += f"• Today: {quizzes_today}\n"
-            result_text += f"• This Week: {quizzes_week}\n"
-            result_text += f"• This Month: {quizzes_month}\n"
-            result_text += f"• Total: {quizzes_total}\n\n"
-            result_text += f"━━━━━━━━━━━━━━━━━━━━\n"
-            result_text += f"✨ Keep quizzing & growing! 🚀"
-            
-            await status.edit_text(result_text)
+            await status.edit_text(result_text, parse_mode=ParseMode.HTML)
             
             logger.info(f"Broadcast completed by {update.effective_user.id}: {pm_sent} PMs, {group_sent} groups ({success_count} total, {fail_count} failed, {skipped_count} auto-removed)")
             
