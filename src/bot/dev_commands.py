@@ -1521,17 +1521,27 @@ class DeveloperCommands:
                 logger.info(f"Saved broadcast {broadcast_id} to database with {len(sent_messages)} messages")
             
             # Build result message
-            result_text = "✅  <b>Broadcast Completed</b>\n"
-            result_text += "━━━━━━━━━━━━━━━\n\n"
-            result_text += f"📱  PM Sent       ›  <b>{pm_sent}</b>\n"
-            result_text += f"👥  Groups Sent   ›  <b>{group_sent}</b>\n"
-            result_text += f"✅  Total Sent    ›  <b>{success_count}</b>\n"
+            LINE = "━" * 38
+            extra = ""
             if skipped_count > 0:
-                result_text += f"🗑️  Auto-Cleaned  ›  <b>{skipped_count}</b>  (blocked/inactive)\n"
+                extra += f"│  Auto-Cleaned  ›  <b>{skipped_count}</b>  (blocked/inactive)\n"
             if fail_count > 0:
-                result_text += f"⚠️  Skipped       ›  <b>{fail_count}</b>  (no access)\n"
-            result_text += "\n━━━━━━━━━━━━━━━\n"
-            result_text += "Use /delbroadcast to undo."
+                extra += f"│  Skipped       ›  <b>{fail_count}</b>  (no access)\n"
+
+            result_text = (
+                f"📢  <b>𝐁𝐑𝐎𝐀𝐃𝐂𝐀𝐒𝐓  𝐂𝐎𝐌𝐏𝐋𝐄𝐓𝐄𝐃</b>\n"
+                f"{LINE}\n\n"
+                f"📬  <b>𝐃𝐄𝐋𝐈𝐕𝐄𝐑𝐘  𝐑𝐄𝐏𝐎𝐑𝐓</b>\n"
+                f"╭──────────────────────────────────────╮\n"
+                f"│  PM Users      ›  <b>{pm_sent}</b>\n"
+                f"│  Groups        ›  <b>{group_sent}</b>\n"
+                f"│  Total Sent    ›  <b>{success_count}</b>\n"
+                f"{extra}"
+                f"╰──────────────────────────────────────╯\n\n"
+                f"{LINE}\n"
+                f"🗑️  Use /delbroadcast to undo\n"
+                f"{LINE}"
+            )
             
             await status.edit_text(result_text, parse_mode=ParseMode.HTML)
             
