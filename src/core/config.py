@@ -165,12 +165,19 @@ class Config:
             users.append(self.wifu_id)
         return users
 
-OWNER_ID = int(os.environ.get("OWNER_ID", "8403136097"))
-WIFU_ID = None
-wifu_id_str = os.environ.get("WIFU_ID")
-if wifu_id_str:
+# ---------------------------------------------------------------------------
+# Module-level constants kept for backward-compatibility.
+# New code should use Config.load() and read from the instance instead.
+# ---------------------------------------------------------------------------
+
+OWNER_ID: int = int(os.environ.get("OWNER_ID", "8403136097"))
+DATABASE_PATH: str = os.path.abspath(os.environ.get("DATABASE_PATH", "data/quiz_bot.db"))
+
+WIFU_ID: Optional[int] = None
+_wifu_raw = os.environ.get("WIFU_ID")
+if _wifu_raw:
     try:
-        WIFU_ID = int(wifu_id_str)
+        WIFU_ID = int(_wifu_raw)
     except ValueError:
         pass
 
@@ -186,5 +193,3 @@ UNAUTHORIZED_MESSAGE = (
     "──────────────────────────\n"
     "  Contact @CLAT_Vision for access."
 )
-
-DATABASE_PATH = os.path.abspath(os.environ.get("DATABASE_PATH", "data/quiz_bot.db"))

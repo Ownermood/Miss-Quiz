@@ -1,0 +1,7 @@
+{
+  "extraPaths": [
+    "/home/runner/workspace/.pythonlibs/lib/python3.11/site-packages"
+  ],
+  "venvPath": "/home/runner/workspace/.pythonlibs",
+  "venv": "lib/python3.11/site-packages"
+}

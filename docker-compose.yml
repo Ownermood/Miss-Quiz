@@ -1,0 +1,28 @@
+version: "3.9"
+
+services:
+  bot:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      - mongo
+    env_file:
+      - .env
+    environment:
+      - MONGODB_URL=mongodb+srv://moinuddinraza0007_db_user:owner786@cluster0.k5qlprn.mongodb.net/?appName=Cluster0
+      - MONGODB_DB=quiz_bot
+    volumes:
+      - ./data:/app/data
+    ports:
+      - "5000:5000"
+
+  mongo:
+    image: mongo:7
+    restart: unless-stopped
+    volumes:
+      - mongo_data:/data/db
+    ports:
+      - "27017:27017"
+
+volumes:
+  mongo_data:

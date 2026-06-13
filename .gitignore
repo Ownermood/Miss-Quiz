@@ -1,0 +1,78 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Environment
+.env
+.venv
+env/
+venv/
+ENV/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Replit specific (DO NOT ignore .replit - needed for deployment)
+.cache/
+.config/
+.local/
+.pythonlibs/
+.upm/
+poetry.lock
+replit.nix
+.breakpoints
+
+# Project specific
+data/*.json
+!data/questions.json
+*.db
+data/bot.lock
+
+# Logs
+*.log
+.pytest_cache/
+
+# Secrets
+.secrets
+
+# UV lock file
+uv.lock
+
+# System
+.DS_Store
+Thumbs.db
+
+# Claude Code internal
+.claude/
+
+# Temporary & attached files
+attached_assets/
+*.tmp
+*.temp
+*.swp
+*.bak
+
+# SQLite specific
+*.db-shm
+*.db-wal

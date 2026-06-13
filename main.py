@@ -1,7 +1,3 @@
-import dns.resolver
-dns.resolver.default_resolver = dns.resolver.Resolver(configure=False)
-dns.resolver.default_resolver.nameservers = ["8.8.8.8", "8.8.4.4"]
-
 """
 CLAT Vision Quiz Bot — Entry point
 """
@@ -14,6 +10,14 @@ import threading
 from datetime import datetime
 from waitress import serve
 from src.core.config import Config
+
+# Force Google DNS to avoid platform-specific resolver failures in cloud envs
+try:
+    import dns.resolver as _dns
+    _dns.default_resolver = _dns.Resolver(configure=False)
+    _dns.default_resolver.nameservers = ["8.8.8.8", "8.8.4.4"]
+except Exception:
+    pass
 
 logging.basicConfig(
     level=logging.INFO,
