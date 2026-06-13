@@ -493,11 +493,5 @@ class TelegramQuizBot(
             await self._render_screen(update, context, prev, edit_msg=query.message)
 
         elif data.startswith("bs_"):
-            parts = data.split("_", 2)
-            if len(parts) >= 2 and parts[1] == "refresh":
-                page = parts[2] if len(parts) > 2 else "overview"
-                await self.cmd_botstats(update, context, edit_msg=query.message, page=page)
-            else:
-                page = parts[1] if len(parts) > 1 else "overview"
-                if uid: self._nav_push(uid, "botstats")
-                await self.cmd_botstats(update, context, edit_msg=query.message, page=page)
+            if uid: self._nav_push(uid, "botstats")
+            await self.cmd_botstats(update, context, edit_msg=query.message)
