@@ -631,7 +631,10 @@ class DatabaseManager:
 
             # ── Groups ────────────────────────────────────────
             g_total = gcol.count_documents({})
-            g_admin = gcol.count_documents({"bot_is_admin": True})
+            # Count groups where the bot is admin OR where status was never
+            # explicitly recorded (field missing = registered before tracking).
+            # Only excludes groups that are confirmed non-admin (False).
+            g_admin = gcol.count_documents({"bot_is_admin": {"$ne": False}})
             g_new_d = gcol.count_documents({"joined_at": {"$gte": d_cut}})
             g_new_w = gcol.count_documents({"joined_at": {"$gte": w_cut}})
             g_new_m = gcol.count_documents({"joined_at": {"$gte": m_cut}})
