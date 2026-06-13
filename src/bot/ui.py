@@ -85,21 +85,43 @@ class UI:
 
     # ── Category system ───────────────────────────────────────
     CATS = {
-        "legal":     ("⚖️",  "Legal Reasoning"),
-        "english":   ("📖",  "English"),
-        "gk":        ("🌐",  "General Knowledge"),
-        "current":   ("📰",  "Current Affairs"),
-        "polity":    ("🏛️",  "Polity"),
-        "math":      ("🔢",  "Mathematics"),
-        "reasoning": ("🧠",  "Logical Reasoning"),
-        "history":   ("📜",  "History"),
-        "default":   ("📚",  "General"),
+        "general knowledge": ("🌍", "General Knowledge"),
+        "current affairs":   ("📰", "Current Affairs"),
+        "static gk":         ("📚", "Static GK"),
+        "science":           ("🔬", "Science & Technology"),
+        "technology":        ("🔬", "Science & Technology"),
+        "history":           ("📜", "History"),
+        "geography":         ("🗺️", "Geography"),
+        "economics":         ("💰", "Economics"),
+        "political science": ("🏛️", "Political Science"),
+        "constitution & law":("⚖️", "Constitution & Law"),
+        "constitution":      ("📖", "Constitution"),
+        "arts":              ("🎭", "Arts & Literature"),
+        "literature":        ("🎭", "Arts & Literature"),
+        "sports":            ("🎮", "Sports & Games"),
+        "games":             ("🎮", "Sports & Games"),
+        "legal":             ("⚖️", "Legal Reasoning"),
+        "english":           ("📖", "English"),
+        "gk":                ("🌍", "General Knowledge"),
+        "current":           ("📰", "Current Affairs"),
+        "polity":            ("🏛️", "Polity"),
+        "math":              ("🔢", "Mathematics"),
+        "reasoning":         ("🧠", "Logical Reasoning"),
+        "default":           ("📚", "General"),
     }
 
     @staticmethod
     def cat_emoji(cat: str) -> str:
         cat_lower = (cat or "").lower()
+        # Try exact match first, then substring (longer keys match before shorter)
         for k, (emoji, _) in UI.CATS.items():
+            if k == "default":
+                continue
+            if cat_lower == k:
+                return emoji
+        for k, (emoji, _) in UI.CATS.items():
+            if k == "default":
+                continue
             if k in cat_lower:
                 return emoji
         return UI.CATS["default"][0]

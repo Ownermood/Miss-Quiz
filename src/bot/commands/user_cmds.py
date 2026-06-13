@@ -150,32 +150,40 @@ class UserCommandsMixin(object):
                     for c, n in sorted(counts.items(), key=lambda x: -x[1])]
 
         total_q = sum(c.get("count", 0) for c in cats)
-        lines = [
-            f"📚  <b>𝗩𝗜𝗘𝗪 𝗖𝗔𝗧𝗘𝗚𝗢𝗥𝗜𝗘𝗦</b>",
-            f"══════════════════",
-            f"",
-            f"📑  <b>𝗔𝗩𝗔𝗜𝗟𝗔𝗕𝗟𝗘 𝗤𝗨𝗜𝗭 𝗖𝗔𝗧𝗘𝗚𝗢𝗥𝗜𝗘𝗦</b>",
-            f"",
-        ]
+        LINE = "━" * 38
+
         if cats:
+            cat_lines = ""
             for c in cats:
                 name  = (c.get("_id") or "General")
                 safe  = name.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
                 emoji = UI.cat_emoji(name)
-                lines.append(f"{emoji}  {safe}  ›  <b>{UI.fmt_num(c.get('count', 0))}</b>")
-            lines += [
-                f"",
-                f"📚  Total  ›  <b>{UI.fmt_num(total_q)}</b> questions",
-                f"",
-                f"🎯  Use <code>/quiz &lt;category&gt;</code> to play a topic!",
-            ]
+                count = c.get("count", 0)
+                cat_lines += f"│  {emoji}  {safe}  ›  <b>{count:,}</b>\n"
+
+            text = (
+                f"📚  <b>𝐕𝐈𝐄𝐖  𝐂𝐀𝐓𝐄𝐆𝐎𝐑𝐈𝐄𝐒</b>\n"
+                f"{LINE}\n\n"
+                f"📑  <b>𝐀𝐕𝐀𝐈𝐋𝐀𝐁𝐋𝐄  𝐐𝐔𝐈𝐙  𝐂𝐀𝐓𝐄𝐆𝐎𝐑𝐈𝐄𝐒</b>\n"
+                f"╭──────────────────────────────────────╮\n"
+                f"{cat_lines}"
+                f"│\n"
+                f"│  📊  Total Questions  ›  <b>{total_q:,}</b>\n"
+                f"╰──────────────────────────────────────╯\n\n"
+                f"{LINE}\n"
+                f"🎯  Stay tuned!  More quizzes coming soon!\n"
+                f"🛠  Use <code>/quiz &lt;category&gt;</code> to play a topic!\n"
+                f"{LINE}"
+            )
         else:
-            lines += [
-                f"📭  No categories yet — question bank is empty.",
-                f"",
-                f"🛠  Use /addquiz or /importquiz to add questions.",
-            ]
-        text = "\n".join(lines)
+            text = (
+                f"📚  <b>𝐕𝐈𝐄𝐖  𝐂𝐀𝐓𝐄𝐆𝐎𝐑𝐈𝐄𝐒</b>\n"
+                f"{LINE}\n\n"
+                f"📭  No categories yet — question bank is empty.\n\n"
+                f"🛠  Use /addquiz or /importquiz to add questions.\n"
+                f"{LINE}"
+            )
+
         kb = InlineKeyboardMarkup([
             [InlineKeyboardButton("🎓 Start Quiz", callback_data="play_quiz"),
              InlineKeyboardButton("🎓 Commands",   callback_data="help")],
