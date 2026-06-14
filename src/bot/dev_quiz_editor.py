@@ -37,7 +37,7 @@ class QuizEditorMixin:
 
             # If replying to a quiz message, jump directly to that quiz's editor
             if update.message and update.message.reply_to_message:
-                quiz_id = self.extract_quiz_id_from_message(update.message.reply_to_message, context)
+                quiz_id = await self.extract_quiz_id_from_message(update.message.reply_to_message, context)
 
                 if quiz_id:
                     import asyncio as _asyncio
