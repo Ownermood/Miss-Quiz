@@ -245,6 +245,21 @@ class AutoQuizScheduler:
                 correct_idx = question.get("correct_answer", 0)
                 category    = question.get("category", "General Knowledge")
                 q_id        = question.get("id")
+
+                # Clamp options to Telegram's 100-char limit (belt-and-suspenders;
+                # _fmt_question already sanitizes but protects against stale cache).
+                _clamped = []
+                for _opt in options:
+                    _s = str(_opt)
+                    if len(_s) > 100:
+                        logger.warning(
+                            f"[SCHEDULER] Q#{q_id} option truncated at delivery "
+                            f"({len(_s)} chars) for chat {chat_id}"
+                        )
+                        _s = _s[:97] + "…"
+                    _clamped.append(_s)
+                options = _clamped
+
                 explanation = f"✅ {options[correct_idx]}\n📚 {category}  ·  🆔 Q#{q_id}"
 
                 send_kwargs = dict(

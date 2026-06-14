@@ -67,6 +67,13 @@ class AdminCommandsMixin(object):
             await self._reply(update, "❌ Correct answer must be <b>1, 2, 3 or 4</b>")
             return
 
+        # Enforce Telegram's 100-char poll option limit
+        _TMAX   = 100
+        options = [
+            (o[:97] + "…" if len(str(o).strip()) > _TMAX else str(o).strip())
+            for o in options
+        ]
+
         category = lines[6].strip() if len(lines) > 6 else "General"
         msg = await self._reply(update, "⏳ <i>Saving to database...</i>")
         await asyncio.sleep(0.3)

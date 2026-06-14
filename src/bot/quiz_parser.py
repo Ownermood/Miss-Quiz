@@ -455,6 +455,13 @@ def guess_category(q: str) -> str:
 # ══════════════════════════════════════════════════════════════════════════
 
 MAX_IMPORT_PER_FILE = 100_000
+_TELEGRAM_OPT_MAX   = 100  # Telegram hard limit: poll option text must not exceed 100 chars
+
+
+def _clamp_option(opt: str) -> str:
+    opt = str(opt).strip()
+    return opt[:97] + "…" if len(opt) > _TELEGRAM_OPT_MAX else opt
+
 
 def bulk_import(text: str, quiz_manager) -> Dict:
     parser   = SmartQuizParser()
@@ -483,6 +490,15 @@ def bulk_import(text: str, quiz_manager) -> Dict:
         if q_text.lower() in existing:
             skipped += 1; continue
 
+        # Enforce Telegram's 100-char poll option limit before saving
+        clamped = [_clamp_option(o) for o in options]
+        if clamped != [str(o).strip() for o in options]:
+            over = [len(str(o).strip()) for o in options if len(str(o).strip()) > _TELEGRAM_OPT_MAX]
+            logger.warning(
+                f"[IMPORT] Option(s) truncated to fit Telegram limit "
+                f"(original lengths {over}): {q_text[:60]!r}"
+            )
+        item["options"]  = clamped
         item["category"] = guess_category(q_text)
         existing.add(q_text.lower())
         batch.append(item)

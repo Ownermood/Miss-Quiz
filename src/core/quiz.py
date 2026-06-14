@@ -18,6 +18,17 @@ from src.core.exceptions import QuestionNotFoundError, ValidationError, Database
 logger = logging.getLogger(__name__)
 
 
+TELEGRAM_OPTION_MAX = 100  # Telegram hard limit for poll option text length
+
+
+def _sanitize_option(opt: str) -> str:
+    """Truncate a poll option to Telegram's 100-char limit, marking the cut with an ellipsis."""
+    opt = str(opt).strip()
+    if len(opt) > TELEGRAM_OPTION_MAX:
+        return opt[:97] + "…"
+    return opt
+
+
 def _fmt_question(q: Dict) -> Dict:
     """Normalize a raw DB question dict into a consistent format with all fields."""
     options = q.get("options", [])
@@ -29,7 +40,7 @@ def _fmt_question(q: Dict) -> Dict:
     return {
         "id":             q.get("id"),
         "question":       q.get("question", ""),
-        "options":        options,
+        "options":        [_sanitize_option(o) for o in options],
         "correct_answer": q.get("correct_answer", 0),
         "category":       q.get("category", "General"),  # ← BUG FIX: was missing
     }
@@ -62,8 +73,72 @@ class QuizManager:
         self.available_questions = defaultdict(list)
 
         self._load_questions()
+        self._migrate_option_lengths()
 
     # ─── Internal helpers ────────────────────────────────────────────────────
+
+    def _migrate_option_lengths(self) -> None:
+        """One-time startup scan: truncate any DB option > 100 chars in-place.
+
+        Runs synchronously at init. Safe to fail — bot continues regardless.
+        In-memory cache is already sanitized by _fmt_question; this only
+        writes fixed values back to MongoDB so the DB stays permanently clean.
+        """
+        if not self.db:
+            return
+        try:
+            all_q = self.db.get_all_questions()
+            to_fix = []
+            for q in all_q:
+                opts = q.get("options", [])
+                if isinstance(opts, str):
+                    try:
+                        opts = json.loads(opts)
+                    except Exception:
+                        continue
+                raw = [str(o).strip() for o in opts]
+                if any(len(o) > TELEGRAM_OPTION_MAX for o in raw):
+                    to_fix.append((q, raw))
+
+            if not to_fix:
+                logger.info(
+                    f"[MIGRATION] Option length check: all {len(all_q)} question(s) "
+                    f"comply with Telegram's {TELEGRAM_OPTION_MAX}-char limit"
+                )
+                return
+
+            logger.warning(
+                f"[MIGRATION] {len(to_fix)} question(s) have option(s) > "
+                f"{TELEGRAM_OPTION_MAX} chars — fixing DB records..."
+            )
+            fixed = 0
+            for q, raw_opts in to_fix:
+                q_id     = q.get("id")
+                over     = [(i, len(o)) for i, o in enumerate(raw_opts) if len(o) > TELEGRAM_OPTION_MAX]
+                new_opts = [_sanitize_option(o) for o in raw_opts]
+                logger.warning(
+                    f"[MIGRATION] Q#{q_id}: truncating option(s) at "
+                    f"index(es) {[i for i, _ in over]}, "
+                    f"original length(s) {[l for _, l in over]}"
+                )
+                try:
+                    self.db.update_question(
+                        q_id,
+                        q.get("question", ""),
+                        new_opts,
+                        q.get("correct_answer", 0),
+                        category=q.get("category"),
+                    )
+                    fixed += 1
+                except Exception as e:
+                    logger.error(f"[MIGRATION] Failed to fix Q#{q_id}: {e}")
+
+            logger.info(
+                f"[MIGRATION] Fixed {fixed}/{len(to_fix)} question(s) in DB. "
+                f"In-memory already sanitized via _fmt_question."
+            )
+        except Exception as e:
+            logger.error(f"[MIGRATION] _migrate_option_lengths error: {e}")
 
     def _load_questions(self):
         """Load all questions from DB into memory (with category fix)."""
