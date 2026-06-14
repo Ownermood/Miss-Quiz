@@ -291,6 +291,63 @@ class DeveloperCommands(BroadcastCommandsMixin, QuizEditorMixin):
             logger.error(f"Error replacing placeholders for chat {chat_id}: {e}")
             return text
 
+    # ─── Developer notification helpers ──────────────────────────────────────
+
+    async def _promote_developer(
+        self,
+        context,
+        user_id: int,
+        username: str = "",
+        first_name: str = "",
+        last_name: str = "",
+        added_by: int = None,
+    ) -> bool:
+        """Add a developer and send a one-time promotion PM.
+        Returns True if this is a new promotion, False if already a developer."""
+        existing = await asyncio.to_thread(self.db.get_all_developers)
+        is_new = not any(d["user_id"] == user_id for d in existing)
+        await asyncio.to_thread(
+            self.db.add_developer,
+            user_id=user_id, username=username,
+            first_name=first_name, last_name=last_name,
+            added_by=added_by,
+        )
+        if is_new:
+            await self._notify_dev_promoted(context, user_id)
+        return is_new
+
+    async def _notify_dev_promoted(self, context, user_id: int) -> None:
+        """Send a one-time promotion notification to the new developer."""
+        try:
+            await context.bot.send_message(
+                chat_id=user_id,
+                text=(
+                    "🎉 <b>Congratulations!</b>\n\n"
+                    "You have been promoted to <b>Developer</b> in this bot.\n\n"
+                    "You now have access to developer tools and commands "
+                    "assigned by the owner."
+                ),
+                parse_mode=ParseMode.HTML,
+            )
+            logger.info(f"[DEV] Promotion notification sent to {user_id}")
+        except Exception as e:
+            logger.warning(
+                f"[DEV] Could not notify developer {user_id} "
+                f"(user may not have started the bot): {e}"
+            )
+
+    async def _notify_dev_removed(self, context, user_id: int) -> None:
+        """Send a notification to a developer whose access was revoked."""
+        try:
+            await context.bot.send_message(
+                chat_id=user_id,
+                text="🔴 Your <b>Developer</b> access has been removed.",
+                parse_mode=ParseMode.HTML,
+            )
+            logger.info(f"[DEV] Removal notification sent to {user_id}")
+        except Exception as e:
+            logger.warning(f"[DEV] Could not notify removed developer {user_id}: {e}")
+
     # ─── /dev command ────────────────────────────────────────────────────────
 
     async def dev(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -415,34 +472,30 @@ class DeveloperCommands(BroadcastCommandsMixin, QuizEditorMixin):
             # Quick add: /dev <user_id>
             try:
                 user_id = int(context.args[0])
+                username = first_name = last_name = ""
                 try:
-                    user_info = await context.bot.get_chat(user_id)
-                    username = getattr(user_info, 'username', "") or ""
+                    user_info  = await context.bot.get_chat(user_id)
+                    username   = getattr(user_info, 'username',   "") or ""
                     first_name = getattr(user_info, 'first_name', "") or ""
-                    last_name = getattr(user_info, 'last_name', "") or ""
-                    await asyncio.to_thread(
-                        self.db.add_developer,
-                        user_id=user_id, username=username,
-                        first_name=first_name, last_name=last_name,
-                        added_by=update.effective_user.id
-                    )
-                    display_name = first_name or username or f"User {user_id}"
-                    dev_mention = UI.mention(user_id, display_name)
-                    reply = await update.message.reply_text(
-                        f"✅ Developer added successfully!\n\n👤 {dev_mention}\n🆔 ID: {user_id}",
-                        parse_mode=ParseMode.HTML,
-                        link_preview_options=LinkPreviewOptions(is_disabled=True)
-                    )
+                    last_name  = getattr(user_info, 'last_name',  "") or ""
                 except Exception as e:
                     logger.warning(f"Could not fetch user info for {user_id}: {e}")
-                    await asyncio.to_thread(self.db.add_developer, user_id, added_by=update.effective_user.id)
-                    dev_mention = UI.mention(user_id, f"User {user_id}")
-                    reply = await update.message.reply_text(
-                        f"✅ Developer added successfully!\n\n👤 {dev_mention}\n⚠️ Could not fetch user details",
-                        parse_mode=ParseMode.HTML,
-                        link_preview_options=LinkPreviewOptions(is_disabled=True)
-                    )
-                logger.info(f"Developer {user_id} added by {update.effective_user.id}")
+                is_new = await self._promote_developer(
+                    context, user_id, username, first_name, last_name,
+                    update.effective_user.id
+                )
+                display_name = first_name or username or f"User {user_id}"
+                dev_mention  = UI.mention(user_id, display_name)
+                status_line  = "🎉 Promoted!" if is_new else "ℹ️ Already a Developer"
+                reply = await update.message.reply_text(
+                    f"✅ Developer added!\n\n"
+                    f"👤 {dev_mention}\n"
+                    f"🆔 <code>{user_id}</code>\n"
+                    f"{status_line}",
+                    parse_mode=ParseMode.HTML,
+                    link_preview_options=LinkPreviewOptions(is_disabled=True)
+                )
+                logger.info(f"Developer {user_id} added by {update.effective_user.id} (new={is_new})")
                 await self.auto_clean_message(update.message, reply)
                 return
             except ValueError:
@@ -457,33 +510,30 @@ class DeveloperCommands(BroadcastCommandsMixin, QuizEditorMixin):
                     return
                 try:
                     new_dev_id = int(context.args[1])
+                    username = first_name = last_name = ""
                     try:
-                        user_info = await context.bot.get_chat(new_dev_id)
-                        username = getattr(user_info, 'username', "") or ""
+                        user_info  = await context.bot.get_chat(new_dev_id)
+                        username   = getattr(user_info, 'username',   "") or ""
                         first_name = getattr(user_info, 'first_name', "") or ""
-                        last_name = getattr(user_info, 'last_name', "") or ""
-                        await asyncio.to_thread(
-                            self.db.add_developer,
-                            user_id=new_dev_id, username=username,
-                            first_name=first_name, last_name=last_name,
-                            added_by=update.effective_user.id
-                        )
-                        display_name = first_name or username or f"User {new_dev_id}"
-                        dev_mention = f'<b>{html.escape(str(display_name))}</b>'
-                        reply = await update.message.reply_text(
-                            f"✅ Developer added successfully!\n\n👤 {dev_mention}\n🆔 ID: {new_dev_id}",
-                            parse_mode=ParseMode.HTML,
-                            link_preview_options=LinkPreviewOptions(is_disabled=True)
-                        )
+                        last_name  = getattr(user_info, 'last_name',  "") or ""
                     except Exception as e:
                         logger.warning(f"Could not fetch user info for {new_dev_id}: {e}")
-                        await asyncio.to_thread(self.db.add_developer, new_dev_id, added_by=update.effective_user.id)
-                        reply = await update.message.reply_text(
-                            f"✅ Developer added successfully!\n\n👤 <b>User {new_dev_id}</b>\n⚠️ Could not fetch user details",
-                            parse_mode=ParseMode.HTML,
-                            link_preview_options=LinkPreviewOptions(is_disabled=True)
-                        )
-                    logger.info(f"Developer {new_dev_id} added by {update.effective_user.id}")
+                    is_new = await self._promote_developer(
+                        context, new_dev_id, username, first_name, last_name,
+                        update.effective_user.id
+                    )
+                    display_name = first_name or username or f"User {new_dev_id}"
+                    dev_mention  = f'<b>{html.escape(str(display_name))}</b>'
+                    status_line  = "🎉 Promoted!" if is_new else "ℹ️ Already a Developer"
+                    reply = await update.message.reply_text(
+                        f"✅ Developer added!\n\n"
+                        f"👤 {dev_mention}\n"
+                        f"🆔 <code>{new_dev_id}</code>\n"
+                        f"{status_line}",
+                        parse_mode=ParseMode.HTML,
+                        link_preview_options=LinkPreviewOptions(is_disabled=True)
+                    )
+                    logger.info(f"Developer {new_dev_id} added by {update.effective_user.id} (new={is_new})")
                     await self.auto_clean_message(update.message, reply)
                 except ValueError:
                     reply = await update.message.reply_text("❌ Invalid user ID")
@@ -501,7 +551,8 @@ class DeveloperCommands(BroadcastCommandsMixin, QuizEditorMixin):
                         await self.auto_clean_message(update.message, reply)
                         return
                     if await asyncio.to_thread(self.db.remove_developer, dev_id):
-                        reply = await update.message.reply_text(f"✅ Developer {dev_id} removed")
+                        await self._notify_dev_removed(context, dev_id)
+                        reply = await update.message.reply_text(f"✅ Developer <code>{dev_id}</code> removed")
                         logger.info(f"Developer {dev_id} removed by {update.effective_user.id}")
                         await self.auto_clean_message(update.message, reply)
                     else:
@@ -514,41 +565,61 @@ class DeveloperCommands(BroadcastCommandsMixin, QuizEditorMixin):
             elif action == "list":
                 developers = await asyncio.to_thread(self.db.get_all_developers)
 
-                dev_text = """╔══════════════════╗
-║ 👥 𝐃𝐞𝐯𝐞𝐥𝐨𝐩𝐞𝐫 & 𝐀𝐝𝐦𝐢𝐧 𝐏𝐚𝐧𝐞𝐥
-╚══════════════════╝
+                LINE = "━━━━━━━━━━━━━━━━━━━━━━"
+                dev_text = (
+                    "╔══════════════════════╗\n"
+                    "║  👥  Developer Panel  ║\n"
+                    "╚══════════════════════╝\n\n"
+                )
 
-👑 𝗗𝗘𝗩𝗘𝗟𝗢𝗣𝗘𝗥𝗦
-━━━━━━━━━━━━━━━━━━\n"""
-
+                # Owner
                 try:
                     owner_user = await context.bot.get_chat(config.OWNER_ID)
                     owner_name = owner_user.first_name or "Owner"
                 except Exception as e:
                     logger.debug(f"Could not fetch owner info: {e}")
                     owner_name = "Owner"
+                dev_text += f"👑  <b>OWNER</b>\n{LINE}\n"
+                dev_text += (
+                    f"• <b>{html.escape(owner_name)}</b>\n"
+                    f"  🆔 <code>{config.OWNER_ID}</code>\n\n"
+                )
 
-                dev_text += f"• <b>{html.escape(str(owner_name))}</b> (ID: {config.OWNER_ID})\n"
-
+                # WIFU (optional second owner)
                 if config.WIFU_ID:
                     try:
                         wifu_user = await context.bot.get_chat(config.WIFU_ID)
                         wifu_name = wifu_user.first_name or "Developer"
-                        dev_text += f"• <b>{html.escape(str(wifu_name))}</b> (ID: {config.WIFU_ID})\n"
                     except Exception as e:
                         logger.debug(f"Could not fetch WIFU info: {e}")
-                        dev_text += f"• <b>Developer</b> (ID: {config.WIFU_ID})\n"
+                        wifu_name = "Developer"
+                    dev_text += f"🌸  <b>WIFU</b>\n{LINE}\n"
+                    dev_text += (
+                        f"• <b>{html.escape(wifu_name)}</b>\n"
+                        f"  🆔 <code>{config.WIFU_ID}</code>\n\n"
+                    )
 
+                # Database developers
+                count = len(developers)
+                dev_text += f"🔧  <b>DEVELOPERS</b>  ({count})\n{LINE}\n"
+                if not developers:
+                    dev_text += "<i>No additional developers added yet.</i>\n"
                 for dev in developers:
                     dev_uid = dev['user_id']
                     try:
                         dev_user = await context.bot.get_chat(dev_uid)
-                        dev_name = dev_user.first_name or f"User{dev_uid}"
-                        dev_text += f"• <b>{html.escape(str(dev_name))}</b> (ID: {dev_uid})\n"
+                        dev_name = dev_user.first_name or f"User {dev_uid}"
+                        uname = f"  @{dev_user.username}" if dev_user.username else ""
                     except Exception as e:
                         logger.debug(f"Could not fetch developer info: {e}")
-                        d_name = dev.get('username') or dev.get('first_name') or f"User{dev_uid}"
-                        dev_text += f"• <b>{html.escape(str(d_name))}</b> (ID: {dev_uid})\n"
+                        dev_name = dev.get('first_name') or dev.get('username') or f"User {dev_uid}"
+                        uname = f"  @{dev.get('username')}" if dev.get('username') else ""
+                    dev_text += (
+                        f"• <b>{html.escape(dev_name)}</b>{html.escape(uname)}\n"
+                        f"  🆔 <code>{dev_uid}</code>\n"
+                    )
+
+                dev_text += f"\n💡 Tap an ID to copy it."
 
                 reply = await update.message.reply_text(
                     dev_text, parse_mode=ParseMode.HTML,
