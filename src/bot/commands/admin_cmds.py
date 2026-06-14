@@ -7,6 +7,7 @@ import asyncio
 import logging
 import os
 import re
+import time
 from typing import Optional
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -635,6 +636,14 @@ class AdminCommandsMixin(object):
         await self._reply(update, text)
 
     # ─── DOCUMENT HANDLER — Bulk .txt import ─────────────────
+    #
+    # Architecture: handle_document() validates, downloads, and decodes
+    # the file, then fires a background asyncio Task and RETURNS immediately.
+    # The bot is fully responsive while the import runs.  The background
+    # task edits the status message when the import completes.
+    #
+    # _import_users (event-loop-only set) prevents a single admin from
+    # accidentally queuing multiple concurrent imports of the same file.
 
     async def handle_document(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         user = update.effective_user
@@ -648,9 +657,8 @@ class AdminCommandsMixin(object):
             return
 
         mention = UI.mention(user.id, UI.display_name(user))
-
-        fname  = doc.file_name or ""
-        is_txt = (
+        fname   = doc.file_name or ""
+        is_txt  = (
             fname.lower().endswith(".txt") or
             (doc.mime_type or "").startswith("text/")
         )
@@ -672,21 +680,38 @@ class AdminCommandsMixin(object):
             )
             return
 
+        # ── Per-user concurrent-import guard ──────────────────────────────
+        # Accessed only from the event loop — no threading lock needed.
+        if not hasattr(self, '_import_users'):
+            self._import_users: set = set()
+
+        if user.id in self._import_users:
+            await self._reply(update,
+                f"⏳ <b>Import Already Running</b>\n"
+                f"{UI.LINE}\n\n"
+                f"  Your previous import is still in progress.\n"
+                f"  Please wait for it to finish before sending another file."
+            )
+            return
+        self._import_users.add(user.id)
+
+        # ── Download & decode (fast async — does not block event loop) ────
         msg = await self._reply(update,
-            f"📥 <b>IMPORT STARTED</b>\n"
+            f"📥 <b>IMPORT QUEUED</b>\n"
             f"{UI.LINE}\n\n"
             f"  By {mention}\n"
             f"  📄 <code>{fname}</code>\n"
             f"  Size: <code>{doc.file_size or 0:,} bytes</code>\n\n"
-            f"  ⏳ Parsing questions..."
+            f"  ⏳ Downloading..."
         )
 
         try:
-            file_obj  = await context.bot.get_file(doc.file_id,
-                read_timeout=60, write_timeout=60, connect_timeout=60)
+            file_obj  = await context.bot.get_file(
+                doc.file_id, read_timeout=60, write_timeout=60, connect_timeout=60)
             raw_bytes = await file_obj.download_as_bytearray(read_timeout=60)
         except Exception as e:
             logger.error(f"File download error: {e}")
+            self._import_users.discard(user.id)
             if msg:
                 await self._edit(msg,
                     f"❌ <b>Download Failed</b>\n"
@@ -701,6 +726,7 @@ class AdminCommandsMixin(object):
             try:
                 text = raw_bytes.decode("latin-1")
             except Exception:
+                self._import_users.discard(user.id)
                 if msg:
                     await self._edit(msg,
                         f"❌ <b>Encoding Error</b>\n"
@@ -709,67 +735,95 @@ class AdminCommandsMixin(object):
                     )
                 return
 
+        line_count = len(text.splitlines())
         if msg:
             await self._edit(msg,
-                f"📥 <b>IMPORT STARTED</b>\n"
+                f"📥 <b>IMPORT IN PROGRESS</b>\n"
+                f"{UI.LINE}\n\n"
+                f"  By {mention}\n"
+                f"  📄 <code>{fname}</code>\n"
+                f"  📊 {line_count:,} lines detected\n\n"
+                f"  ⚙️ Parsing &amp; importing in background...\n"
+                f"  <i>Bot is fully active. You will be notified when done.</i>"
+            )
+
+        # ── Fire background task — handler returns immediately ─────────────
+        task = asyncio.create_task(
+            self._run_import_background(text, fname, mention, user.id, msg),
+            name=f"import-uid{user.id}",
+        )
+        # Surface unhandled task exceptions to the log
+        task.add_done_callback(
+            lambda t: logger.error(
+                f"[IMPORT] Background task raised: {t.exception()}"
+            ) if not t.cancelled() and t.exception() else None
+        )
+
+    async def _run_import_background(
+        self,
+        text:    str,
+        fname:   str,
+        mention: str,
+        user_id: int,
+        msg,
+    ):
+        """Background task: parse → batch-insert → report.
+        Runs parse+insert in asyncio.to_thread() so the event loop stays
+        free to handle /quiz, callbacks, broadcasts, etc. simultaneously."""
+        try:
+            t0 = time.monotonic()
+            from src.bot.quiz_parser import bulk_import
+            result  = await asyncio.to_thread(bulk_import, text, self.quiz_manager)
+            elapsed = time.monotonic() - t0
+
+            detected = result.get("total_detected", 0)
+            imported = result.get("imported", 0)
+            skipped  = result.get("skipped", 0)
+            failed   = result.get("failed", 0)
+            errors   = result.get("errors", [])
+            total_q  = self._q_count()
+
+            rate = int(imported / max(detected, 1) * 100)
+            bar  = UI.bar(rate)
+
+            text_out = (
+                f"📊 <b>IMPORT REPORT</b>\n"
                 f"{UI.LINE}\n\n"
                 f"  By {mention}\n"
                 f"  📄 <code>{fname}</code>\n\n"
-                f"  🔍 Analyzing {len(text.splitlines())} lines..."
+                f"<b>RESULTS</b>\n"
+                f"{UI.THIN}\n"
+                f"  Detected  ›  <b>{detected}</b>\n"
+                f"  Imported  ›  <b>{imported}</b>\n"
+                f"  Skipped   ›  <b>{skipped}</b>  <i>(duplicates)</i>\n"
+                f"  Failed    ›  <b>{failed}</b>\n\n"
+                f"  Success   ›  [{bar}] <b>{rate}%</b>\n\n"
+                f"  📦 Total in DB: <b>{total_q}</b>\n"
+                f"  ⏱ Time      ›  <b>{elapsed:.1f}s</b>\n"
             )
+            if errors:
+                text_out += f"\n<b>ERRORS (first {min(len(errors), 3)}):</b>\n"
+                for err in errors[:3]:
+                    text_out += f"  <code>{str(err)[:65]}</code>\n"
+            text_out += f"\n{UI.LINE}\n  <i>Use /quiz to test your new questions!</i>"
 
-        import time as _time
-        try:
-            from src.bot.quiz_parser import bulk_import
-            _t0    = _time.monotonic()
-            result = await asyncio.to_thread(bulk_import, text, self.quiz_manager)
-            elapsed = _time.monotonic() - _t0
-        except Exception as e:
-            logger.error(f"bulk_import error: {e}")
+            kb = InlineKeyboardMarkup([[
+                InlineKeyboardButton("🎓 Play Quiz", callback_data="play_quiz"),
+            ]])
             if msg:
-                await self._edit(msg,
-                    f"❌ <b>Import Failed</b>\n"
-                    f"{UI.LINE}\n\n"
-                    f"  Error: <code>{e}</code>"
-                )
-            return
+                await self._edit(msg, text_out, kb)
 
-        detected = result.get("total_detected", 0)
-        imported = result.get("imported", 0)
-        skipped  = result.get("skipped", 0)
-        failed   = result.get("failed", 0)
-        errors   = result.get("errors", [])
-        total_q  = self._q_count()
-
-        rate = int(imported / max(detected, 1) * 100)
-        bar  = UI.bar(rate)
-
-        text_out = (
-            f"📊 <b>IMPORT REPORT</b>\n"
-            f"{UI.LINE}\n\n"
-            f"  By {mention}\n"
-            f"  📄 <code>{fname}</code>\n\n"
-            f"<b>RESULTS</b>\n"
-            f"{UI.THIN}\n"
-            f"  Detected  ›  <b>{detected}</b>\n"
-            f"  Imported  ›  <b>{imported}</b>\n"
-            f"  Skipped   ›  <b>{skipped}</b>  <i>(duplicates)</i>\n"
-            f"  Failed    ›  <b>{failed}</b>\n\n"
-            f"  Success   ›  [{bar}] <b>{rate}%</b>\n\n"
-            f"  📦 Total in DB: <b>{total_q}</b>\n"
-            f"  ⏱ Time      ›  <b>{elapsed:.1f}s</b>\n"
-        )
-        if errors:
-            text_out += f"\n<b>ERRORS (first {min(len(errors), 3)}):</b>\n"
-            for err in errors[:3]:
-                text_out += f"  <code>{str(err)[:65]}</code>\n"
-
-        text_out += f"\n{UI.LINE}\n  <i>Use /quiz to test your new questions!</i>"
-
-        kb = InlineKeyboardMarkup([[
-            InlineKeyboardButton("🎓 Play Quiz", callback_data="play_quiz"),
-        ]])
-        if msg:
-            await self._edit(msg, text_out, kb)
-        else:
-            await self._reply(update, text_out, reply_markup=kb)
+        except Exception as e:
+            logger.error(f"[IMPORT] _run_import_background failed: {e}", exc_info=True)
+            if msg:
+                try:
+                    await self._edit(msg,
+                        f"❌ <b>Import Failed</b>\n"
+                        f"{UI.LINE}\n\n"
+                        f"  Error: <code>{str(e)[:120]}</code>"
+                    )
+                except Exception:
+                    pass
+        finally:
+            if hasattr(self, '_import_users'):
+                self._import_users.discard(user_id)

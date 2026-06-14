@@ -8,6 +8,7 @@ import json
 import random
 import logging
 import traceback
+import threading
 from typing import List, Dict, Optional, Any
 from datetime import datetime, timedelta
 from collections import defaultdict, deque
@@ -48,6 +49,9 @@ class QuizManager:
 
         self.db = db_manager if db_manager else DatabaseManager()
         logger.info("QuizManager: database connection ready")
+
+        # Protects self.questions against concurrent import threads
+        self._questions_lock = threading.Lock()
 
         # Cache
         self._cached_questions       = None
@@ -156,46 +160,62 @@ class QuizManager:
 
     def add_questions(self, questions: List[Dict],
                       _existing: Optional[set] = None) -> Dict:
-        """Add questions in bulk using a single batch DB insert.
-        Pass _existing to reuse an already-computed dedup set."""
-        added, db_saved = 0, 0
-        duplicates, errors = [], []
+        """Thread-safe bulk insert.
 
-        existing = _existing if _existing is not None else {
-            ex["question"].strip().lower() for ex in self.questions
-        }
+        Phase 1 (dedup) and Phase 3 (cache append) hold _questions_lock.
+        Phase 2 (DB insert) runs without the lock so the bot stays
+        responsive during long writes.
 
-        batch = []
-        for q in questions:
-            question = q.get("question", "").strip()
-            options  = q.get("options", [])
-            correct  = q.get("correct_answer", 0)
-            category = q.get("category", "General")
+        _existing: pre-built dedup set from the caller (bulk_import).
+        We merge it with the current self.questions snapshot under the
+        lock to catch any questions added by a concurrent import between
+        when the caller built the set and when we enter the lock.
+        """
+        dup_count = 0
+        errors    = []
 
-            q_lower = question.lower()
-            if q_lower in existing:
-                duplicates.append(question)
-                continue
+        # ── Phase 1: build authoritative batch under lock ─────────────────
+        with self._questions_lock:
+            if _existing is not None:
+                # Start from caller's set and fold in anything added since
+                # it was built (handles concurrent-import races)
+                existing = set(_existing)
+                for q in self.questions:
+                    existing.add(q["question"].strip().lower())
+            else:
+                existing = {q["question"].strip().lower() for q in self.questions}
 
-            batch.append({
-                "question":       question,
-                "options":        options,
-                "correct_answer": correct,
-                "category":       category,
-            })
-            existing.add(q_lower)  # block intra-batch duplicates
+            batch = []
+            for q in questions:
+                question = q.get("question", "").strip()
+                q_lower  = question.lower()
+                if q_lower in existing:
+                    dup_count += 1
+                    continue
+                batch.append({
+                    "question":       question,
+                    "options":        q.get("options", []),
+                    "correct_answer": q.get("correct_answer", 0),
+                    "category":       q.get("category", "General"),
+                })
+                existing.add(q_lower)   # block intra-batch duplicates
 
+        # ── Phase 2: DB write — lock NOT held ─────────────────────────────
+        added = db_saved = 0
         if batch:
             try:
                 count, new_ids, errs = self.db.add_questions_batch(batch)
-                for i in range(count):
-                    self.questions.append(_fmt_question({
-                        "id":             new_ids[i],
-                        "question":       batch[i]["question"],
-                        "options":        batch[i]["options"],
-                        "correct_answer": batch[i]["correct_answer"],
-                        "category":       batch[i]["category"],
-                    }))
+
+                # ── Phase 3: update in-memory cache under lock ────────────
+                with self._questions_lock:
+                    for i in range(count):
+                        self.questions.append(_fmt_question({
+                            "id":             new_ids[i],
+                            "question":       batch[i]["question"],
+                            "options":        batch[i]["options"],
+                            "correct_answer": batch[i]["correct_answer"],
+                            "category":       batch[i]["category"],
+                        }))
                 added    = count
                 db_saved = count
                 errors   = errs
@@ -205,7 +225,7 @@ class QuizManager:
         return {
             "added":    added,
             "db_saved": db_saved,
-            "rejected": {"duplicates": len(duplicates)},
+            "rejected": {"duplicates": dup_count},
             "errors":   errors,
         }
 
@@ -213,9 +233,10 @@ class QuizManager:
         try:
             if not self.db.delete_question(db_id):
                 return False
-            before = len(self.questions)
-            self.questions = [q for q in self.questions if q.get("id") != db_id]
-            logger.info(f"Deleted Q#{db_id}, removed {before - len(self.questions)} from cache")
+            with self._questions_lock:
+                before = len(self.questions)
+                self.questions = [q for q in self.questions if q.get("id") != db_id]
+                logger.info(f"Deleted Q#{db_id}, removed {before - len(self.questions)} from cache")
             return True
         except Exception as e:
             logger.error(f"delete_question_by_db_id: {e}")
@@ -245,17 +266,22 @@ class QuizManager:
             return False
 
     def reload_data(self):
-        """Reload questions from MongoDB, fix cache."""
+        """Reload questions from MongoDB.
+        DB fetch and list-build run outside the lock; only the pointer
+        swap that makes the new list visible is locked."""
         try:
-            self._cached_questions       = None
+            self._cached_questions = None
             self.recent_questions.clear()
             self.last_question_time.clear()
             self.available_questions.clear()
 
-            raw = self.db.get_all_questions()
-            self.questions = [_fmt_question(q) for q in raw]  # ← BUG FIX: category included
+            raw           = self.db.get_all_questions()         # outside lock (I/O)
+            new_questions = [_fmt_question(q) for q in raw]    # outside lock (CPU)
 
-            logger.info(f"Reload complete: {len(self.questions)} questions")
+            with self._questions_lock:
+                self.questions = new_questions                  # atomic pointer swap
+
+            logger.info(f"Reload complete: {len(new_questions)} questions")
             return True
         except Exception as e:
             logger.error(f"reload_data: {e}\n{traceback.format_exc()}")
