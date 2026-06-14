@@ -154,42 +154,59 @@ class QuizManager:
 
     # ─── Question management ─────────────────────────────────────────────────
 
-    def add_questions(self, questions: List[Dict]) -> Dict:
+    def add_questions(self, questions: List[Dict],
+                      _existing: Optional[set] = None) -> Dict:
+        """Add questions in bulk using a single batch DB insert.
+        Pass _existing to reuse an already-computed dedup set."""
         added, db_saved = 0, 0
         duplicates, errors = [], []
 
-        existing = {ex["question"].strip().lower() for ex in self.questions}
+        existing = _existing if _existing is not None else {
+            ex["question"].strip().lower() for ex in self.questions
+        }
 
+        batch = []
         for q in questions:
             question = q.get("question", "").strip()
             options  = q.get("options", [])
             correct  = q.get("correct_answer", 0)
             category = q.get("category", "General")
 
-            if question.lower() in existing:
+            q_lower = question.lower()
+            if q_lower in existing:
                 duplicates.append(question)
                 continue
 
+            batch.append({
+                "question":       question,
+                "options":        options,
+                "correct_answer": correct,
+                "category":       category,
+            })
+            existing.add(q_lower)  # block intra-batch duplicates
+
+        if batch:
             try:
-                new_id = self.db.add_question(question, options, correct, category)
-                if new_id is not None:
-                    new_q = _fmt_question({
-                        "id": new_id, "question": question,
-                        "options": options, "correct_answer": correct, "category": category
-                    })
-                    self.questions.append(new_q)
-                    existing.add(question.lower())
-                    added    += 1
-                    db_saved += 1
-                else:
-                    errors.append(f"DB insert failed for: {question[:40]}")
+                count, new_ids, errs = self.db.add_questions_batch(batch)
+                for i in range(count):
+                    self.questions.append(_fmt_question({
+                        "id":             new_ids[i],
+                        "question":       batch[i]["question"],
+                        "options":        batch[i]["options"],
+                        "correct_answer": batch[i]["correct_answer"],
+                        "category":       batch[i]["category"],
+                    }))
+                added    = count
+                db_saved = count
+                errors   = errs
             except Exception as e:
                 errors.append(str(e))
 
         return {
-            "added": added, "db_saved": db_saved,
+            "added":    added,
+            "db_saved": db_saved,
             "rejected": {"duplicates": len(duplicates)},
-            "errors": errors,
+            "errors":   errors,
         }
 
     def delete_question_by_db_id(self, db_id: int) -> bool:

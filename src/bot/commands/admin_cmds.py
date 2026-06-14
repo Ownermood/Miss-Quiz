@@ -663,11 +663,11 @@ class AdminCommandsMixin(object):
             )
             return
 
-        if doc.file_size and doc.file_size > 2 * 1024 * 1024:
+        if doc.file_size and doc.file_size > 20 * 1024 * 1024:
             await self._reply(update,
                 f"❌ <b>File Too Large</b>\n"
                 f"{UI.LINE}\n\n"
-                f"  Maximum size: 2 MB.\n"
+                f"  Maximum size: 20 MB.\n"
                 f"  Split into smaller files."
             )
             return
@@ -718,9 +718,12 @@ class AdminCommandsMixin(object):
                 f"  🔍 Analyzing {len(text.splitlines())} lines..."
             )
 
+        import time as _time
         try:
             from src.bot.quiz_parser import bulk_import
-            result = bulk_import(text, self.quiz_manager)
+            _t0    = _time.monotonic()
+            result = await asyncio.to_thread(bulk_import, text, self.quiz_manager)
+            elapsed = _time.monotonic() - _t0
         except Exception as e:
             logger.error(f"bulk_import error: {e}")
             if msg:
@@ -754,6 +757,7 @@ class AdminCommandsMixin(object):
             f"  Failed    ›  <b>{failed}</b>\n\n"
             f"  Success   ›  [{bar}] <b>{rate}%</b>\n\n"
             f"  📦 Total in DB: <b>{total_q}</b>\n"
+            f"  ⏱ Time      ›  <b>{elapsed:.1f}s</b>\n"
         )
         if errors:
             text_out += f"\n<b>ERRORS (first {min(len(errors), 3)}):</b>\n"

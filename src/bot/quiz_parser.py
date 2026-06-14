@@ -94,12 +94,13 @@ class SmartQuizParser:
         Uses blank lines as primary separator,
         numbered question lines as secondary separator.
         """
-        # Primary split: by blank lines
+        # Primary split: by blank lines — strip each line once
         segments = []
         seg = []
         for line in lines:
-            if line.strip():
-                seg.append(line.strip())
+            s = line.strip()
+            if s:
+                seg.append(s)
             else:
                 if seg:
                     segments.append(seg)
@@ -433,18 +434,27 @@ _CAT_KW = {
     ],
 }
 
+# Pre-built per-category regex (compiled once at import time).
+# Each pattern matches any keyword for that category in one pass.
+_CAT_RE = {
+    cat: re.compile("|".join(re.escape(kw) for kw in kws), re.IGNORECASE)
+    for cat, kws in _CAT_KW.items()
+}
+
 def guess_category(q: str) -> str:
-    q_low  = q.lower()
-    scores = {cat: sum(1 for kw in kws if kw in q_low) for cat, kws in _CAT_KW.items()}
-    best   = max(scores, key=scores.get)
-    return best if scores[best] > 0 else "General"
+    best_cat, best_score = "General", 0
+    for cat, pattern in _CAT_RE.items():
+        n = len(pattern.findall(q))
+        if n > best_score:
+            best_score, best_cat = n, cat
+    return best_cat if best_score > 0 else "General"
 
 
 # ══════════════════════════════════════════════════════════════════════════
 #  BULK IMPORT COORDINATOR
 # ══════════════════════════════════════════════════════════════════════════
 
-MAX_IMPORT_PER_FILE = 500
+MAX_IMPORT_PER_FILE = 100_000
 
 def bulk_import(text: str, quiz_manager) -> Dict:
     parser   = SmartQuizParser()
@@ -479,7 +489,8 @@ def bulk_import(text: str, quiz_manager) -> Dict:
 
     if batch:
         try:
-            res      = quiz_manager.add_questions(batch)
+            # Pass existing set so add_questions() skips rebuilding it
+            res      = quiz_manager.add_questions(batch, _existing=existing)
             imported = res.get("added", 0)
             skipped += res.get("rejected", {}).get("duplicates", 0)
             errs     = res.get("errors", [])

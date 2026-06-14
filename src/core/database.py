@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 try:
     from pymongo import MongoClient, ASCENDING, DESCENDING
-    from pymongo.errors import PyMongoError
+    from pymongo.errors import PyMongoError, BulkWriteError
     PYMONGO_AVAILABLE = True
 except ImportError:
     PYMONGO_AVAILABLE = False
@@ -85,6 +85,17 @@ class DatabaseManager:
         )
         return counter["seq"]
 
+    def _next_id_batch(self, name: str, count: int) -> int:
+        """Atomically reserve `count` sequential IDs in one round trip.
+        Returns the first ID of the allocated block."""
+        result = self.db["_counters"].find_one_and_update(
+            {"_id": name},
+            {"$inc": {"seq": count}},
+            upsert=True,
+            return_document=True,
+        )
+        return result["seq"] - count + 1
+
     # ── Questions ─────────────────────────────────────────────────────────────
 
     def get_all_questions(self) -> List[Dict]:
@@ -156,6 +167,46 @@ class DatabaseManager:
         except Exception as e:
             logger.error(f"add_question error: {e}")
             return None
+
+    def add_questions_batch(self, questions: List[Dict]) -> tuple:
+        """Bulk-insert questions in a single MongoDB round trip.
+        Returns (inserted_count, new_ids_list, errors_list).
+        Uses ordered=False so a bad document doesn't abort the whole batch."""
+        if not questions:
+            return 0, [], []
+        n = len(questions)
+        try:
+            first_id = self._next_id_batch("questions", n)
+        except Exception as e:
+            logger.error(f"add_questions_batch: counter allocation failed: {e}")
+            return 0, [], [str(e)]
+
+        now  = datetime.utcnow().isoformat()
+        docs    = []
+        new_ids = []
+        for i, q in enumerate(questions):
+            qid = first_id + i
+            docs.append({
+                "id":             qid,
+                "question":       q.get("question", ""),
+                "options":        q.get("options", []),
+                "correct_answer": q.get("correct_answer", 0),
+                "category":       q.get("category", "General"),
+                "created_at":     now,
+            })
+            new_ids.append(qid)
+
+        try:
+            self.questions_col.insert_many(docs, ordered=False)
+            return n, new_ids, []
+        except BulkWriteError as exc:
+            inserted = exc.details.get("nInserted", 0)
+            errs = [str(e) for e in exc.details.get("writeErrors", [])[:5]]
+            logger.error(f"add_questions_batch: partial write inserted={inserted}: {exc}")
+            return inserted, new_ids[:inserted], errs
+        except Exception as exc:
+            logger.error(f"add_questions_batch: insert_many failed: {exc}")
+            return 0, [], [str(exc)]
 
     def update_question(self, qid: int, question: str, options: list,
                         correct_answer: int, category: str = None) -> bool:
