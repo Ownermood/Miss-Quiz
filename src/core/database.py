@@ -29,7 +29,12 @@ class DatabaseManager:
         url = mongo_url or os.environ.get("MONGODB_URL", "mongodb://localhost:27017")
         db_name = os.environ.get("MONGODB_DB", "quiz_bot")
 
-        self.client = MongoClient(url, serverSelectionTimeoutMS=10000)
+        self.client = MongoClient(
+            url,
+            serverSelectionTimeoutMS=10000,
+            connectTimeoutMS=10000,
+            socketTimeoutMS=30000,
+        )
         # Ping to verify connection
         self.client.admin.command('ping')
         self.db = self.client[db_name]

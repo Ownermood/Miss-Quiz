@@ -171,6 +171,11 @@ class Config:
 # ---------------------------------------------------------------------------
 
 OWNER_ID: int = int(os.environ.get("OWNER_ID", "0"))
+if OWNER_ID == 0:
+    logger.error(
+        "⛔ OWNER_ID is not set — admin commands will be disabled. "
+        "Set the OWNER_ID environment variable to your Telegram user ID."
+    )
 DATABASE_PATH: str = os.path.abspath(os.environ.get("DATABASE_PATH", "data/quiz_bot.db"))
 
 WIFU_ID: Optional[int] = None

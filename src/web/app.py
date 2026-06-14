@@ -72,9 +72,14 @@ def get_app():
 
 
 def _check_api_auth():
-    """Return True if the request has a valid API key. Falls through in dev mode (no key set)."""
+    """Return True if the request has a valid API key.
+    In production (Heroku DYNO set), an unset key blocks all API access.
+    In dev mode (no DYNO), an unset key allows access."""
     api_key = os.environ.get("ADMIN_API_KEY", "")
     if not api_key:
+        if os.environ.get("DYNO"):  # Heroku production environment
+            logger.warning("[SECURITY] ADMIN_API_KEY not configured — blocking API access")
+            return False
         return True  # dev mode — no key configured
     req_key = request.headers.get("X-Admin-Key", "") or request.args.get("api_key", "")
     return bool(req_key and req_key == api_key)
@@ -92,6 +97,18 @@ async def _bot_lifecycle():
     token = os.environ.get("TELEGRAM_TOKEN", "")
     if not token:
         raise ValueError("TELEGRAM_TOKEN not set")
+
+    owner_id = os.environ.get("OWNER_ID", "")
+    if not owner_id or owner_id == "0":
+        raise ValueError(
+            "OWNER_ID not set or invalid — set OWNER_ID to your Telegram user ID before starting"
+        )
+
+    if not os.environ.get("ADMIN_API_KEY"):
+        logger.critical(
+            "[SECURITY] ADMIN_API_KEY is not set — admin API endpoints are unprotected. "
+            "Set ADMIN_API_KEY to a strong random secret."
+        )
 
     mongo_url = os.environ.get("MONGODB_URL", "mongodb://localhost:27017")
     db_mgr    = DatabaseManager(mongo_url=mongo_url)

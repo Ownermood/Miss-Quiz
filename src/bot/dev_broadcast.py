@@ -37,8 +37,8 @@ class BroadcastCommandsMixin:
                 return
 
             # Determine media type and recipient counts for logging (PM-accessible users only)
-            users = self.db.get_pm_accessible_users()
-            groups = self.db.get_active_groups()
+            users = await asyncio.to_thread(self.db.get_pm_accessible_users)
+            groups = await asyncio.to_thread(self.db.get_active_groups)
             total_targets = len(users) + len(groups)
 
             # Determine initial media type for logging
@@ -60,7 +60,8 @@ class BroadcastCommandsMixin:
                 media_type = 'help'
 
             # Log command execution immediately
-            self.db.log_activity(
+            await asyncio.to_thread(
+                self.db.log_activity,
                 activity_type='command',
                 user_id=update.effective_user.id,
                 chat_id=update.effective_chat.id,
@@ -76,8 +77,8 @@ class BroadcastCommandsMixin:
             if update.message.reply_to_message:
                 replied_message = update.message.reply_to_message
 
-                users = self.db.get_pm_accessible_users()
-                groups = self.db.get_active_groups()
+                users = await asyncio.to_thread(self.db.get_pm_accessible_users)
+                groups = await asyncio.to_thread(self.db.get_active_groups)
                 total_targets = len(users) + len(groups)
 
                 # Detect media type
@@ -152,8 +153,8 @@ class BroadcastCommandsMixin:
                 # Parse inline buttons from text
                 cleaned_text, reply_markup = self.parse_inline_buttons(message_text)
 
-                users = self.db.get_pm_accessible_users()
-                groups = self.db.get_active_groups()
+                users = await asyncio.to_thread(self.db.get_pm_accessible_users)
+                groups = await asyncio.to_thread(self.db.get_active_groups)
                 total_targets = len(users) + len(groups)
 
                 confirm_text = f"📢 Broadcast Confirmation\n\n"
@@ -197,7 +198,8 @@ class BroadcastCommandsMixin:
         except Exception as e:
             response_time = int((time.time() - start_time) * 1000)
             if update.effective_user and update.effective_chat:
-                self.db.log_activity(
+                await asyncio.to_thread(
+                    self.db.log_activity,
                     activity_type='error',
                     user_id=update.effective_user.id,
                     chat_id=update.effective_chat.id,
@@ -224,7 +226,8 @@ class BroadcastCommandsMixin:
 
             # Log command execution immediately
             broadcast_type = context.user_data.get('broadcast_type', 'unknown') if context.user_data else 'unknown'
-            self.db.log_activity(
+            await asyncio.to_thread(
+                self.db.log_activity,
                 activity_type='command',
                 user_id=update.effective_user.id,
                 chat_id=update.effective_chat.id,
@@ -247,8 +250,8 @@ class BroadcastCommandsMixin:
             status = await update.message.reply_text("📢 Sending broadcast...")
 
             # Get PM-accessible users and active groups for broadcast
-            users = self.db.get_pm_accessible_users()
-            groups = self.db.get_active_groups()  # excludes bot_blocked/inactive
+            users = await asyncio.to_thread(self.db.get_pm_accessible_users)
+            groups = await asyncio.to_thread(self.db.get_active_groups)  # excludes bot_blocked/inactive
 
             success_count = 0
             fail_count = 0
@@ -289,11 +292,11 @@ class BroadcastCommandsMixin:
                         error_msg = str(e)
                         if "Forbidden: bot was blocked by the user" in error_msg:
                             logger.info(f"AUTO-CLEANUP: Removing user {user['user_id']} - {error_msg}")
-                            self.db.remove_inactive_user(user['user_id'])
+                            await asyncio.to_thread(self.db.remove_inactive_user, user['user_id'])
                             skipped_count += 1
                         elif "Forbidden: user is deactivated" in error_msg:
                             logger.info(f"AUTO-CLEANUP: Removing user {user['user_id']} - {error_msg}")
-                            self.db.remove_inactive_user(user['user_id'])
+                            await asyncio.to_thread(self.db.remove_inactive_user, user['user_id'])
                             skipped_count += 1
                         elif "Forbidden" in error_msg:
                             logger.warning(f"SAFETY: Not removing user {user['user_id']} - error was: {error_msg}")
@@ -322,7 +325,7 @@ class BroadcastCommandsMixin:
                             "group chat was deactivated", "chat has been deleted", "forum topic is closed"
                         ]):
                             logger.info(f"AUTO-CLEANUP: Removing group {group['chat_id']} - {error_msg}")
-                            self.db.remove_inactive_group(group['chat_id'])
+                            await asyncio.to_thread(self.db.remove_inactive_group, group['chat_id'])
                             if hasattr(self, 'quiz_manager'):
                                 self.quiz_manager.remove_active_chat(group['chat_id'])
                             skipped_count += 1
@@ -384,11 +387,11 @@ class BroadcastCommandsMixin:
                         error_msg = str(e)
                         if "Forbidden: bot was blocked by the user" in error_msg:
                             logger.info(f"AUTO-CLEANUP: Removing user {user['user_id']} - {error_msg}")
-                            self.db.remove_inactive_user(user['user_id'])
+                            await asyncio.to_thread(self.db.remove_inactive_user, user['user_id'])
                             skipped_count += 1
                         elif "Forbidden: user is deactivated" in error_msg:
                             logger.info(f"AUTO-CLEANUP: Removing user {user['user_id']} - {error_msg}")
-                            self.db.remove_inactive_user(user['user_id'])
+                            await asyncio.to_thread(self.db.remove_inactive_user, user['user_id'])
                             skipped_count += 1
                         elif "Forbidden" in error_msg:
                             logger.warning(f"SAFETY: Not removing user {user['user_id']} - error was: {error_msg}")
@@ -434,7 +437,7 @@ class BroadcastCommandsMixin:
                             "group chat was deactivated", "chat has been deleted", "forum topic is closed"
                         ]):
                             logger.info(f"AUTO-CLEANUP: Removing group {group['chat_id']} - {error_msg}")
-                            self.db.remove_inactive_group(group['chat_id'])
+                            await asyncio.to_thread(self.db.remove_inactive_group, group['chat_id'])
                             if hasattr(self, 'quiz_manager'):
                                 self.quiz_manager.remove_active_chat(group['chat_id'])
                             skipped_count += 1
@@ -476,11 +479,11 @@ class BroadcastCommandsMixin:
                         error_msg = str(e)
                         if "Forbidden: bot was blocked by the user" in error_msg:
                             logger.info(f"AUTO-CLEANUP: Removing user {user['user_id']} - {error_msg}")
-                            self.db.remove_inactive_user(user['user_id'])
+                            await asyncio.to_thread(self.db.remove_inactive_user, user['user_id'])
                             skipped_count += 1
                         elif "Forbidden: user is deactivated" in error_msg:
                             logger.info(f"AUTO-CLEANUP: Removing user {user['user_id']} - {error_msg}")
-                            self.db.remove_inactive_user(user['user_id'])
+                            await asyncio.to_thread(self.db.remove_inactive_user, user['user_id'])
                             skipped_count += 1
                         elif "Forbidden" in error_msg:
                             logger.warning(f"SAFETY: Not removing user {user['user_id']} - error was: {error_msg}")
@@ -519,7 +522,7 @@ class BroadcastCommandsMixin:
                             "group chat was deactivated", "chat has been deleted", "forum topic is closed"
                         ]):
                             logger.info(f"AUTO-CLEANUP: Removing group {group['chat_id']} - {error_msg}")
-                            self.db.remove_inactive_group(group['chat_id'])
+                            await asyncio.to_thread(self.db.remove_inactive_group, group['chat_id'])
                             if hasattr(self, 'quiz_manager'):
                                 self.quiz_manager.remove_active_chat(group['chat_id'])
                             skipped_count += 1
@@ -535,18 +538,21 @@ class BroadcastCommandsMixin:
             message_text = (context.user_data.get('broadcast_message', '') if context.user_data else '')[:500] \
                 if broadcast_type == 'text' else f"[{broadcast_type.upper()} BROADCAST]"
             if sent_messages:
-                self.db.save_broadcast({
-                    "broadcast_id":  broadcast_id,
-                    "user_id":       update.effective_user.id,
-                    "messages":      {str(k): v for k, v in sent_messages.items()},
-                    "admin_id":      update.effective_user.id,
-                    "message_text":  message_text,
-                    "total_targets": total_targets,
-                    "sent_count":    success_count,
-                    "failed_count":  fail_count,
-                    "skipped_count": skipped_count,
-                    "created_at":    datetime.utcnow().isoformat(),
-                })
+                await asyncio.to_thread(
+                    self.db.save_broadcast,
+                    {
+                        "broadcast_id":  broadcast_id,
+                        "user_id":       update.effective_user.id,
+                        "messages":      {str(k): v for k, v in sent_messages.items()},
+                        "admin_id":      update.effective_user.id,
+                        "message_text":  message_text,
+                        "total_targets": total_targets,
+                        "sent_count":    success_count,
+                        "failed_count":  fail_count,
+                        "skipped_count": skipped_count,
+                        "created_at":    datetime.utcnow().isoformat(),
+                    }
+                )
                 logger.info(f"Saved broadcast {broadcast_id} to database with {len(sent_messages)} messages")
 
             # Build result message
@@ -593,7 +599,8 @@ class BroadcastCommandsMixin:
         except Exception as e:
             response_time = int((time.time() - start_time) * 1000)
             if update.effective_user and update.effective_chat:
-                self.db.log_activity(
+                await asyncio.to_thread(
+                    self.db.log_activity,
                     activity_type='error',
                     user_id=update.effective_user.id,
                     chat_id=update.effective_chat.id,
@@ -622,11 +629,12 @@ class BroadcastCommandsMixin:
                 return
 
             # Get latest broadcast from database
-            broadcast_data = self.db.get_latest_broadcast()
+            broadcast_data = await asyncio.to_thread(self.db.get_latest_broadcast)
             target_count = len(broadcast_data.get('messages', [])) if broadcast_data else 0
 
             # Log command execution immediately
-            self.db.log_activity(
+            await asyncio.to_thread(
+                self.db.log_activity,
                 activity_type='command',
                 user_id=update.effective_user.id,
                 chat_id=update.effective_chat.id,
@@ -677,7 +685,8 @@ class BroadcastCommandsMixin:
         except Exception as e:
             response_time = int((time.time() - start_time) * 1000)
             if update.effective_user and update.effective_chat:
-                self.db.log_activity(
+                await asyncio.to_thread(
+                    self.db.log_activity,
                     activity_type='error',
                     user_id=update.effective_user.id,
                     chat_id=update.effective_chat.id,
@@ -714,7 +723,8 @@ class BroadcastCommandsMixin:
                 await self.auto_clean_message(update.message, reply)
                 return
 
-            self.db.log_activity(
+            await asyncio.to_thread(
+                self.db.log_activity,
                 activity_type='command',
                 user_id=update.effective_user.id,
                 chat_id=update.effective_chat.id,
@@ -725,7 +735,7 @@ class BroadcastCommandsMixin:
                 success=True
             )
 
-            broadcast_data = self.db.get_broadcast_by_id(pending_broadcast_id)
+            broadcast_data = await asyncio.to_thread(self.db.get_broadcast_by_id, pending_broadcast_id)
 
             if not broadcast_data:
                 reply = await update.message.reply_text(
@@ -771,7 +781,7 @@ class BroadcastCommandsMixin:
                 f"{success_count} deleted, {fail_count} failed (ID: {broadcast_id})"
             )
 
-            self.db.delete_broadcast(pending_broadcast_id)
+            await asyncio.to_thread(self.db.delete_broadcast, pending_broadcast_id)
 
             if context.user_data is not None:
                 context.user_data.pop('pending_delete_broadcast_id', None)
@@ -782,7 +792,8 @@ class BroadcastCommandsMixin:
         except Exception as e:
             response_time = int((time.time() - start_time) * 1000)
             if update.effective_user and update.effective_chat:
-                self.db.log_activity(
+                await asyncio.to_thread(
+                    self.db.log_activity,
                     activity_type='error',
                     user_id=update.effective_user.id,
                     chat_id=update.effective_chat.id,

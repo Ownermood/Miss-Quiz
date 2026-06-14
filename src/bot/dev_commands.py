@@ -41,7 +41,7 @@ class DeveloperCommands(BroadcastCommandsMixin, QuizEditorMixin):
 
     # ─── Shared utilities ────────────────────────────────────────────────────
 
-    def extract_quiz_id_from_message(self, message, context: ContextTypes.DEFAULT_TYPE) -> Optional[int]:
+    async def extract_quiz_id_from_message(self, message, context: ContextTypes.DEFAULT_TYPE) -> Optional[int]:
         """Extract quiz_id from a bot message (poll or text)."""
         if not message:
             return None
@@ -50,7 +50,7 @@ class DeveloperCommands(BroadcastCommandsMixin, QuizEditorMixin):
             poll_id = message.poll.id
 
             # Database mapping (persistent, works for new quizzes)
-            quiz_id = self.db.get_quiz_id_from_poll(poll_id)
+            quiz_id = await asyncio.to_thread(self.db.get_quiz_id_from_poll, poll_id)
             if quiz_id:
                 logger.debug(f"Extracted quiz_id {quiz_id} from database mapping for poll {poll_id}")
                 return quiz_id
@@ -67,7 +67,7 @@ class DeveloperCommands(BroadcastCommandsMixin, QuizEditorMixin):
                 if poll_question.startswith('/addquiz'):
                     poll_question = poll_question[len('/addquiz'):].strip()
 
-                all_questions = self.db.get_all_questions()
+                all_questions = await asyncio.to_thread(self.db.get_all_questions)
                 for q in all_questions:
                     db_question = q.get('question', '').strip()
                     if db_question.startswith('/addquiz'):
@@ -101,7 +101,7 @@ class DeveloperCommands(BroadcastCommandsMixin, QuizEditorMixin):
         if user_id in config.AUTHORIZED_USERS:
             return True
 
-        developers = self.db.get_all_developers()
+        developers = await asyncio.to_thread(self.db.get_all_developers)
         is_developer = any(dev['user_id'] == user_id for dev in developers)
 
         if not is_developer:
@@ -357,7 +357,8 @@ class DeveloperCommands(BroadcastCommandsMixin, QuizEditorMixin):
                 diagnostics += "\n━━━━━━━━━━━━━━━━━━━\n"
                 diagnostics += "💡 Use this info to debug issues or verify data"
 
-                self.db.log_activity(
+                await asyncio.to_thread(
+                    self.db.log_activity,
                     activity_type='command',
                     user_id=update.effective_user.id,
                     chat_id=update.effective_chat.id,
@@ -384,7 +385,8 @@ class DeveloperCommands(BroadcastCommandsMixin, QuizEditorMixin):
                 else (context.args[0] if context.args and context.args[0].isdigit() else None)
             )
 
-            self.db.log_activity(
+            await asyncio.to_thread(
+                self.db.log_activity,
                 activity_type='command',
                 user_id=update.effective_user.id,
                 chat_id=update.effective_chat.id,
@@ -418,7 +420,8 @@ class DeveloperCommands(BroadcastCommandsMixin, QuizEditorMixin):
                     username = getattr(user_info, 'username', "") or ""
                     first_name = getattr(user_info, 'first_name', "") or ""
                     last_name = getattr(user_info, 'last_name', "") or ""
-                    self.db.add_developer(
+                    await asyncio.to_thread(
+                        self.db.add_developer,
                         user_id=user_id, username=username,
                         first_name=first_name, last_name=last_name,
                         added_by=update.effective_user.id
@@ -432,7 +435,7 @@ class DeveloperCommands(BroadcastCommandsMixin, QuizEditorMixin):
                     )
                 except Exception as e:
                     logger.warning(f"Could not fetch user info for {user_id}: {e}")
-                    self.db.add_developer(user_id, added_by=update.effective_user.id)
+                    await asyncio.to_thread(self.db.add_developer, user_id, added_by=update.effective_user.id)
                     dev_mention = UI.mention(user_id, f"User {user_id}")
                     reply = await update.message.reply_text(
                         f"✅ Developer added successfully!\n\n👤 {dev_mention}\n⚠️ Could not fetch user details",
@@ -459,7 +462,8 @@ class DeveloperCommands(BroadcastCommandsMixin, QuizEditorMixin):
                         username = getattr(user_info, 'username', "") or ""
                         first_name = getattr(user_info, 'first_name', "") or ""
                         last_name = getattr(user_info, 'last_name', "") or ""
-                        self.db.add_developer(
+                        await asyncio.to_thread(
+                            self.db.add_developer,
                             user_id=new_dev_id, username=username,
                             first_name=first_name, last_name=last_name,
                             added_by=update.effective_user.id
@@ -473,7 +477,7 @@ class DeveloperCommands(BroadcastCommandsMixin, QuizEditorMixin):
                         )
                     except Exception as e:
                         logger.warning(f"Could not fetch user info for {new_dev_id}: {e}")
-                        self.db.add_developer(new_dev_id, added_by=update.effective_user.id)
+                        await asyncio.to_thread(self.db.add_developer, new_dev_id, added_by=update.effective_user.id)
                         reply = await update.message.reply_text(
                             f"✅ Developer added successfully!\n\n👤 <b>User {new_dev_id}</b>\n⚠️ Could not fetch user details",
                             parse_mode=ParseMode.HTML,
@@ -496,7 +500,7 @@ class DeveloperCommands(BroadcastCommandsMixin, QuizEditorMixin):
                         reply = await update.message.reply_text("❌ Cannot remove OWNER or WIFU")
                         await self.auto_clean_message(update.message, reply)
                         return
-                    if self.db.remove_developer(dev_id):
+                    if await asyncio.to_thread(self.db.remove_developer, dev_id):
                         reply = await update.message.reply_text(f"✅ Developer {dev_id} removed")
                         logger.info(f"Developer {dev_id} removed by {update.effective_user.id}")
                         await self.auto_clean_message(update.message, reply)
@@ -508,7 +512,7 @@ class DeveloperCommands(BroadcastCommandsMixin, QuizEditorMixin):
                     await self.auto_clean_message(update.message, reply)
 
             elif action == "list":
-                developers = self.db.get_all_developers()
+                developers = await asyncio.to_thread(self.db.get_all_developers)
 
                 dev_text = """╔══════════════════╗
 ║ 👥 𝐃𝐞𝐯𝐞𝐥𝐨𝐩𝐞𝐫 & 𝐀𝐝𝐦𝐢𝐧 𝐏𝐚𝐧𝐞𝐥
@@ -562,7 +566,8 @@ class DeveloperCommands(BroadcastCommandsMixin, QuizEditorMixin):
         except Exception as e:
             response_time = int((time.time() - start_time) * 1000)
             if update.effective_user and update.effective_chat:
-                self.db.log_activity(
+                await asyncio.to_thread(
+                    self.db.log_activity,
                     activity_type='error',
                     user_id=update.effective_user.id,
                     chat_id=update.effective_chat.id,
@@ -590,7 +595,8 @@ class DeveloperCommands(BroadcastCommandsMixin, QuizEditorMixin):
                 return
 
             quiz_id_arg = context.args[0] if context.args else None
-            self.db.log_activity(
+            await asyncio.to_thread(
+                self.db.log_activity,
                 activity_type='command',
                 user_id=update.effective_user.id,
                 chat_id=update.effective_chat.id,
@@ -601,7 +607,7 @@ class DeveloperCommands(BroadcastCommandsMixin, QuizEditorMixin):
                 success=True
             )
 
-            questions = self.db.get_all_questions()
+            questions = await asyncio.to_thread(self.db.get_all_questions)
             if not questions:
                 reply = await update.message.reply_text(
                     "❌ No Quizzes Available\n\nAdd new quizzes using /addquiz command"
@@ -610,7 +616,7 @@ class DeveloperCommands(BroadcastCommandsMixin, QuizEditorMixin):
                 return
 
             if update.message.reply_to_message:
-                quiz_id = self.extract_quiz_id_from_message(update.message.reply_to_message, context)
+                quiz_id = await self.extract_quiz_id_from_message(update.message.reply_to_message, context)
                 if quiz_id:
                     quiz = next((q for q in questions if q.get('id') == quiz_id), None)
                     if not quiz:
@@ -695,7 +701,8 @@ class DeveloperCommands(BroadcastCommandsMixin, QuizEditorMixin):
         except Exception as e:
             response_time = int((time.time() - start_time) * 1000)
             if update.effective_user and update.effective_chat:
-                self.db.log_activity(
+                await asyncio.to_thread(
+                    self.db.log_activity,
                     activity_type='error',
                     user_id=update.effective_user.id,
                     chat_id=update.effective_chat.id,
@@ -722,7 +729,8 @@ class DeveloperCommands(BroadcastCommandsMixin, QuizEditorMixin):
 
             quiz_id = context.user_data.get('pending_delete_quiz') if context.user_data else None
 
-            self.db.log_activity(
+            await asyncio.to_thread(
+                self.db.log_activity,
                 activity_type='command',
                 user_id=update.effective_user.id,
                 chat_id=update.effective_chat.id,
@@ -740,7 +748,7 @@ class DeveloperCommands(BroadcastCommandsMixin, QuizEditorMixin):
                 await self.auto_clean_message(update.message, reply)
                 return
 
-            questions = self.db.get_all_questions()
+            questions = await asyncio.to_thread(self.db.get_all_questions)
             quiz_to_delete = next((q for q in questions if q['id'] == quiz_id), None)
 
             if self.quiz_manager.delete_question_by_db_id(quiz_id):
@@ -749,7 +757,8 @@ class DeveloperCommands(BroadcastCommandsMixin, QuizEditorMixin):
 
                 quiz_stats = self.quiz_manager.get_quiz_stats()
 
-                self.db.log_activity(
+                await asyncio.to_thread(
+                    self.db.log_activity,
                     activity_type='quiz_deleted',
                     user_id=update.effective_user.id,
                     chat_id=update.effective_chat.id,
@@ -781,7 +790,8 @@ class DeveloperCommands(BroadcastCommandsMixin, QuizEditorMixin):
         except Exception as e:
             response_time = int((time.time() - start_time) * 1000)
             if update.effective_user and update.effective_chat:
-                self.db.log_activity(
+                await asyncio.to_thread(
+                    self.db.log_activity,
                     activity_type='error',
                     user_id=update.effective_user.id,
                     chat_id=update.effective_chat.id,
