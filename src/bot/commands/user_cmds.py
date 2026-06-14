@@ -74,7 +74,7 @@ class UserCommandsMixin(object):
 
     async def cmd_help(self, update: Update, context: ContextTypes.DEFAULT_TYPE,
                        edit_msg=None):
-        is_owner = self._is_owner(update.effective_user.id) if update.effective_user else False
+        is_authorized = await self._is_authorized(update.effective_user.id) if update.effective_user else False
 
         text = (
             f"╔══════════════════════════════════════════╗\n"
@@ -103,7 +103,7 @@ class UserCommandsMixin(object):
             f"╰──────────────────────────────────────────╯\n"
         )
 
-        if is_owner:
+        if is_authorized:
             text += (
                 f"\n👑  <b>𝐀𝐃𝐌𝐈𝐍  𝐂𝐄𝐍𝐓𝐄𝐑</b>  · Owner &amp; Devs only\n"
                 f"╭──────────────────────────────────────────╮\n"

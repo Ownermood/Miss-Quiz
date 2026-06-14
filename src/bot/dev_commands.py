@@ -322,10 +322,10 @@ class DeveloperCommands(BroadcastCommandsMixin, QuizEditorMixin):
             await context.bot.send_message(
                 chat_id=user_id,
                 text=(
-                    "🎉 <b>Congratulations!</b>\n\n"
-                    "You have been promoted to <b>Developer</b> in this bot.\n\n"
-                    "You now have access to developer tools and commands "
-                    "assigned by the owner."
+                    "🎉 You have been promoted to <b>Developer</b>.\n\n"
+                    "You now have access to Developer commands and management tools.\n\n"
+                    "Use:\n<b>/help</b>\n\n"
+                    "to view your available commands and permissions."
                 ),
                 parse_mode=ParseMode.HTML,
             )
