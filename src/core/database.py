@@ -65,6 +65,11 @@ class DatabaseManager:
             ])
             self.groups_col.create_index("chat_id", unique=True)
             self.groups_col.create_index([("last_active", DESCENDING)])
+            # Compound index for per-group quiz schedule queries
+            self.groups_col.create_index([
+                ("active_status",    ASCENDING),
+                ("next_quiz_due_at", ASCENDING),
+            ])
             self.auto_quiz_state_col.create_index("chat_id", unique=True)
             self.poll_map_col.create_index("poll_id", unique=True)
             # Compound indexes for time-based activity queries
@@ -560,6 +565,53 @@ class DatabaseManager:
             {"active_status": {"$ne": "inactive"}}, {"_id": 0}
         ))
 
+    def get_groups_due_for_quiz(self) -> List[Dict]:
+        """Return active groups whose next_quiz_due_at has arrived.
+        This is the only query the scheduler needs — O(log n) via compound index."""
+        now = datetime.utcnow().isoformat()
+        return list(self.groups_col.find(
+            {
+                "active_status":    {"$ne":  "inactive"},
+                "next_quiz_due_at": {"$lte": now},
+            },
+            {"_id": 0}
+        ))
+
+    def update_group_quiz_schedule(self, chat_id: int, interval_minutes: int) -> None:
+        """Advance a group's schedule after a quiz is delivered (or skipped).
+        last_quiz_sent_at = now, next_quiz_due_at = now + interval."""
+        now      = datetime.utcnow()
+        next_due = (now + timedelta(minutes=interval_minutes)).isoformat()
+        try:
+            self.groups_col.update_one(
+                {"chat_id": chat_id},
+                {"$set": {
+                    "last_quiz_sent_at": now.isoformat(),
+                    "next_quiz_due_at":  next_due,
+                }}
+            )
+        except Exception as e:
+            logger.error(f"update_group_quiz_schedule {chat_id}: {e}")
+
+    def backfill_group_schedules(self, interval_minutes: int = 30) -> int:
+        """One-time migration: give every existing group an initial next_quiz_due_at.
+        Sets it to NOW so they are all served in the first scheduler poll after upgrade.
+        Groups added after this commit are seeded by register_group_interaction."""
+        now = datetime.utcnow().isoformat()
+        try:
+            result = self.groups_col.update_many(
+                {"next_quiz_due_at": {"$exists": False}},
+                {"$set": {
+                    "quiz_start_time":   now,
+                    "next_quiz_due_at":  now,   # due immediately
+                    "last_quiz_sent_at": None,
+                }}
+            )
+            return result.modified_count
+        except Exception as e:
+            logger.error(f"backfill_group_schedules: {e}")
+            return 0
+
     def get_registered_group_ids(self) -> set:
         """Return the set of chat_ids already in groups_col."""
         return {
@@ -811,23 +863,36 @@ class DatabaseManager:
 
 
     def register_group_interaction(self, chat_id: int, thread_id=None,
-                                    title: str = '', username: str = '') -> None:
+                                    title: str = '', username: str = '',
+                                    quiz_interval_minutes: int = 30) -> None:
         """Register/update a group. Called from every handler that observes a group.
-        Sets active_status=active on every upsert."""
-        now = datetime.utcnow().isoformat()
+        Sets active_status=active on every upsert.
+        On first insert only: seeds quiz_start_time and next_quiz_due_at so the
+        group enters the per-group scheduler immediately."""
+        now      = datetime.utcnow()
+        now_iso  = now.isoformat()
+        next_due = (now + timedelta(minutes=quiz_interval_minutes)).isoformat()
         data = {
             "chat_id":       chat_id,
             "title":         title,
             "username":      username,
-            "last_active":   now,
-            "last_seen":     now,
+            "last_active":   now_iso,
+            "last_seen":     now_iso,
             "active_status": "active",
         }
         if thread_id:
             data["message_thread_id"] = thread_id
         self.groups_col.update_one(
             {"chat_id": chat_id},
-            {"$set": data, "$setOnInsert": {"joined_at": now}},
+            {
+                "$set": data,
+                "$setOnInsert": {
+                    "joined_at":        now_iso,
+                    "quiz_start_time":  now_iso,
+                    "next_quiz_due_at": next_due,
+                    "last_quiz_sent_at": None,
+                },
+            },
             upsert=True
         )
 

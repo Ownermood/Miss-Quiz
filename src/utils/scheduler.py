@@ -1,8 +1,21 @@
 """
-Auto Quiz Scheduler — delivers a new quiz to every registered group every 30 minutes.
-No quiz timer: polls stay open until replaced by the next delivery cycle.
-Deletes the previous quiz before posting the new one.
-Persists full state in MongoDB so delivery resumes correctly after restarts.
+Auto Quiz Scheduler — per-group timestamp-driven delivery.
+
+Architecture
+------------
+APScheduler fires a lightweight poll every 1 minute.
+Each poll issues a single indexed query:
+
+    groups WHERE next_quiz_due_at <= NOW() AND active_status != inactive
+
+Only the groups whose delivery window has arrived receive a quiz.
+After a successful delivery (or an unrecoverable skip), the group's
+next_quiz_due_at is advanced by `interval` minutes.  This means:
+
+  • Groups added at different times get quizzes at different times.
+  • No global delivery wave — each group follows its own clock.
+  • Restart-safe: all schedule state lives in MongoDB, never in memory.
+  • Scales to thousands of groups without hot-spots.
 """
 
 import logging
@@ -43,7 +56,7 @@ class AutoQuizScheduler:
                         "sent_time":  doc.get("sent_time"),
                     }
             if docs:
-                logger.info(f"[SCHEDULER] Restored state for {len(docs)} groups on startup")
+                logger.info(f"[SCHEDULER] Restored active-quiz state for {len(docs)} group(s)")
         except Exception as e:
             logger.warning(f"[SCHEDULER] Could not load persisted state: {e}")
 
@@ -72,20 +85,33 @@ class AutoQuizScheduler:
     # ── Scheduler lifecycle ───────────────────────────────────────────────────
 
     def start(self):
+        # Backfill any existing groups that predate per-group scheduling.
+        # Sets next_quiz_due_at = NOW() for them so they are served in the
+        # first poll; going forward each group keeps its own schedule.
+        if self.db:
+            try:
+                n = self.db.backfill_group_schedules(self.interval)
+                if n:
+                    logger.info(
+                        f"[SCHEDULER] Backfilled {n} legacy group(s) "
+                        f"— they will receive a quiz in the first poll"
+                    )
+            except Exception as e:
+                logger.warning(f"[SCHEDULER] backfill_group_schedules failed: {e}")
+
+        # Poll every 1 minute; delivery is governed by next_quiz_due_at per group
         self.scheduler.add_job(
             self._send_auto_quiz,
             trigger="interval",
-            minutes=self.interval,
+            minutes=1,
             id="auto_quiz",
             replace_existing=True,
-            next_run_time=datetime.now(),   # fire immediately on start; then every N min
+            next_run_time=datetime.now(),   # first poll fires immediately
         )
         self.scheduler.start()
-        job = self.scheduler.get_job("auto_quiz")
-        next_run = job.next_run_time if job else "unknown"
         logger.info(
-            f"[SCHEDULER] Started — interval: {self.interval} min | "
-            f"first run: immediate | next after that: {next_run}"
+            f"[SCHEDULER] Started — poll: 1 min | "
+            f"quiz interval per group: {self.interval} min"
         )
 
     def stop(self):
@@ -102,7 +128,6 @@ class AutoQuizScheduler:
         """
         state = self._active_quiz.get(chat_id)
         if not state and self.db:
-            # /quiz command may have sent the last quiz — check DB
             try:
                 state = self.db.get_active_quiz_state(chat_id) or {}
             except Exception:
@@ -115,7 +140,7 @@ class AutoQuizScheduler:
             await self.bot.application.bot.delete_message(
                 chat_id=chat_id, message_id=msg_id)
             logger.info(
-                f"[SCHEDULER] Cleaned up previous quiz "
+                f"[SCHEDULER] Deleted previous quiz "
                 f"msg_id={msg_id} in chat {chat_id}"
             )
         except Exception as e:
@@ -142,7 +167,6 @@ class AutoQuizScheduler:
 
     # ── Delivery ──────────────────────────────────────────────────────────────
 
-    # Keywords that mean the bot is no longer able to post in the group.
     _INACTIVE_ERRORS = (
         "forbidden",
         "bot was blocked",
@@ -158,41 +182,39 @@ class AutoQuizScheduler:
     )
 
     async def _send_auto_quiz(self):
-        """Deliver one quiz to every active group. Called by APScheduler."""
-        logger.info("[SCHEDULER] ▶ Delivery cycle started")
+        """Poll entry point — called by APScheduler every minute.
+        Outer guard keeps the job alive if _do_send_auto_quiz raises."""
         try:
             await self._do_send_auto_quiz()
         except Exception as e:
-            # Top-level guard: APScheduler silently disables jobs that raise;
-            # catching here keeps the job alive and surfaces the error.
-            logger.error(f"[SCHEDULER] Unhandled error in delivery cycle: {e}", exc_info=True)
+            logger.error(f"[SCHEDULER] Unhandled error in delivery poll: {e}", exc_info=True)
 
     async def _do_send_auto_quiz(self):
-        """Inner implementation — separated so the outer guard stays clean."""
+        """Query groups whose time has come, send one quiz to each."""
         if self.db:
             try:
-                groups = self.db.get_all_groups()
+                groups = self.db.get_groups_due_for_quiz()
             except Exception as e:
-                logger.error(f"[SCHEDULER] get_all_groups() failed: {e}")
+                logger.error(f"[SCHEDULER] get_groups_due_for_quiz() failed: {e}")
                 return
 
             group_targets = [
                 (g["chat_id"], g.get("message_thread_id"))
                 for g in groups
                 if g.get("chat_id")
-                and g.get("active_status") != "inactive"
             ]
         else:
+            # No DB (dev/polling mode): fall back to all active chats.
+            # Schedule tracking requires DB; without it every poll delivers.
             group_targets = [(cid, None) for cid in self.quiz_manager.active_chats]
 
         if not group_targets:
-            logger.info("[SCHEDULER] No active groups — skipping delivery cycle")
-            return
+            return  # Nothing due — silent; most 1-min polls are empty
 
         total_q = len(self.quiz_manager.questions) if self.quiz_manager else 0
         logger.info(
-            f"[SCHEDULER] Delivering to {len(group_targets)} group(s) | "
-            f"question bank: {total_q} questions"
+            f"[SCHEDULER] {len(group_targets)} group(s) due | "
+            f"question bank: {total_q}"
         )
         sent = failed = skipped = 0
 
@@ -201,11 +223,15 @@ class AutoQuizScheduler:
             try:
                 question = self.quiz_manager.get_random_question(chat_id=chat_id)
                 if not question:
-                    logger.warning(f"[SCHEDULER] No question available for {chat_id} — skipping")
+                    logger.warning(
+                        f"[SCHEDULER] No question available for {chat_id} — skipping"
+                    )
                     skipped += 1
+                    # Advance schedule so we don't retry every minute
+                    if self.db:
+                        self.db.update_group_quiz_schedule(chat_id, self.interval)
                     continue
 
-                # Delete previous quiz before posting the new one
                 await self._delete_previous_quiz(chat_id)
 
                 options     = question.get("options", [])
@@ -229,6 +255,10 @@ class AutoQuizScheduler:
                 msg = await self.bot.application.bot.send_poll(**send_kwargs)
                 poll_id_str = str(msg.poll.id)
 
+                # Advance this group's schedule immediately after delivery
+                if self.db:
+                    self.db.update_group_quiz_schedule(chat_id, self.interval)
+
                 self._save_active_quiz(
                     chat_id=chat_id,
                     message_id=msg.message_id,
@@ -248,15 +278,18 @@ class AutoQuizScheduler:
                     try:
                         self.db.save_poll_mapping(poll_id_str, q_id, poll_data=poll_entry)
                     except Exception as e:
-                        logger.warning(f"[SCHEDULER] save_poll_mapping failed for {chat_id}: {e}")
+                        logger.warning(
+                            f"[SCHEDULER] save_poll_mapping failed for {chat_id}: {e}"
+                        )
                 try:
                     self.bot.application.bot_data[f"poll_{poll_id_str}"] = poll_entry
                 except Exception:
                     pass
 
                 logger.info(
-                    f"[SCHEDULER] ✅ Sent to {chat_id} — "
-                    f"msg_id={msg.message_id}  Q#{q_id}  cat={category}"
+                    f"[SCHEDULER] ✅ {chat_id} — "
+                    f"msg={msg.message_id}  Q#{q_id}  cat={category}  "
+                    f"next_in={self.interval}min"
                 )
                 sent += 1
 
@@ -269,11 +302,18 @@ class AutoQuizScheduler:
                     )
                     await self._mark_group_inactive(chat_id)
                     self._clear_active_quiz(chat_id)
+                    # Do NOT advance schedule — group is now inactive
                 else:
-                    logger.error(f"[SCHEDULER] ❌ Failed to deliver to {chat_id}: {e}")
+                    logger.error(f"[SCHEDULER] ❌ Failed for {chat_id}: {e}")
+                    # Advance schedule so we don't retry every minute
+                    if self.db:
+                        try:
+                            self.db.update_group_quiz_schedule(chat_id, self.interval)
+                        except Exception:
+                            pass
                 failed += 1
 
         logger.info(
-            f"[SCHEDULER] ◀ Cycle complete — "
+            f"[SCHEDULER] ◀ Done — "
             f"✅ sent={sent}  ❌ failed={failed}  ⏭ skipped={skipped}"
         )
