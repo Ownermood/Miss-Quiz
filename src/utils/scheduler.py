@@ -78,9 +78,15 @@ class AutoQuizScheduler:
             minutes=self.interval,
             id="auto_quiz",
             replace_existing=True,
+            next_run_time=datetime.now(),   # fire immediately on start; then every N min
         )
         self.scheduler.start()
-        logger.info(f"[SCHEDULER] Started — interval: {self.interval} min")
+        job = self.scheduler.get_job("auto_quiz")
+        next_run = job.next_run_time if job else "unknown"
+        logger.info(
+            f"[SCHEDULER] Started — interval: {self.interval} min | "
+            f"first run: immediate | next after that: {next_run}"
+        )
 
     def stop(self):
         self.scheduler.shutdown(wait=False)
@@ -136,10 +142,40 @@ class AutoQuizScheduler:
 
     # ── Delivery ──────────────────────────────────────────────────────────────
 
+    # Keywords that mean the bot is no longer able to post in the group.
+    _INACTIVE_ERRORS = (
+        "forbidden",
+        "bot was blocked",
+        "bot was kicked",
+        "bot is not a member",
+        "chat not found",
+        "have no rights",
+        "group chat was deactivated",
+        "chat has been deleted",
+        "forum topic is closed",
+        "user is deactivated",
+        "need administrator rights",
+    )
+
     async def _send_auto_quiz(self):
+        """Deliver one quiz to every active group. Called by APScheduler."""
+        logger.info("[SCHEDULER] ▶ Delivery cycle started")
+        try:
+            await self._do_send_auto_quiz()
+        except Exception as e:
+            # Top-level guard: APScheduler silently disables jobs that raise;
+            # catching here keeps the job alive and surfaces the error.
+            logger.error(f"[SCHEDULER] Unhandled error in delivery cycle: {e}", exc_info=True)
+
+    async def _do_send_auto_quiz(self):
+        """Inner implementation — separated so the outer guard stays clean."""
         if self.db:
-            groups = self.db.get_all_groups()
-            # Build list of (chat_id, thread_id) tuples; include thread_id for forum groups
+            try:
+                groups = self.db.get_all_groups()
+            except Exception as e:
+                logger.error(f"[SCHEDULER] get_all_groups() failed: {e}")
+                return
+
             group_targets = [
                 (g["chat_id"], g.get("message_thread_id"))
                 for g in groups
@@ -153,7 +189,11 @@ class AutoQuizScheduler:
             logger.info("[SCHEDULER] No active groups — skipping delivery cycle")
             return
 
-        logger.info(f"[SCHEDULER] Starting delivery cycle for {len(group_targets)} groups")
+        total_q = len(self.quiz_manager.questions) if self.quiz_manager else 0
+        logger.info(
+            f"[SCHEDULER] Delivering to {len(group_targets)} group(s) | "
+            f"question bank: {total_q} questions"
+        )
         sent = failed = skipped = 0
 
         from telegram import Poll
@@ -161,18 +201,16 @@ class AutoQuizScheduler:
             try:
                 question = self.quiz_manager.get_random_question(chat_id=chat_id)
                 if not question:
-                    logger.warning(
-                        f"[SCHEDULER] No questions available for {chat_id} — skipping"
-                    )
+                    logger.warning(f"[SCHEDULER] No question available for {chat_id} — skipping")
                     skipped += 1
                     continue
 
-                # Remove previous quiz (from scheduler or /quiz command) before posting
+                # Delete previous quiz before posting the new one
                 await self._delete_previous_quiz(chat_id)
 
                 options     = question.get("options", [])
                 correct_idx = question.get("correct_answer", 0)
-                category    = question.get("category", "General")
+                category    = question.get("category", "General Knowledge")
                 q_id        = question.get("id")
                 explanation = f"✅ {options[correct_idx]}\n📚 {category}  ·  🆔 Q#{q_id}"
 
@@ -189,10 +227,8 @@ class AutoQuizScheduler:
                     send_kwargs["message_thread_id"] = thread_id
 
                 msg = await self.bot.application.bot.send_poll(**send_kwargs)
-
                 poll_id_str = str(msg.poll.id)
 
-                # Persist active quiz state (message_id + thread_id for next cleanup)
                 self._save_active_quiz(
                     chat_id=chat_id,
                     message_id=msg.message_id,
@@ -200,7 +236,6 @@ class AutoQuizScheduler:
                     poll_id=poll_id_str,
                 )
 
-                # Persist poll mapping for answer tracking
                 poll_entry = {
                     "chat_id":           chat_id,
                     "correct_option_id": correct_idx,
@@ -211,39 +246,34 @@ class AutoQuizScheduler:
                 }
                 if self.db and q_id:
                     try:
-                        self.db.save_poll_mapping(
-                            poll_id_str, q_id, poll_data=poll_entry)
-                    except Exception:
-                        pass
+                        self.db.save_poll_mapping(poll_id_str, q_id, poll_data=poll_entry)
+                    except Exception as e:
+                        logger.warning(f"[SCHEDULER] save_poll_mapping failed for {chat_id}: {e}")
                 try:
                     self.bot.application.bot_data[f"poll_{poll_id_str}"] = poll_entry
                 except Exception:
                     pass
 
                 logger.info(
-                    f"[SCHEDULER] Delivered to {chat_id} — "
+                    f"[SCHEDULER] ✅ Sent to {chat_id} — "
                     f"msg_id={msg.message_id}  Q#{q_id}  cat={category}"
                 )
                 sent += 1
 
             except Exception as e:
-                err = str(e)
-                if any(kw in err for kw in ("Forbidden", "bot was blocked",
-                                             "bot was kicked", "chat not found",
-                                             "have no rights")):
+                err = str(e).lower()
+                if any(kw in err for kw in self._INACTIVE_ERRORS):
                     logger.warning(
-                        f"[SCHEDULER] Bot blocked/removed from {chat_id} "
-                        f"— marking inactive. Error: {err}"
+                        f"[SCHEDULER] ⛔ Bot removed/blocked from {chat_id} "
+                        f"— marking inactive. Reason: {e}"
                     )
                     await self._mark_group_inactive(chat_id)
                     self._clear_active_quiz(chat_id)
                 else:
-                    logger.error(
-                        f"[SCHEDULER] Failed to deliver to {chat_id}: {e}"
-                    )
+                    logger.error(f"[SCHEDULER] ❌ Failed to deliver to {chat_id}: {e}")
                 failed += 1
 
         logger.info(
-            f"[SCHEDULER] Delivery cycle complete — "
-            f"sent={sent}  failed={failed}  skipped={skipped}"
+            f"[SCHEDULER] ◀ Cycle complete — "
+            f"✅ sent={sent}  ❌ failed={failed}  ⏭ skipped={skipped}"
         )

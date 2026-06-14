@@ -87,6 +87,7 @@ async def _bot_lifecycle():
     from src.core.database import DatabaseManager
     from src.core.quiz import QuizManager
     from src.bot.handlers import TelegramQuizBot
+    from src.utils.scheduler import AutoQuizScheduler
 
     token = os.environ.get("TELEGRAM_TOKEN", "")
     if not token:
@@ -110,7 +111,16 @@ async def _bot_lifecycle():
     logger.info("✅ Telegram bot ready")
     bot.run_startup_tasks()
 
-    await asyncio.Event().wait()  # keep loop alive forever
+    # Auto-quiz scheduler — was missing from webhook mode entirely.
+    # Must start AFTER application.start() so bot.application.bot is live.
+    scheduler = AutoQuizScheduler(bot, q_mgr, db_manager=db_mgr, interval_minutes=30)
+    scheduler.start()
+    logger.info("✅ Auto-quiz scheduler started (30-min interval)")
+
+    try:
+        await asyncio.Event().wait()  # keep loop alive forever
+    finally:
+        scheduler.stop()
 
 
 def init_bot_webhook(webhook_url: str):
