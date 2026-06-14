@@ -66,7 +66,7 @@ class UserCommandsMixin(object):
         # Register user in DB (is_pm is known here from chat.type check above)
         if self.db:
             try:
-                self.ensure_user_registered(user, is_pm=is_pm, source="cmd-start")
+                self.ensure_user_registered(user, is_pm=is_pm if is_pm else None, source="cmd-start")
             except Exception as e:
                 logger.error(f"upsert_user: {e}")
 
