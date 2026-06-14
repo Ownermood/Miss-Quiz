@@ -40,6 +40,7 @@ else:
             from src.core.database import DatabaseManager
             from src.core.quiz import QuizManager
             from src.bot.handlers import TelegramQuizBot
+            from src.utils.scheduler import AutoQuizScheduler
 
             mongo_url = os.environ.get("MONGODB_URL", "mongodb://localhost:27017")
             db_mgr = DatabaseManager(mongo_url=mongo_url)
@@ -56,12 +57,20 @@ else:
             async with bot.application:
                 await bot.application.start()
                 bot.run_startup_tasks()
-                await bot.application.updater.start_polling(
-                    drop_pending_updates=True,
-                    allowed_updates=["message", "poll_answer", "callback_query",
-                                     "my_chat_member", "chat_member"],
-                )
-                await asyncio.Event().wait()
+
+                scheduler = AutoQuizScheduler(bot, q_mgr, db_manager=db_mgr, interval_minutes=30)
+                scheduler.start()
+                logger.info("✅ Auto-quiz scheduler started (30-min interval, polling mode)")
+
+                try:
+                    await bot.application.updater.start_polling(
+                        drop_pending_updates=True,
+                        allowed_updates=["message", "poll_answer", "callback_query",
+                                         "my_chat_member", "chat_member"],
+                    )
+                    await asyncio.Event().wait()
+                finally:
+                    scheduler.stop()
 
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
