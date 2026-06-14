@@ -164,6 +164,13 @@ class AutoQuizScheduler:
                     f"[SCHEDULER] Could not update inactive status "
                     f"for {chat_id}: {e}"
                 )
+        # Clear from the bot's in-memory seen-groups cache so that if the bot
+        # is re-added to this group, ensure_group_registered() will run the
+        # upsert and restore active_status="active" instead of skipping.
+        try:
+            self.bot._seen_groups.discard(chat_id)
+        except Exception:
+            pass
 
     # ── Delivery ──────────────────────────────────────────────────────────────
 

@@ -406,7 +406,7 @@ class AdminCommandsMixin(object):
             try:
                 stats  = await asyncio.to_thread(self.db.get_user_engagement_stats)
                 users  = stats.get('total_users', 0)
-                groups_list = await asyncio.to_thread(self.db.get_all_groups)
+                groups_list = await asyncio.to_thread(self.db.get_active_groups)
                 groups = len(groups_list)
             except Exception:
                 pass
@@ -461,7 +461,7 @@ class AdminCommandsMixin(object):
 
         users, groups = await asyncio.gather(
             asyncio.to_thread(self.db.get_pm_accessible_users),
-            asyncio.to_thread(self.db.get_all_groups),
+            asyncio.to_thread(self.db.get_active_groups),
         )
         total  = len(users) + len(groups)
 

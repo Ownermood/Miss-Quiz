@@ -557,10 +557,12 @@ class DatabaseManager:
             logger.error(f"upsert_group error: {e}")
 
     def get_all_groups(self) -> List[Dict]:
+        """Return every group record regardless of active_status.
+        Used for admin auditing. For delivery use get_active_groups()."""
         return list(self.groups_col.find({}, {"_id": 0}))
 
     def get_active_groups(self) -> List[Dict]:
-        """Return all groups that have not been marked inactive by the scheduler."""
+        """Return only groups where the bot is currently active (not kicked/blocked)."""
         return list(self.groups_col.find(
             {"active_status": {"$ne": "inactive"}}, {"_id": 0}
         ))
@@ -733,14 +735,21 @@ class DatabaseManager:
                                      sort=[("total_marks", DESCENDING)])
 
             # ── Groups ────────────────────────────────────────
-            g_total = gcol.count_documents({})
-            # Count groups where the bot is admin OR where status was never
-            # explicitly recorded (field missing = registered before tracking).
-            # Only excludes groups that are confirmed non-admin (False).
-            g_admin = gcol.count_documents({"bot_is_admin": {"$ne": False}})
-            g_new_d = gcol.count_documents({"joined_at": {"$gte": d_cut}})
-            g_new_w = gcol.count_documents({"joined_at": {"$gte": w_cut}})
-            g_new_m = gcol.count_documents({"joined_at": {"$gte": m_cut}})
+            # Only count groups where the bot is currently active.
+            # Inactive groups (bot kicked/blocked, detected by Telegram event
+            # or by scheduler) must NOT inflate the total.
+            _active_filter = {"active_status": {"$ne": "inactive"}}
+            g_total = gcol.count_documents(_active_filter)
+            # Count groups where bot is admin OR status never explicitly set
+            # (field missing = registered before admin-tracking was added).
+            g_admin = gcol.count_documents(
+                {**_active_filter, "bot_is_admin": {"$ne": False}})
+            g_new_d = gcol.count_documents(
+                {**_active_filter, "joined_at": {"$gte": d_cut}})
+            g_new_w = gcol.count_documents(
+                {**_active_filter, "joined_at": {"$gte": w_cut}})
+            g_new_m = gcol.count_documents(
+                {**_active_filter, "joined_at": {"$gte": m_cut}})
 
             # Most active group (by last_active)
             top_group = gcol.find_one({}, {"title": 1, "chat_id": 1},
