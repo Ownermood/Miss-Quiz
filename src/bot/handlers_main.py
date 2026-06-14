@@ -61,11 +61,7 @@ class TelegramQuizBot(
         }
 
     def _q_count(self) -> int:
-        """Live question count — DB first, in-memory fallback."""
-        if self.db:
-            n = self.db.get_question_count()
-            if n:
-                return n
+        """Live question count from in-memory cache (always in sync with DB)."""
         return len(self.quiz_manager.questions) if self.quiz_manager else 0
 
     # ─── Navigation helpers ───────────────────────────────────
@@ -187,8 +183,10 @@ class TelegramQuizBot(
         total_users = total_groups = 0
         if self.db:
             try:
-                total_users  = self.db.users_col.count_documents({})
-                total_groups = self.db.groups_col.count_documents({})
+                total_users  = await asyncio.to_thread(
+                    self.db.users_col.count_documents, {})
+                total_groups = await asyncio.to_thread(
+                    self.db.groups_col.count_documents, {})
             except Exception:
                 pass
         text = (
@@ -205,7 +203,8 @@ class TelegramQuizBot(
         recipients = {OWNER_ID}
         if self.db:
             try:
-                for dev in self.db.get_all_developers():
+                devs = await asyncio.to_thread(self.db.get_all_developers)
+                for dev in devs:
                     uid = dev.get("user_id")
                     if uid:
                         recipients.add(uid)
@@ -227,7 +226,7 @@ class TelegramQuizBot(
             return
         if not self.db:
             return
-        users = self.db.get_pm_accessible_users()
+        users = await asyncio.to_thread(self.db.get_pm_accessible_users)
         if not users:
             logger.info("[STARTUP] No PM-accessible users — skipping broadcast")
             return
@@ -358,7 +357,14 @@ class TelegramQuizBot(
                     filters.TEXT & ~filters.COMMAND, self._dev.handle_text_input))
                 logger.info("DeveloperCommands ✅")
         except Exception as e:
-            logger.warning(f"DeveloperCommands skip: {e}")
+            logger.error(
+                f"[CRITICAL] DeveloperCommands failed to load — /editquiz callbacks "
+                f"and text-input handlers are DISABLED. Error: {e}",
+                exc_info=True,
+            )
+
+        # Global error handler — catches any unhandled exception in any handler
+        app.add_error_handler(self._global_error_handler)
 
     async def _set_commands(self):
         try:
@@ -386,8 +392,8 @@ class TelegramQuizBot(
             return True
         if self.db:
             try:
-                return any(d.get("user_id") == uid
-                           for d in self.db.get_all_developers())
+                devs = await asyncio.to_thread(self.db.get_all_developers)
+                return any(d.get("user_id") == uid for d in devs)
             except Exception:
                 pass
         return False
@@ -449,10 +455,52 @@ class TelegramQuizBot(
 
     # ─── CALLBACK HANDLER ─────────────────────────────────────
 
+    async def _global_error_handler(self, update: object, context: ContextTypes.DEFAULT_TYPE):
+        """Catch-all PTB error handler — logs every unhandled exception."""
+        logger.error(
+            f"[PTB] Unhandled exception for update {type(update).__name__}: "
+            f"{context.error}",
+            exc_info=context.error,
+        )
+        if not isinstance(update, Update):
+            return
+        try:
+            if update.effective_message:
+                await update.effective_message.reply_text(
+                    "⚠️ Something went wrong. Please try again in a moment."
+                )
+        except Exception:
+            pass
+
     async def handle_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         query = update.callback_query
-        await query.answer()
-        data  = query.data
+        if not query:
+            return
+        try:
+            await query.answer()
+        except Exception:
+            pass  # answer() can fail if the query is too old
+        data = query.data
+        if not data:
+            return
+        try:
+            await self._dispatch_callback(update, context, query, data)
+        except Exception as e:
+            logger.error(
+                f"[CALLBACK] Error handling data={data!r} "
+                f"user={update.effective_user.id if update.effective_user else '?'}: "
+                f"{e}",
+                exc_info=True,
+            )
+            try:
+                await query.message.reply_text(
+                    "⚠️ An error occurred. Please try again."
+                )
+            except Exception:
+                pass
+
+    async def _dispatch_callback(self, update, context, query, data):
+        """Inner callback dispatch — separated so handle_callback can wrap it."""
         # Callback queries bypass the group-1 MessageHandler; register both
         # group and user here via the central pipelines.
         self.ensure_group_registered(update, context, source="callback-query")
@@ -495,3 +543,5 @@ class TelegramQuizBot(
         elif data.startswith("bs_"):
             if uid: self._nav_push(uid, "botstats")
             await self.cmd_botstats(update, context, edit_msg=query.message)
+        else:
+            logger.debug(f"[CALLBACK] Unrecognised data={data!r} — ignored")

@@ -11,7 +11,7 @@ import time
 from typing import Optional
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.error import TelegramError, Forbidden, BadRequest
+from telegram.error import TelegramError, Forbidden, BadRequest, RetryAfter
 from telegram.ext import ContextTypes
 from telegram.constants import ParseMode
 
@@ -131,7 +131,8 @@ class AdminCommandsMixin(object):
 
             if q_id is None and self.db:
                 try:
-                    q_id = self.db.get_quiz_id_from_poll(str(poll_id))
+                    q_id = await asyncio.to_thread(
+                        self.db.get_quiz_id_from_poll, str(poll_id))
                 except Exception:
                     pass
 
@@ -249,71 +250,88 @@ class AdminCommandsMixin(object):
 
     async def _cb_delquiz(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         query = update.callback_query
-        await query.answer()
+        try:
+            await query.answer()
+        except Exception:
+            pass
         data  = query.data
         actor = query.from_user
 
-        parts  = data.split("_")
-        action = parts[1]
-
         try:
-            owner_uid = int(parts[-1])
-        except (ValueError, IndexError):
-            owner_uid = 0
+            parts  = data.split("_")
+            action = parts[1]
 
-        if actor.id != owner_uid:
-            await query.answer("❌ Not your menu!", show_alert=True)
-            return
-
-        questions = self.quiz_manager.questions
-
-        if action == "cancel":
-            try: await query.message.delete()
-            except Exception: pass
-            return
-
-        if action == "page":
-            page = int(parts[2])
-            self._del_page[actor.id] = page
             try:
-                await query.message.edit_text(
-                    self._delquiz_text(questions, page),
-                    parse_mode=ParseMode.HTML,
-                    reply_markup=self._delquiz_kb(questions, page, actor.id)
-                )
-            except Exception:
-                pass
-            return
+                owner_uid = int(parts[-1])
+            except (ValueError, IndexError):
+                owner_uid = 0
 
-        if action == "del":
-            qid     = int(parts[2])
-            q_info  = next((q for q in questions if q.get("id") == qid), None)
-            preview = q_info.get("question", "")[:55] if q_info else f"#{qid}"
+            if actor.id != owner_uid:
+                await query.answer("❌ Not your menu!", show_alert=True)
+                return
 
-            success = self.quiz_manager.delete_question_by_db_id(qid)
-            mention = UI.mention(actor.id, UI.display_name(actor))
+            questions = self.quiz_manager.questions
 
-            if success:
-                remaining = len(self.quiz_manager.questions)
-                text = (
-                    f"✅ <b>DELETED</b>\n"
-                    f"{UI.LINE}\n\n"
-                    f"  By {mention}\n"
-                    f"  <code>#{qid}</code> — {preview}…\n\n"
-                    f"  📦 Remaining: <b>{remaining}</b> questions"
-                )
+            if action == "cancel":
                 try:
-                    await query.message.edit_text(text, parse_mode=ParseMode.HTML)
-                except Exception:
-                    pass
-            else:
+                    await query.message.delete()
+                except Exception as e:
+                    logger.debug(f"[DELQUIZ] delete failed (ok if already gone): {e}")
+                return
+
+            if action == "page":
+                try:
+                    page = int(parts[2])
+                except (ValueError, IndexError):
+                    logger.warning(f"[DELQUIZ] bad page in {data!r}")
+                    return
+                self._del_page[actor.id] = page
                 try:
                     await query.message.edit_text(
-                        f"❌ <b>Not Found</b>\n{UI.LINE}\n\nQuestion #{qid} not found.",
-                        parse_mode=ParseMode.HTML
+                        self._delquiz_text(questions, page),
+                        parse_mode=ParseMode.HTML,
+                        reply_markup=self._delquiz_kb(questions, page, actor.id)
                     )
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug(f"[DELQUIZ] page edit failed: {e}")
+                return
+
+            if action == "del":
+                try:
+                    qid = int(parts[2])
+                except (ValueError, IndexError):
+                    logger.warning(f"[DELQUIZ] bad qid in {data!r}")
+                    return
+                q_info  = next((q for q in questions if q.get("id") == qid), None)
+                preview = q_info.get("question", "")[:55] if q_info else f"#{qid}"
+
+                success = self.quiz_manager.delete_question_by_db_id(qid)
+                mention = UI.mention(actor.id, UI.display_name(actor))
+
+                if success:
+                    remaining = len(self.quiz_manager.questions)
+                    text = (
+                        f"✅ <b>DELETED</b>\n"
+                        f"{UI.LINE}\n\n"
+                        f"  By {mention}\n"
+                        f"  <code>#{qid}</code> — {preview}…\n\n"
+                        f"  📦 Remaining: <b>{remaining}</b> questions"
+                    )
+                else:
+                    text = (
+                        f"❌ <b>Not Found</b>\n{UI.LINE}\n\n"
+                        f"Question #{qid} not found."
+                    )
+                try:
+                    await query.message.edit_text(text, parse_mode=ParseMode.HTML)
+                except Exception as e:
+                    logger.debug(f"[DELQUIZ] result edit failed: {e}")
+
+        except Exception as e:
+            logger.error(
+                f"[DELQUIZ] Unhandled error data={data!r} user={actor.id}: {e}",
+                exc_info=True,
+            )
 
     # ─── /editquiz ───────────────────────────────────────────
 
@@ -386,8 +404,10 @@ class AdminCommandsMixin(object):
         users = groups = 0
         if self.db:
             try:
-                users  = self.db.get_user_engagement_stats().get('total_users', 0)
-                groups = len(self.db.get_all_groups())
+                stats  = await asyncio.to_thread(self.db.get_user_engagement_stats)
+                users  = stats.get('total_users', 0)
+                groups_list = await asyncio.to_thread(self.db.get_all_groups)
+                groups = len(groups_list)
             except Exception:
                 pass
 
@@ -439,8 +459,10 @@ class AdminCommandsMixin(object):
             await self._reply(update, "❌ Database not available.")
             return
 
-        users  = self.db.get_pm_accessible_users()
-        groups = self.db.get_all_groups()
+        users, groups = await asyncio.gather(
+            asyncio.to_thread(self.db.get_pm_accessible_users),
+            asyncio.to_thread(self.db.get_all_groups),
+        )
         total  = len(users) + len(groups)
 
         owner_mention = OWNER_LINK
@@ -464,6 +486,18 @@ class AdminCommandsMixin(object):
                 self._broadcast_sent.append((u["user_id"], m.message_id))
                 sent += 1
                 await asyncio.sleep(0.05)
+            except RetryAfter as e:
+                wait = e.retry_after + 1
+                logger.warning(f"BC rate-limited — sleeping {wait}s")
+                await asyncio.sleep(wait)
+                try:
+                    m = await context.bot.send_message(
+                        chat_id=u["user_id"], text=raw, parse_mode=ParseMode.HTML,
+                        link_preview_options=_NO_PREVIEW)
+                    self._broadcast_sent.append((u["user_id"], m.message_id))
+                    sent += 1
+                except Exception:
+                    failed += 1
             except (Forbidden, BadRequest):
                 failed += 1
             except Exception as e:
@@ -480,6 +514,19 @@ class AdminCommandsMixin(object):
                 self._broadcast_sent.append((g["chat_id"], gm.message_id))
                 sent += 1
                 await asyncio.sleep(0.05)
+            except RetryAfter as e:
+                wait = e.retry_after + 1
+                logger.warning(f"BC group rate-limited — sleeping {wait}s")
+                await asyncio.sleep(wait)
+                try:
+                    kwargs2 = {"chat_id": g["chat_id"], "text": raw,
+                               "parse_mode": ParseMode.HTML,
+                               "link_preview_options": _NO_PREVIEW}
+                    gm = await context.bot.send_message(**kwargs2)
+                    self._broadcast_sent.append((g["chat_id"], gm.message_id))
+                    sent += 1
+                except Exception:
+                    failed += 1
             except TelegramError as e:
                 if any(w in str(e).lower() for w in ("topic", "closed", "thread")):
                     try:

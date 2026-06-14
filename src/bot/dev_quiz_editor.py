@@ -40,13 +40,14 @@ class QuizEditorMixin:
                 quiz_id = self.extract_quiz_id_from_message(update.message.reply_to_message, context)
 
                 if quiz_id:
-                    quiz = self.db.get_question_by_id(quiz_id)
+                    import asyncio as _asyncio
+                    quiz = await _asyncio.to_thread(self.db.get_question_by_id, quiz_id)
                     if quiz:
                         logger.info(f"Editing quiz #{quiz_id} via reply")
                         await self._show_quiz_editor(update, context, quiz_id)
 
                         response_time = int((time.time() - start_time) * 1000)
-                        self.db.log_activity(
+                        await _asyncio.to_thread(self.db.log_activity,
                             activity_type='command',
                             user_id=update.effective_user.id,
                             chat_id=update.effective_message.chat_id,
@@ -83,14 +84,16 @@ class QuizEditorMixin:
                 await self._show_quiz_list(update, context, page)
 
             response_time = int((time.time() - start_time) * 1000)
-            self.db.log_activity(
+            import asyncio as _asyncio
+            await _asyncio.to_thread(
+                self.db.log_activity,
                 activity_type='command',
                 user_id=update.effective_user.id,
                 chat_id=update.effective_message.chat_id,
                 username=update.effective_user.username or "",
                 command='/editquiz',
                 success=True,
-                response_time_ms=response_time
+                response_time_ms=response_time,
             )
 
         except Exception as e:
@@ -103,7 +106,8 @@ class QuizEditorMixin:
 
     async def _show_quiz_list(self, update: Update, context: ContextTypes.DEFAULT_TYPE, page: int = 1) -> None:
         """Show paginated quiz list with selection buttons."""
-        questions = self.db.get_all_questions()
+        import asyncio as _asyncio
+        questions = await _asyncio.to_thread(self.db.get_all_questions)
 
         if not questions:
             if update.effective_message:
@@ -167,7 +171,8 @@ class QuizEditorMixin:
 
     async def _show_quiz_editor(self, update: Update, context: ContextTypes.DEFAULT_TYPE, quiz_id: int) -> None:
         """Show quiz editor interface with current values."""
-        quiz = self.db.get_question_by_id(quiz_id)
+        import asyncio as _asyncio
+        quiz = await _asyncio.to_thread(self.db.get_question_by_id, quiz_id)
 
         if not quiz:
             error_text = f"""❌ **Quiz Not Found**
@@ -261,14 +266,34 @@ Select what to edit:"""
             return
 
         query = update.callback_query
-        await query.answer()
-
-        if not await self.check_access(update):
-            await query.edit_message_text("❌ Unauthorized access.")
-            return
+        try:
+            await query.answer()
+        except Exception:
+            pass
 
         data = query.data
         if not data:
+            return
+
+        try:
+            await self._dispatch_edit_quiz_callback(update, context, query, data)
+        except Exception as e:
+            logger.error(
+                f"[EDIT_QUIZ_CB] Error handling data={data!r} "
+                f"user={update.effective_user.id}: {e}",
+                exc_info=True,
+            )
+            try:
+                await query.edit_message_text(
+                    "❌ An error occurred. Please try /editquiz again."
+                )
+            except Exception:
+                pass
+
+    async def _dispatch_edit_quiz_callback(self, update, context, query, data) -> None:
+        """Inner dispatch for edit_quiz callbacks."""
+        if not await self.check_access(update):
+            await query.edit_message_text("❌ Unauthorized access.")
             return
 
         if data == "edit_quiz_cancel":
@@ -420,12 +445,14 @@ Example:
             return
 
         try:
-            success = self.db.update_question(
+            import asyncio as _asyncio
+            success = await _asyncio.to_thread(
+                self.db.update_question,
                 qid=quiz_id,
                 question=quiz_data['question'],
                 options=quiz_data['options'],
                 correct_answer=quiz_data['correct_answer'],
-                category=quiz_data.get('category')
+                category=quiz_data.get('category'),
             )
 
             if success:
@@ -443,13 +470,14 @@ Example:
                 if update.effective_user and update.callback_query and update.callback_query.message:
                     chat_id = getattr(update.callback_query.message, 'chat_id', None)
                     if chat_id:
-                        self.db.log_activity(
+                        await _asyncio.to_thread(
+                            self.db.log_activity,
                             activity_type='quiz_edited',
                             user_id=update.effective_user.id,
                             chat_id=chat_id,
                             username=update.effective_user.username or "",
                             details={'quiz_id': quiz_id, 'changes': changes},
-                            success=True
+                            success=True,
                         )
 
                 text = self._format_quiz_editor(quiz_data)
@@ -487,38 +515,52 @@ Example:
         if not waiting_for:
             return
 
-        text = update.message.text.strip()
+        try:
+            text = update.message.text.strip()
 
-        if waiting_for.startswith('quiz_question_'):
-            quiz_id = int(waiting_for.split('_')[-1])
-            if context.user_data is not None:
-                quiz_data = context.user_data.get(f'editing_quiz_{quiz_id}')
-                if quiz_data:
-                    quiz_data['question'] = text
-                    context.user_data.pop('waiting_for', None)
+            if waiting_for.startswith('quiz_question_'):
+                quiz_id = int(waiting_for.split('_')[-1])
+                if context.user_data is not None:
+                    quiz_data = context.user_data.get(f'editing_quiz_{quiz_id}')
+                    if quiz_data:
+                        quiz_data['question'] = text
+                        context.user_data.pop('waiting_for', None)
 
-                    await update.message.reply_text(
-                        f"✅ Question updated!\n\nUse /editquiz {quiz_id} to continue editing.",
-                        parse_mode=ParseMode.MARKDOWN
-                    )
-
-        elif waiting_for.startswith('quiz_options_'):
-            quiz_id = int(waiting_for.split('_')[-1])
-            if context.user_data is not None:
-                quiz_data = context.user_data.get(f'editing_quiz_{quiz_id}')
-                if quiz_data:
-                    options = [opt.strip() for opt in text.split('|')]
-                    if len(options) != 4:
                         await update.message.reply_text(
-                            "❌ Invalid format. Please provide exactly 4 options separated by |",
+                            f"✅ Question updated!\n\nUse /editquiz {quiz_id} to continue editing.",
                             parse_mode=ParseMode.MARKDOWN
                         )
-                        return
 
-                    quiz_data['options'] = options
-                    context.user_data.pop('waiting_for', None)
+            elif waiting_for.startswith('quiz_options_'):
+                quiz_id = int(waiting_for.split('_')[-1])
+                if context.user_data is not None:
+                    quiz_data = context.user_data.get(f'editing_quiz_{quiz_id}')
+                    if quiz_data:
+                        options = [opt.strip() for opt in text.split('|')]
+                        if len(options) != 4:
+                            await update.message.reply_text(
+                                "❌ Invalid format. Please provide exactly 4 options separated by |",
+                                parse_mode=ParseMode.MARKDOWN
+                            )
+                            return
 
-                    await update.message.reply_text(
-                        f"✅ Options updated!\n\nUse /editquiz {quiz_id} to continue editing.",
-                        parse_mode=ParseMode.MARKDOWN
-                    )
+                        quiz_data['options'] = options
+                        context.user_data.pop('waiting_for', None)
+
+                        await update.message.reply_text(
+                            f"✅ Options updated!\n\nUse /editquiz {quiz_id} to continue editing.",
+                            parse_mode=ParseMode.MARKDOWN
+                        )
+
+        except Exception as e:
+            logger.error(
+                f"[TEXT_INPUT] Error for user={update.effective_user.id} "
+                f"waiting_for={waiting_for!r}: {e}",
+                exc_info=True,
+            )
+            try:
+                await update.message.reply_text(
+                    "❌ Error processing your input. Please try again."
+                )
+            except Exception:
+                pass

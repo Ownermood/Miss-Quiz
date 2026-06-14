@@ -59,7 +59,7 @@ class QuizCommandsMixin(object):
         # ── Delete previous quiz in this chat before sending ─────
         if self.db:
             try:
-                prev = self.db.get_active_quiz_state(track_id)
+                prev = await asyncio.to_thread(self.db.get_active_quiz_state, track_id)
                 if prev and prev.get("message_id"):
                     try:
                         await context.bot.delete_message(
@@ -104,14 +104,16 @@ class QuizCommandsMixin(object):
 
             # Persist poll mapping (primary: MongoDB, secondary: pickle)
             if self.db and q_id:
-                self.db.save_poll_mapping(str(poll_id), q_id, poll_data=poll_entry)
+                await asyncio.to_thread(
+                    self.db.save_poll_mapping, str(poll_id), q_id, poll_entry)
             self._pickle_save(f"poll_{poll_id}", poll_entry)
             self._poll_stats["stored"] += 1
 
             # Track active quiz so next /quiz call can clean it up (works in DMs and groups)
             if self.db:
                 try:
-                    self.db.save_active_quiz(
+                    await asyncio.to_thread(
+                        self.db.save_active_quiz,
                         chat_id=track_id,
                         message_id=poll_msg.message_id,
                         quiz_id=q_id,
@@ -148,7 +150,7 @@ class QuizCommandsMixin(object):
         db_doc = {}
         if self.db:
             try:
-                db_doc = self.db.get_user(user.id) or {}
+                db_doc = await asyncio.to_thread(self.db.get_user, user.id) or {}
             except Exception as e:
                 logger.error(f"cmd_score get_user: {e}")
 
@@ -221,7 +223,7 @@ class QuizCommandsMixin(object):
         db_doc = {}
         if self.db:
             try:
-                db_doc = self.db.get_user(user.id) or {}
+                db_doc = await asyncio.to_thread(self.db.get_user, user.id) or {}
             except Exception as e:
                 logger.error(f"cmd_stats get_user: {e}")
 
@@ -324,7 +326,8 @@ class QuizCommandsMixin(object):
         earned_list = []
         if self.db:
             try:
-                earned_list = self.db.get_user_achievements(user.id) or []
+                earned_list = await asyncio.to_thread(
+                    self.db.get_user_achievements, user.id) or []
             except Exception as e:
                 logger.error(f"cmd_achievements get_user_achievements: {e}")
 
@@ -391,8 +394,10 @@ class QuizCommandsMixin(object):
         dbs     = {}
         if self.db:
             try:
-                d   = self.db.get_analytics_data()
-                dbs = self.db.get_db_stats()
+                d, dbs = await asyncio.gather(
+                    asyncio.to_thread(self.db.get_analytics_data),
+                    asyncio.to_thread(self.db.get_db_stats),
+                )
             except Exception as e:
                 logger.error(f"cmd_botstats: {e}")
 
