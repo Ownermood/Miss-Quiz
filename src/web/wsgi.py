@@ -58,9 +58,9 @@ else:
                 await bot.application.start()
                 bot.run_startup_tasks()
 
-                scheduler = AutoQuizScheduler(bot, q_mgr, db_manager=db_mgr, interval_minutes=30)
+                scheduler = AutoQuizScheduler(bot, q_mgr, db_manager=db_mgr, interval_minutes=60)
                 scheduler.start()
-                logger.info("✅ Auto-quiz scheduler started (30-min interval, polling mode)")
+                logger.info("✅ Auto-quiz scheduler started (60-min interval, polling mode)")
 
                 try:
                     await bot.application.updater.start_polling(

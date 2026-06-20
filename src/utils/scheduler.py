@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 
 class AutoQuizScheduler:
 
-    def __init__(self, bot, quiz_manager, db_manager=None, interval_minutes: int = 30):
+    def __init__(self, bot, quiz_manager, db_manager=None, interval_minutes: int = 60):
         self.bot          = bot
         self.quiz_manager = quiz_manager
         self.db           = db_manager

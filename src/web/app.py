@@ -130,9 +130,9 @@ async def _bot_lifecycle():
 
     # Auto-quiz scheduler — was missing from webhook mode entirely.
     # Must start AFTER application.start() so bot.application.bot is live.
-    scheduler = AutoQuizScheduler(bot, q_mgr, db_manager=db_mgr, interval_minutes=30)
+    scheduler = AutoQuizScheduler(bot, q_mgr, db_manager=db_mgr, interval_minutes=60)
     scheduler.start()
-    logger.info("✅ Auto-quiz scheduler started (30-min interval)")
+    logger.info("✅ Auto-quiz scheduler started (60-min interval)")
 
     try:
         await asyncio.Event().wait()  # keep loop alive forever
