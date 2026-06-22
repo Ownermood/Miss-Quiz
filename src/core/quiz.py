@@ -141,14 +141,22 @@ class QuizManager:
             logger.error(f"[MIGRATION] _migrate_option_lengths error: {e}")
 
     def _load_questions(self):
-        """Load all questions from DB into memory (with category fix)."""
-        try:
-            raw = self.db.get_all_questions()
-            self.questions = [_fmt_question(q) for q in raw]
-            logger.info(f"Loaded {len(self.questions)} questions from MongoDB")
-        except Exception as e:
-            logger.error(f"Failed to load questions: {e}")
-            raise DatabaseError(f"Failed to initialize questions: {e}") from e
+        """Load all questions from DB into memory, with up to 3 retries."""
+        import time as _time
+        last_err = None
+        for attempt in range(1, 4):
+            try:
+                raw = self.db.get_all_questions()
+                self.questions = [_fmt_question(q) for q in raw]
+                logger.info(f"Loaded {len(self.questions)} questions from MongoDB")
+                return
+            except Exception as e:
+                last_err = e
+                logger.warning(f"_load_questions attempt {attempt}/3 failed: {e}")
+                if attempt < 3:
+                    _time.sleep(attempt * 3)  # 3s, then 6s before final try
+        logger.error(f"Failed to load questions after 3 attempts: {last_err}")
+        raise DatabaseError(f"Failed to initialize questions: {last_err}") from last_err
 
     def _init_user_stats(self, user_id: str) -> None:
         today = datetime.now().strftime("%Y-%m-%d")
