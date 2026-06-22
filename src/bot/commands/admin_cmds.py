@@ -618,7 +618,7 @@ class AdminCommandsMixin(object):
 
         try:
             old = len(self.quiz_manager.questions)
-            self.quiz_manager.reload_data()
+            await asyncio.to_thread(self.quiz_manager.reload_data)
             new  = len(self.quiz_manager.questions)
             diff = new - old
             sign = "+" if diff >= 0 else ""

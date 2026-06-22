@@ -173,45 +173,25 @@ class QuizManager:
         """
         Return a random question, optionally filtered by category.
         Avoids recently-asked questions per chat.
+        Uses in-memory cache — no DB call on every invocation.
         """
         if category is not None and not isinstance(category, str):
             raise ValidationError(f"category must be a string, got {type(category).__name__}")
 
         try:
-            if not self.questions and not self.db:
+            if not self.questions:
                 return None
 
-            # ── Category filter path ─────────────────────────────────────
+            # ── Category filter path (in-memory) ─────────────────────────
             if category and category.strip():
-                cat = category.strip()
-                raw = self.db.get_questions_by_category(cat)
-                if not raw:
+                cat  = category.strip()
+                pool = [q for q in self.questions
+                        if q.get("category", "").lower() == cat.lower()]
+                if not pool:
                     logger.warning(f"No questions for category '{cat}'")
                     return None
-
-                pool = [_fmt_question(q) for q in raw]  # ← BUG FIX: use _fmt_question
-
-                if chat_id == 0:
-                    return random.choice(pool)
-
-                recent = self.recent_questions[chat_id]
-                available = [q for q in pool if q["question"] not in recent]
-                if not available:
-                    available = pool
-                    logger.info(f"Reset recent questions for category '{cat}' chat {chat_id}")
-
-                selected = random.choice(available)
-                self.recent_questions[chat_id].append(selected["question"])
-                self.last_question_time[chat_id][selected["question"]] = datetime.now()
-                return selected
-
-            # ── No category path ─────────────────────────────────────────
-            # Always fetch from DB so IDs are accurate for /delquiz
-            raw = self.db.get_all_questions()
-            if not raw:
-                return random.choice(self.questions) if self.questions else None
-
-            pool = [_fmt_question(q) for q in raw]  # ← BUG FIX: use _fmt_question
+            else:
+                pool = self.questions
 
             if chat_id == 0:
                 return random.choice(pool)
