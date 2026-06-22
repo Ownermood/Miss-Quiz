@@ -33,7 +33,7 @@ class DatabaseManager:
             url,
             serverSelectionTimeoutMS=10000,
             connectTimeoutMS=10000,
-            socketTimeoutMS=30000,
+            socketTimeoutMS=90000,
         )
         # Ping to verify connection
         self.client.admin.command('ping')
