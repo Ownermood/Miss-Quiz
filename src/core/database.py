@@ -713,18 +713,14 @@ class DatabaseManager:
             "active_30d": self.get_active_users_count(30)
         }
 
-    def get_analytics_data(self) -> Dict:
-        """Single call that returns all stats needed for the analytics dashboard."""
+    def get_user_analytics(self) -> Dict:
+        """User statistics for the analytics dashboard."""
         try:
             now   = datetime.utcnow()
             d_cut = (now - timedelta(hours=24)).isoformat()
             w_cut = (now - timedelta(days=7)).isoformat()
             m_cut = (now - timedelta(days=30)).isoformat()
-            acts  = self.activities_col
             ucol  = self.users_col
-            gcol  = self.groups_col
-
-            # ── Users ─────────────────────────────────────────
             u_total    = ucol.count_documents({})
             u_pm       = ucol.count_documents({"pm_accessible": True})
             u_active_d = ucol.count_documents({"last_seen": {"$gte": d_cut}})
@@ -732,100 +728,53 @@ class DatabaseManager:
             u_new_d    = ucol.count_documents({"joined_at": {"$gte": d_cut}})
             u_new_w    = ucol.count_documents({"joined_at": {"$gte": w_cut}})
             u_new_m    = ucol.count_documents({"joined_at": {"$gte": m_cut}})
-            engage_rate = round(u_active_d / u_total * 100, 1) if u_total else 0
-
-            # Most active user (by total_marks)
-            top_user = ucol.find_one({}, {"name": 1, "username": 1, "user_id": 1,
-                                          "total_marks": 1, "quizzes_completed": 1},
-                                     sort=[("total_marks", DESCENDING)])
-
-            # ── Groups ────────────────────────────────────────
-            # Only count groups where the bot is currently active.
-            # Inactive groups (bot kicked/blocked, detected by Telegram event
-            # or by scheduler) must NOT inflate the total.
-            _active_filter = {"active_status": {"$ne": "inactive"}}
-            g_total = gcol.count_documents(_active_filter)
-            # Count groups where bot is admin OR status never explicitly set
-            # (field missing = registered before admin-tracking was added).
-            g_admin = gcol.count_documents(
-                {**_active_filter, "bot_is_admin": {"$ne": False}})
-            g_new_d = gcol.count_documents(
-                {**_active_filter, "joined_at": {"$gte": d_cut}})
-            g_new_w = gcol.count_documents(
-                {**_active_filter, "joined_at": {"$gte": w_cut}})
-            g_new_m = gcol.count_documents(
-                {**_active_filter, "joined_at": {"$gte": m_cut}})
-
-            # Most active group (by last_active)
-            top_group = gcol.find_one({}, {"title": 1, "chat_id": 1},
-                                      sort=[("last_active", DESCENDING)])
-
-            # ── Questions ─────────────────────────────────────
-            q_total = self.questions_col.count_documents({})
-            q_cats  = len(self.questions_col.distinct("category"))
-
-            # ── Quiz activity (aggregation — one pass per period) ──
-            def _quiz_stats(cut=None):
-                match = {"type": "quiz_answer"}
-                if cut:
-                    match["timestamp"] = {"$gte": cut}
-                pipeline = [
-                    {"$match": match},
-                    {"$group": {
-                        "_id":       None,
-                        "attempts":  {"$sum": 1},
-                        "correct":   {"$sum": {"$cond": [{"$eq": ["$is_correct", True]}, 1, 0]}},
-                        "players":   {"$addToSet": "$user_id"},
-                    }},
-                ]
-                row = list(acts.aggregate(pipeline))
-                if row:
-                    r = row[0]
-                    att = r["attempts"]
-                    cor = r["correct"]
-                    return {
-                        "attempts": att,
-                        "correct":  cor,
-                        "wrong":    att - cor,
-                        "accuracy": round(cor / att * 100, 1) if att else 0,
-                        "players":  len(r["players"]),
-                    }
-                return {"attempts": 0, "correct": 0, "wrong": 0, "accuracy": 0, "players": 0}
-
-            qs_d = _quiz_stats(d_cut)
-            qs_w = _quiz_stats(w_cut)
-            qs_m = _quiz_stats(m_cut)
-            qs_a = _quiz_stats()
-
-            # ── Subject breakdown ──────────────────────────────
-            subj_pipe = [
-                {"$match": {"type": "quiz_answer"}},
-                {"$group": {
-                    "_id":     "$category",
-                    "attempts": {"$sum": 1},
-                    "correct":  {"$sum": {"$cond": [{"$eq": ["$is_correct", True]}, 1, 0]}},
-                }},
-                {"$sort": {"attempts": DESCENDING}},
-                {"$limit": 6},
-            ]
-            subj_stats = list(acts.aggregate(subj_pipe))
-
             return {
-                "u_total": u_total, "u_pm": u_pm,
+                "u_total":    u_total,    "u_pm":       u_pm,
                 "u_active_d": u_active_d, "u_active_w": u_active_w,
-                "u_new_d": u_new_d, "u_new_w": u_new_w, "u_new_m": u_new_m,
-                "engage_rate": engage_rate,
-                "top_user": top_user,
-                "g_total": g_total, "g_admin": g_admin,
-                "g_new_d": g_new_d, "g_new_w": g_new_w, "g_new_m": g_new_m,
-                "top_group": top_group,
-                "q_total": q_total, "q_cats": q_cats,
-                "qs_d": qs_d, "qs_w": qs_w, "qs_m": qs_m, "qs_a": qs_a,
-                "subj_stats": subj_stats,
+                "u_new_d":    u_new_d,    "u_new_w":    u_new_w,
+                "u_new_m":    u_new_m,
             }
         except Exception as e:
-            logger.error(f"get_analytics_data error: {e}")
+            logger.error(f"get_user_analytics error: {e}")
             return {}
+
+    def get_group_analytics(self) -> Dict:
+        """Group statistics for the analytics dashboard."""
+        try:
+            now   = datetime.utcnow()
+            d_cut = (now - timedelta(hours=24)).isoformat()
+            w_cut = (now - timedelta(days=7)).isoformat()
+            m_cut = (now - timedelta(days=30)).isoformat()
+            gcol  = self.groups_col
+            _af   = {"active_status": {"$ne": "inactive"}}
+            return {
+                "g_total": gcol.count_documents(_af),
+                "g_admin": gcol.count_documents({**_af, "bot_is_admin": {"$ne": False}}),
+                "g_new_d": gcol.count_documents({**_af, "joined_at": {"$gte": d_cut}}),
+                "g_new_w": gcol.count_documents({**_af, "joined_at": {"$gte": w_cut}}),
+                "g_new_m": gcol.count_documents({**_af, "joined_at": {"$gte": m_cut}}),
+            }
+        except Exception as e:
+            logger.error(f"get_group_analytics error: {e}")
+            return {}
+
+    def get_content_analytics(self) -> Dict:
+        """Question/category counts for the analytics dashboard."""
+        try:
+            return {
+                "q_cats": len(self.questions_col.distinct("category")),
+            }
+        except Exception as e:
+            logger.error(f"get_content_analytics error: {e}")
+            return {}
+
+    def get_analytics_data(self) -> Dict:
+        """Merged analytics — kept for backwards compatibility."""
+        d = {}
+        d.update(self.get_user_analytics())
+        d.update(self.get_group_analytics())
+        d.update(self.get_content_analytics())
+        return d
 
     # ── Auto Quiz State ───────────────────────────────────────────────────────
 

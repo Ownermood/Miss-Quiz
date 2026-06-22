@@ -383,23 +383,35 @@ class QuizCommandsMixin(object):
 
     async def cmd_botstats(self, update: Update, context: ContextTypes.DEFAULT_TYPE,
                            edit_msg=None):
+        if update.effective_user and not await self._is_authorized(update.effective_user.id):
+            await self._unauthorized(update)
+            return
+
+        # Always show a loading state — on first call reply, on refresh edit-in-place
         if edit_msg is None:
             wait = await self._reply(update, "📊 <i>Loading analytics...</i>")
-            await asyncio.sleep(0.35)
         else:
-            wait = None
+            wait = edit_msg
+            try:
+                await edit_msg.edit_text("📊 <i>Loading analytics...</i>",
+                                         parse_mode="HTML")
+            except Exception:
+                pass
+        await asyncio.sleep(0.3)
 
         q_total = self._q_count()
-        d       = {}
-        dbs     = {}
+        ud = gd = dbs = cd = {}
         if self.db:
             try:
-                d, dbs = await asyncio.gather(
-                    asyncio.to_thread(self.db.get_analytics_data),
+                ud, gd, cd, dbs = await asyncio.gather(
+                    asyncio.to_thread(self.db.get_user_analytics),
+                    asyncio.to_thread(self.db.get_group_analytics),
+                    asyncio.to_thread(self.db.get_content_analytics),
                     asyncio.to_thread(self.db.get_db_stats),
                 )
             except Exception as e:
                 logger.error(f"cmd_botstats: {e}")
+        d = {**ud, **gd, **cd}
 
         u_total    = d.get("u_total",    0)
         u_pm       = d.get("u_pm",       0)
@@ -458,10 +470,4 @@ class QuizCommandsMixin(object):
              InlineKeyboardButton("🏠 Home",    callback_data="nav_home")],
         ])
 
-        target = edit_msg or wait
-        if target:
-            await self._edit(target, text, kb)
-        else:
-            msg = await self._reply(update, text, reply_markup=kb)
-            if msg and update.effective_user:
-                self._active_msg[update.effective_user.id] = msg
+        await self._edit(wait, text, kb)
