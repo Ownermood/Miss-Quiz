@@ -128,9 +128,7 @@ class UI:
         # Exact match first, then substring (prevents "constitution" stealing
         # the match from "constitution & law").
         for k, (emoji, _) in UI.CATS.items():
-            if k == "default" or k in cat_lower is False:
-                continue
-            if cat_lower == k:
+            if k != "default" and cat_lower == k:
                 return emoji
         for k, (emoji, _) in UI.CATS.items():
             if k == "default":

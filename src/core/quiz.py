@@ -271,9 +271,9 @@ class QuizManager:
 
                 # ── Phase 3: update in-memory cache under lock ────────────
                 with self._questions_lock:
-                    for i in range(count):
+                    for i, new_id in new_ids:
                         self.questions.append(_fmt_question({
-                            "id":             new_ids[i],
+                            "id":             new_id,
                             "question":       batch[i]["question"],
                             "options":        batch[i]["options"],
                             "correct_answer": batch[i]["correct_answer"],

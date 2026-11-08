@@ -60,17 +60,20 @@ class TestUILevel:
 
 class TestUICatEmoji:
 
-    def test_legal_emoji(self):
-        assert UI.cat_emoji("legal") == "⚖️"
+    def test_law_emoji(self):
+        assert UI.cat_emoji("Constitution & Law") == "⚖️"
 
-    def test_english_emoji(self):
-        assert UI.cat_emoji("english") == "📖"
+    def test_exact_match_beats_substring(self):
+        assert UI.cat_emoji("constitution") == "📖"
+
+    def test_alias_emoji(self):
+        assert UI.cat_emoji("polity") == "🏛️"
 
     def test_unknown_returns_default(self):
         assert UI.cat_emoji("something_random") == "📚"
 
     def test_case_insensitive(self):
-        assert UI.cat_emoji("LEGAL Reasoning") == "⚖️"
+        assert UI.cat_emoji("CURRENT Affairs") == "📰"
 
 
 class TestUIDisplayName:

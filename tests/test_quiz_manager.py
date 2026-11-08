@@ -24,6 +24,8 @@ def make_manager(questions=None):
     mgr.recent_questions         = defaultdict(lambda: deque(maxlen=50))
     mgr.last_question_time       = defaultdict(dict)
     mgr.available_questions      = defaultdict(list)
+    import threading
+    mgr._questions_lock          = threading.Lock()
     return mgr
 
 
@@ -85,13 +87,26 @@ class TestAddQuestions:
 
     def test_add_new_question(self):
         mgr = make_manager([])
-        mgr.db.add_question.return_value = 10
+        mgr.db.add_questions_batch.return_value = (1, [(0, 10)], [])
         result = mgr.add_questions([{
             "question": "New Q?", "options": ["A","B","C","D"],
             "correct_answer": 0, "category": "General"
         }])
         assert result["added"] == 1
+        assert mgr.questions[-1]["id"] == 10
         assert len(mgr.questions) == 1
+
+    def test_partial_batch_maps_ids_by_index(self):
+        mgr = make_manager([])
+        # 3 questions sent, the middle one failed in DB
+        mgr.db.add_questions_batch.return_value = (2, [(0, 10), (2, 12)], ["dup"])
+        result = mgr.add_questions([
+            {"question": f"Q{n}?", "options": ["A","B"], "correct_answer": 0}
+            for n in range(3)
+        ])
+        assert result["added"] == 2
+        ids = {q["question"]: q["id"] for q in mgr.questions}
+        assert ids == {"Q0?": 10, "Q2?": 12}
 
     def test_duplicate_rejected(self):
         mgr = make_manager(SAMPLE_QUESTIONS)

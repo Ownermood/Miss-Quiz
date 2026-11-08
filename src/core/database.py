@@ -180,8 +180,10 @@ class DatabaseManager:
 
     def add_questions_batch(self, questions: List[Dict]) -> tuple:
         """Bulk-insert questions in a single MongoDB round trip.
-        Returns (inserted_count, new_ids_list, errors_list).
-        Uses ordered=False so a bad document doesn't abort the whole batch."""
+        Returns (inserted_count, [(batch_index, new_id), ...], errors_list).
+        Uses ordered=False so a bad document doesn't abort the whole batch;
+        on partial failure only the pairs of documents that were actually
+        inserted are returned (failed positions come from writeErrors[].index)."""
         if not questions:
             return 0, [], []
         n = len(questions)
@@ -204,16 +206,18 @@ class DatabaseManager:
                 "category":       q.get("category", "General"),
                 "created_at":     now,
             })
-            new_ids.append(qid)
+            new_ids.append((i, qid))
 
         try:
             self.questions_col.insert_many(docs, ordered=False)
             return n, new_ids, []
         except BulkWriteError as exc:
-            inserted = exc.details.get("nInserted", 0)
-            errs = [str(e) for e in exc.details.get("writeErrors", [])[:5]]
-            logger.error(f"add_questions_batch: partial write inserted={inserted}: {exc}")
-            return inserted, new_ids[:inserted], errs
+            write_errors = exc.details.get("writeErrors", [])
+            failed = {e.get("index") for e in write_errors}
+            ok     = [pair for pair in new_ids if pair[0] not in failed]
+            errs   = [str(e) for e in write_errors[:5]]
+            logger.error(f"add_questions_batch: partial write inserted={len(ok)}/{n}: {exc}")
+            return len(ok), ok, errs
         except Exception as exc:
             logger.error(f"add_questions_batch: insert_many failed: {exc}")
             return 0, [], [str(exc)]
