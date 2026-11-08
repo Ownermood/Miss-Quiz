@@ -41,10 +41,10 @@ tests/                      test_config.py, test_quiz_manager.py, test_ui.py
 
 **Auth layers:**
 - Bot: `_is_owner()` / `_is_authorized()` (`handlers_main.py`), `check_access()` (`dev_commands.py`). Owner + WIFU + `developers` collection.
-- Web API: `_check_api_auth()` (`src/web/app.py`), `ADMIN_API_KEY` header `X-Admin-Key`.
-- Webhook: `WEBHOOK_SECRET_TOKEN` header `X-Telegram-Bot-Api-Secret-Token`.
+- Web API: `_check_api_auth()` (`src/web/app.py`). Fail-closed: `ADMIN_API_KEY` set nahi to API band. Sirf header `X-Admin-Key`, constant-time compare. Panel (`admin.js`) key sessionStorage mein rakhta hai.
+- Webhook: hamesha verify hota hai. Secret `config.webhook_secret(token)` se aata hai: `WEBHOOK_SECRET_TOKEN` ya bot token se derived (HMAC). Wahi `set_webhook` ko jaata hai.
 
-**Auto quiz flow (`scheduler.py`):** poll bina timer (koi `open_period` nahi) bheja jaata hai, interval 60 min. Naya bhejne se pehle purana delete hota hai. `message_id` `auto_quiz_state` mein save hota hai, to restart ke baad bhi delete chalta hai. Abhi sirf groups mein chalta hai, channels mein nahi (`is_anonymous=False` hard-coded hai).
+**Auto quiz flow (`scheduler.py`):** poll bina timer (koi `open_period` nahi) bheja jaata hai, interval 60 min. Pehle naya bheja jaata hai, phir purana delete hota hai (send fail ho to purana bacha rehta hai). 429 pe `retry_after` ke baad retry, network error pe 2 min baad retry. `message_id` `auto_quiz_state` mein save hota hai, to restart ke baad bhi delete chalta hai. Abhi sirf groups mein chalta hai, channels mein nahi (`is_anonymous=False` hard-coded hai).
 
 ## 3. Commands (dev)
 
@@ -52,7 +52,7 @@ tests/                      test_config.py, test_quiz_manager.py, test_ui.py
 python -m py_compile $(git ls-files '*.py')           # har change ke baad zaroor
 pip install -r requirements.txt                       # agar blinker error aaye: pip install --ignore-installed blinker -r requirements.txt
 python -m pytest -q                                   # pytest.ini mein --cov hai (pytest-cov chahiye)
-python -m pytest -q -o addopts=""                     # bina coverage ke
+python -m pytest -q -o addopts=""                     # bina coverage ke (fast)
 MODE=polling python main.py                           # local run (TELEGRAM_TOKEN, OWNER_ID, MONGODB_URL chahiye)
 ```
 
@@ -113,15 +113,18 @@ Pakke bugs aur sirf "possible risks" alag-alag likho.
 
 ## 6. Roadmap (isi order mein)
 
-**Phase 0: Base aur security** ← abhi yahan
-- [ ] `_check_api_auth()` fail-closed karo (sirf `DYNO` pe nahi, har jagah). `hmac.compare_digest`. Query-string `api_key` hatao.
-- [ ] `static/js/admin.js` request ke saath `X-Admin-Key` bheje (key user se lo, sessionStorage mein rakho)
-- [ ] Webhook mode mein `WEBHOOK_SECRET_TOKEN` zaroori ho, nahi to startup pe fail ya auto-generate karke `set_webhook` mein do
-- [ ] `/webhook` error mein `str(e)` client ko mat bhejo
-- [ ] `render.yaml`: `DATABASE_URL` (Postgres) hatao, `MONGODB_URL`, `ADMIN_API_KEY`, `WEBHOOK_SECRET_TOKEN` (`sync: false`) jodo
-- [ ] Tests chalne layak banao (deps install, pytest-cov)
-- [ ] Startup pe saare questions memory mein load na hon. DB se filter karke random question lo (`$sample`), indexes jodo. Isi se timeout aate hain.
-- [ ] README: auto quiz interval 30 se 60 min
+**Phase 0: Base aur security** ✅ (branch `ccr-f1e736ea-a5z34q`)
+- [x] `_check_api_auth()` fail-closed, `hmac.compare_digest`, query-string key hata di
+- [x] `admin.js` `X-Admin-Key` bhejta hai
+- [x] Webhook secret hamesha verify (derived ya env), error text leak band
+- [x] `render.yaml` MongoDB + `ADMIN_API_KEY`; Dockerfile se Postgres hata; `.dockerignore`
+- [x] Tests chalte hain (stale tests theek), naye tests: web security, scheduler, DB batch
+- [x] Startup pe questions 2 baar fetch hote the, ab 1 baar. In-memory cache abhi rakha (scale pe dobara dekhna: `$sample` + filters)
+- [x] Partial bulk insert pe galat ID mapping fix
+- [x] Polling mode interval 30 se 60 min, README update
+- [x] Auto quiz: send-then-delete, 429/network retry
+- [ ] Dashboard `/api/metrics` route exist nahi karta (`admin.js` call karta hai) → bana ya call hatao
+- [ ] Admin panel broadcast button: API sirf preview deti hai (`status: not_sent`), JS `result.queued` dhoondhta hai → hamesha "Failed" dikhata hai
 
 **Phase 1: Multi-subject + channels**
 - [ ] Question schema: `exam`, `subject`, `topic`, `difficulty`, `explanation`, `lang`, `source`, `verified` (purane fields chalte rahein)
@@ -173,7 +176,8 @@ Phase 1 se pehle parser sirf purane fields padhta hai. Explanation/Category/Diff
 
 ## 9. Pata hai jo problems hain
 
-- (Phase 0) Web API auth fail-open hai Render pe; webhook secret optional; `render.yaml` DB galat.
-- (Phase 0) Questions startup pe memory mein load hote hain, isliye slow startup aur timeouts. Pichhle commits sirf timeout badha rahe the, asli fix nahi.
-- Delete pehle hota hai aur send baad mein. Send fail ho to group 1 ghanta khaali rehta hai.
-- Tests bahut kam hain.
+- `/api/metrics` missing aur panel broadcast button ka mismatch (Phase 0 ke bache items).
+- `datetime.utcnow()` deprecated hai (DB mein naive ISO strings save hote hain). Badalne se stored format badlega, isliye soch ke migrate karna.
+- `send_poll` timeout pe Telegram ne poll shayad bhej diya ho; 2 min retry se ek extra poll reh sakta hai jo track nahi hota. Rare, accept kiya.
+- Auto quiz groups ko sequentially bhejta hai, koi global rate limiter nahi. Bahut groups pe 30 msg/sec limit ke liye pacing chahiye (Phase 1).
+- Tests abhi bhi kam hain (handlers, parser, poll answers untested).
