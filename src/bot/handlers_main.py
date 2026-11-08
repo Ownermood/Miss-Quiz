@@ -10,7 +10,7 @@ from datetime import datetime
 
 from telegram import (
     Update, InlineKeyboardButton, InlineKeyboardMarkup,
-    BotCommand, LinkPreviewOptions
+    BotCommand
 )
 from telegram.ext import (
     Application, CommandHandler, PollAnswerHandler,
@@ -21,8 +21,7 @@ from telegram.constants import ParseMode
 from telegram.error import TelegramError, Forbidden, BadRequest
 
 from src.bot.ui import (
-    UI, OWNER_ID, OWNER_LINK, COMMUNITY, _NO_PREVIEW,
-    get_thread_id, get_tracking_id
+    UI, OWNER_ID, COMMUNITY, _NO_PREVIEW, get_thread_id
 )
 from src.bot.tracking import TrackingMixin
 from src.bot.poll_manager import PollMixin
@@ -295,7 +294,6 @@ class TelegramQuizBot(
         app.add_handler(CommandHandler("start",       self.cmd_start))
         app.add_handler(CommandHandler("help",        self.cmd_help))
         app.add_handler(CommandHandler("quiz",        self.cmd_quiz))
-        app.add_handler(CommandHandler("q",           self.cmd_quiz))
         app.add_handler(CommandHandler("score",        self.cmd_score))
         app.add_handler(CommandHandler("stats",        self.cmd_stats))
         app.add_handler(CommandHandler("achievements", self.cmd_achievements))
@@ -311,7 +309,6 @@ class TelegramQuizBot(
         app.add_handler(CommandHandler("editquiz",    self.cmd_editquiz))
         app.add_handler(CommandHandler("dev",         self.cmd_dev))
         app.add_handler(CommandHandler("broadcast",     self.cmd_broadcast))
-        app.add_handler(CommandHandler("bc",            self.cmd_broadcast))
         app.add_handler(CommandHandler("delbroadcast",  self.cmd_delbroadcast))
         app.add_handler(CommandHandler("reload",        self.cmd_reload))
         app.add_handler(CommandHandler("restart",     self.cmd_restart))

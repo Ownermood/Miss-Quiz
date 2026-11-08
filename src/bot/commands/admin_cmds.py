@@ -8,14 +8,13 @@ import logging
 import os
 import re
 import time
-from typing import Optional
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.error import TelegramError, Forbidden, BadRequest, RetryAfter
 from telegram.ext import ContextTypes
 from telegram.constants import ParseMode
 
-from src.bot.ui import UI, OWNER_ID, OWNER_LINK, COMMUNITY, _NO_PREVIEW
+from src.bot.ui import UI, OWNER_ID, OWNER_LINK, _NO_PREVIEW
 
 logger = logging.getLogger(__name__)
 
@@ -449,7 +448,7 @@ class AdminCommandsMixin(object):
             return
 
         raw = (update.effective_message.text or "")\
-            .replace("/broadcast", "").replace("/bc", "").strip()
+            .replace("/broadcast", "").strip()
 
         if not raw:
             await self._reply(update,
@@ -457,8 +456,7 @@ class AdminCommandsMixin(object):
                 f"{UI.LINE}\n\n"
                 "<b>Usage:</b>\n"
                 "  <code>/broadcast Your message here</code>\n\n"
-                "Supports HTML: <code>&lt;b&gt;</code> <code>&lt;i&gt;</code>\n"
-                "Alias: <code>/bc</code>"
+                "Supports HTML: <code>&lt;b&gt;</code> <code>&lt;i&gt;</code>"
             )
             return
 

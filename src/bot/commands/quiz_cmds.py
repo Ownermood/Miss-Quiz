@@ -4,14 +4,13 @@ QuizCommandsMixin — /quiz /score /stats /achievements /botstats
 
 import asyncio
 import logging
-from typing import Optional
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, Poll
 from telegram.error import TelegramError
 from telegram.ext import ContextTypes
 from telegram.constants import ParseMode
 
-from src.bot.ui import UI, COMMUNITY, _NO_PREVIEW, get_thread_id, get_tracking_id
+from src.bot.ui import UI, COMMUNITY, get_thread_id, get_tracking_id
 
 logger = logging.getLogger(__name__)
 
@@ -142,7 +141,6 @@ class QuizCommandsMixin(object):
 
     async def cmd_score(self, update: Update, context: ContextTypes.DEFAULT_TYPE,
                         edit_msg=None):
-        import math as _math
         user    = update.effective_user
         mention = UI.mention(user.id, UI.display_name(user))
 

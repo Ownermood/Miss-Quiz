@@ -5,12 +5,11 @@ UserCommandsMixin — /start /help /ping /info /categories
 import asyncio
 import logging
 import time
-from typing import Optional
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 
-from src.bot.ui import UI, COMMUNITY, _NO_PREVIEW
+from src.bot.ui import UI, COMMUNITY
 
 logger = logging.getLogger(__name__)
 
@@ -84,7 +83,6 @@ class UserCommandsMixin(object):
             f"🎯  <b>𝐐𝐔𝐈𝐙  𝐂𝐄𝐍𝐓𝐄𝐑</b>\n"
             f"╭──────────────────────────────────────────╮\n"
             f"│  /quiz              ›  Start a quiz\n"
-            f"│  /q                  ›  Quick shortcut\n"
             f"│  /categories      ›  Browse all topics\n"
             f"╰──────────────────────────────────────────╯\n\n"
 
@@ -113,7 +111,6 @@ class UserCommandsMixin(object):
                 f"│  /delquiz      ›  Delete question\n"
                 f"│  /importquiz  ›  Bulk import (.txt)\n"
                 f"│  /broadcast      ›  Message everyone\n"
-                f"│  /bc                 ›  Broadcast shortcut\n"
                 f"│  /delbroadcast  ›  Delete last broadcast\n"
                 f"│  /botstats    ›  Platform analytics\n"
                 f"│  /reload        ›  Sync from database\n"
