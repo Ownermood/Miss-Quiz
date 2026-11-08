@@ -27,7 +27,8 @@ src/bot/dev_commands.py     Developer commands + check_access()
 src/bot/dev_broadcast.py    Broadcast / delbroadcast
 src/bot/dev_quiz_editor.py  Inline-button quiz editor (/editquiz, edit_quiz_* callbacks)
 src/bot/quiz_parser.py      .txt bulk import parser (/importquiz)
-src/bot/poll_manager.py     Poll answers, poll_id mapping
+src/bot/poll_manager.py     Poll answers, poll_id mapping (battle polls pehle battle_on_poll_answer ko jaate hain)
+src/bot/battle.py           1v1 battle (BattleMixin + Battle). Group + DM. In-memory state
 src/bot/tracking.py         User/group tracking
 src/bot/ui.py               UI strings, LINE/THIN, mention helpers
 src/utils/scheduler.py      AutoQuizScheduler. Har group ko auto quiz bhejta hai
@@ -36,6 +37,8 @@ src/web/wsgi.py             Gunicorn entry
 templates/admin.html, static/js/admin.js   Web admin panel
 tests/                      test_config.py, test_quiz_manager.py, test_ui.py
 ```
+
+**Battle:** `/battle` (group: open ya reply-target; DM: invite link `start=bt_<id>`). 5 questions × 20s, +1 sahi, tie → kam time. Battle answers regular stats mein nahi jaate. `users` pe `$inc`: `battle_wins`, `battle_losses`, `battle_draws`, `battles_played`. DM mein har poll ka owner hai (forwarded poll se cheating band). Restart pe chalti battle khatam.
 
 **MongoDB collections:** `questions`, `users`, `groups`, `broadcasts`, `activities`, `developers`, `poll_map`, `auto_quiz_state`, `_counters` (auto-increment quiz id).
 
@@ -143,7 +146,9 @@ Pakke bugs aur sirf "possible risks" alag-alag likho.
 - [ ] Daily challenge, live tournament, speed round, survival, DM mock test
 - [ ] Streaks, XP/levels, badges, seasons, weekly/monthly/group/subject leaderboards
 - [ ] Spaced repetition (galat answer 1/3/7 din baad), weak-topic report
-- [ ] 1v1 battle, referral
+- [x] 1v1 battle (group + DM)
+- [ ] Battle: ELO/rating, battle leaderboard, `/stats` mein W/L, restart-safe state
+- [ ] Referral
 
 **Phase 4: Kamai** (payment rules section 4 ke hisaab se)
 - [ ] Telegram Stars / UPI, premium user, creator plan, certificates

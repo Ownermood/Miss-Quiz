@@ -26,6 +26,12 @@ class UserCommandsMixin(object):
         chat    = update.effective_chat
         is_pm   = chat.type == "private"
 
+        # Deep link: /start bt_<id> joins a DM battle
+        if is_pm and context.args and context.args[0].startswith("bt_") \
+                and hasattr(self, "battle_join_from_link"):
+            await self.battle_join_from_link(update, context, context.args[0][3:])
+            return
+
         # Reset nav history to home
         if user:
             self._nav_clear(user.id)
@@ -83,6 +89,7 @@ class UserCommandsMixin(object):
             f"🎯  <b>𝐐𝐔𝐈𝐙  𝐂𝐄𝐍𝐓𝐄𝐑</b>\n"
             f"╭──────────────────────────────────────────╮\n"
             f"│  /quiz              ›  Start a quiz\n"
+            f"│  /battle            ›  1v1 battle\n"
             f"│  /categories      ›  Browse all topics\n"
             f"╰──────────────────────────────────────────╯\n\n"
 

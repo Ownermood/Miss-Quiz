@@ -315,6 +315,16 @@ class DatabaseManager:
 
     # ── Users ─────────────────────────────────────────────────────────────────
 
+    def record_battle_result(self, p1: int, p2: int, winner: Optional[int]) -> None:
+        """Increment battle_wins / battle_losses / battle_draws on existing users."""
+        if winner is None:
+            updates = {p1: "battle_draws", p2: "battle_draws"}
+        else:
+            loser = p2 if winner == p1 else p1
+            updates = {winner: "battle_wins", loser: "battle_losses"}
+        for uid, fld in updates.items():
+            self.users_col.update_one({"user_id": uid}, {"$inc": {fld: 1, "battles_played": 1}})
+
     def upsert_user(self, user_id: int, data: Dict):
         try:
             self.users_col.update_one(

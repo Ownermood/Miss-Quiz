@@ -28,6 +28,7 @@ from src.bot.poll_manager import PollMixin
 from src.bot.commands.user_cmds import UserCommandsMixin
 from src.bot.commands.quiz_cmds import QuizCommandsMixin
 from src.bot.commands.admin_cmds import AdminCommandsMixin
+from src.bot.battle import BattleMixin
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +39,7 @@ class TelegramQuizBot(
     UserCommandsMixin,
     QuizCommandsMixin,
     AdminCommandsMixin,
+    BattleMixin,
 ):
 
     def __init__(self, quiz_manager, db_manager=None):
@@ -301,6 +303,7 @@ class TelegramQuizBot(
         app.add_handler(CommandHandler("categories",  self.cmd_categories))
         app.add_handler(CommandHandler("ping",        self.cmd_ping))
         app.add_handler(CommandHandler("info",        self.cmd_info))
+        app.add_handler(CommandHandler("battle",      self.cmd_battle))
 
         # Admin commands
         app.add_handler(CommandHandler("addquiz",     self.cmd_addquiz))
@@ -333,6 +336,8 @@ class TelegramQuizBot(
         app.add_handler(PollAnswerHandler(self.handle_poll_answer))
         app.add_handler(CallbackQueryHandler(
             self._cb_delquiz, pattern=r"^dq_"))
+        app.add_handler(CallbackQueryHandler(
+            self.handle_battle_callback, pattern=r"^bt_(acc|dec):"))
         app.add_handler(CallbackQueryHandler(self.handle_callback))
 
         # Bulk import: .txt file
@@ -366,6 +371,7 @@ class TelegramQuizBot(
         try:
             await self.application.bot.set_my_commands([
                 BotCommand("quiz",         "🎯 Get a quiz question"),
+                BotCommand("battle",       "⚔️ 1v1 quiz battle"),
                 BotCommand("score",        "🏆 Your personal score"),
                 BotCommand("stats",        "📈 Your detailed stats"),
                 BotCommand("achievements", "🏅 Badges & milestones"),

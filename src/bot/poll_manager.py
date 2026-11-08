@@ -120,6 +120,11 @@ class PollMixin(object):
         poll_id    = answer.poll_id
         option_ids = answer.option_ids
 
+        # 1v1 battle polls are scored separately and never touch regular stats
+        if hasattr(self, "battle_on_poll_answer") and \
+                self.battle_on_poll_answer(str(poll_id), user_id, option_ids):
+            return
+
         data       = context.bot_data.get(f"poll_{poll_id}", {})
         correct_id = data.get("correct_option_id")
         chat_id    = data.get("chat_id", 0)
