@@ -29,6 +29,7 @@ from src.bot.commands.user_cmds import UserCommandsMixin
 from src.bot.commands.quiz_cmds import QuizCommandsMixin
 from src.bot.commands.admin_cmds import AdminCommandsMixin
 from src.bot.battle import BattleMixin
+from src.bot.admin_panel import AdminPanelMixin
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +41,7 @@ class TelegramQuizBot(
     QuizCommandsMixin,
     AdminCommandsMixin,
     BattleMixin,
+    AdminPanelMixin,
 ):
 
     def __init__(self, quiz_manager, db_manager=None):
@@ -315,6 +317,7 @@ class TelegramQuizBot(
         app.add_handler(CommandHandler("delbroadcast",  self.cmd_delbroadcast))
         app.add_handler(CommandHandler("reload",        self.cmd_reload))
         app.add_handler(CommandHandler("restart",     self.cmd_restart))
+        app.add_handler(CommandHandler("admin",       self.cmd_admin))
 
         # ── Group tracking — three complementary mechanisms ──────────
         # 1. my_chat_member: bot add/remove/promote/demote/restrict
@@ -338,6 +341,8 @@ class TelegramQuizBot(
             self._cb_delquiz, pattern=r"^dq_"))
         app.add_handler(CallbackQueryHandler(
             self.handle_battle_callback, pattern=r"^bt_(acc|dec):"))
+        app.add_handler(CallbackQueryHandler(
+            self.handle_admin_panel_callback, pattern=r"^ap:"))
         app.add_handler(CallbackQueryHandler(self.handle_callback))
 
         # Bulk import: .txt file
@@ -368,21 +373,48 @@ class TelegramQuizBot(
         app.add_error_handler(self._global_error_handler)
 
     async def _set_commands(self):
+        user_cmds = [
+            BotCommand("quiz",         "🎯 Get a quiz question"),
+            BotCommand("battle",       "⚔️ 1v1 quiz battle"),
+            BotCommand("score",        "🏆 Your personal score"),
+            BotCommand("stats",        "📈 Your detailed stats"),
+            BotCommand("achievements", "🏅 Badges & milestones"),
+            BotCommand("botstats",     "📊 Bot-wide statistics"),
+            BotCommand("categories",   "📚 Browse quiz categories"),
+            BotCommand("help",         "📖 Command center"),
+            BotCommand("start",        "🚀 Welcome screen"),
+            BotCommand("ping",         "🏓 Connection test"),
+        ]
         try:
-            await self.application.bot.set_my_commands([
-                BotCommand("quiz",         "🎯 Get a quiz question"),
-                BotCommand("battle",       "⚔️ 1v1 quiz battle"),
-                BotCommand("score",        "🏆 Your personal score"),
-                BotCommand("stats",        "📈 Your detailed stats"),
-                BotCommand("achievements", "🏅 Badges & milestones"),
-                BotCommand("botstats",     "📊 Bot-wide statistics"),
-                BotCommand("categories",   "📚 Browse quiz categories"),
-                BotCommand("help",         "📖 Command center"),
-                BotCommand("start",        "🚀 Welcome screen"),
-                BotCommand("ping",         "🏓 Connection test"),
-            ])
+            await self.application.bot.set_my_commands(user_cmds)
         except Exception as e:
             logger.warning(f"set_my_commands: {e}")
+
+        # Admin commands appear only in the command menu of admins' own DMs
+        admin_cmds = user_cmds + [
+            BotCommand("admin",      "🔴 Admin panel"),
+            BotCommand("broadcast",  "📡 Broadcast message"),
+            BotCommand("addquiz",    "➕ Add question"),
+            BotCommand("importquiz", "📥 Bulk import .txt"),
+            BotCommand("editquiz",   "📝 Edit question"),
+            BotCommand("delquiz",    "🗑 Delete question"),
+            BotCommand("reload",     "⚡ Reload questions"),
+        ]
+        from telegram import BotCommandScopeChat
+        from src.core.config import AUTHORIZED_USERS
+        admin_ids = set(AUTHORIZED_USERS)
+        if self.db:
+            try:
+                devs = await asyncio.to_thread(self.db.get_all_developers)
+                admin_ids |= {d["user_id"] for d in devs if d.get("user_id")}
+            except Exception as e:
+                logger.warning(f"set_my_commands: developers lookup failed: {e}")
+        for uid in admin_ids:
+            try:
+                await self.application.bot.set_my_commands(
+                    admin_cmds, scope=BotCommandScopeChat(chat_id=uid))
+            except Exception as e:   # e.g. admin never opened the bot's DM
+                logger.debug(f"set_my_commands for admin {uid}: {e}")
 
     # ─── Core helpers ─────────────────────────────────────────
 

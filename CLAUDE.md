@@ -28,6 +28,8 @@ src/bot/dev_broadcast.py    Broadcast / delbroadcast
 src/bot/dev_quiz_editor.py  Inline-button quiz editor (/editquiz, edit_quiz_* callbacks)
 src/bot/quiz_parser.py      .txt bulk import parser (/importquiz)
 src/bot/poll_manager.py     Poll answers, poll_id mapping (battle polls pehle battle_on_poll_answer ko jaate hain)
+src/bot/admin_panel.py      /admin: red-button panel (style=danger), DM only, admins only, har callback pe auth
+src/bot/premium.py          Premium emoji: e(name) for HTML, btn(text, emoji, style). PREMIUM_EMOJI=1 pe on
 src/bot/battle.py           1v1 battle (BattleMixin + Battle). Group + DM. In-memory state
 src/bot/tracking.py         User/group tracking
 src/bot/ui.py               UI strings, LINE/THIN, mention helpers
@@ -61,7 +63,7 @@ python -m pytest -q -o addopts=""                     # bina coverage ke (fast)
 MODE=polling python main.py                           # local run (TELEGRAM_TOKEN, OWNER_ID, MONGODB_URL chahiye)
 ```
 
-Env vars: `.env.example` dekho. Extra: `ADMIN_API_KEY`, `WEBHOOK_SECRET_TOKEN`, `WEBHOOK_URL`/`RENDER_URL`, `WIFU_ID`.
+Env vars: `.env.example` dekho. `PREMIUM_EMOJI=1` sirf tab jab bot owner ke paas Telegram Premium ho (warna normal emoji). Extra: `ADMIN_API_KEY`, `WEBHOOK_SECRET_TOKEN`, `WEBHOOK_URL`/`RENDER_URL`, `WIFU_ID`.
 
 ## 4. Kaam karne ke rules (sakht)
 
@@ -183,6 +185,7 @@ Phase 1 se pehle parser sirf purane fields padhta hai. Explanation/Category/Diff
 
 ## 9. Pata hai jo problems hain
 
+- Broadcast ab HTML mode mein hai (`text_html`/`caption_html`): Telegram ki native formatting chalti hai, haath se likha Markdown (`*bold*`) nahi.
 - `/api/metrics` missing aur panel broadcast button ka mismatch (Phase 0 ke bache items).
 - `datetime.utcnow()` deprecated hai (DB mein naive ISO strings save hote hain). Badalne se stored format badlega, isliye soch ke migrate karna.
 - `send_poll` timeout pe Telegram ne poll shayad bhej diya ho; 2 min retry se ek extra poll reh sakta hai jo track nahi hota. Rare, accept kiya.

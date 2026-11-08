@@ -210,8 +210,9 @@ ADMIN_ALERT_TEXT = (
 
 def make_admin_keyboard(bot_username: str):
     """Button that opens Telegram's 'add as admin' screen for this bot."""
-    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+    from telegram import InlineKeyboardMarkup
+    from src.bot.premium import btn
     if not bot_username:
         return None
     url = f"https://t.me/{bot_username}?startgroup&admin=delete_messages+pin_messages"
-    return InlineKeyboardMarkup([[InlineKeyboardButton("➕ Make me admin", url=url)]])
+    return InlineKeyboardMarkup([[btn("Make me admin", "plus", "success", url=url)]])

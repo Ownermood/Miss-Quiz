@@ -892,6 +892,14 @@ class DatabaseManager:
             update["$unset"] = {"admin_reminder_count": "", "admin_reminder_at": ""}
         self.groups_col.update_one({"chat_id": chat_id}, update)
 
+    def count_groups_by_admin(self) -> Dict[str, int]:
+        """Active groups total and how many have the bot as admin."""
+        base = {"active_status": {"$ne": "inactive"}}
+        return {
+            "total": self.groups_col.count_documents(base),
+            "admin": self.groups_col.count_documents({**base, "bot_is_admin": True}),
+        }
+
     def mark_admin_reminder(self, chat_id: int) -> None:
         """Record that a 'make me admin' alert was sent to this group."""
         self.groups_col.update_one(
