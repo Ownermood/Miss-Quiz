@@ -251,7 +251,7 @@ class DeveloperCommands(BroadcastCommandsMixin, QuizEditorMixin):
 
         try:
             bot_name = bot_name_cache if bot_name_cache else (context.bot.first_name or "Bot")
-            text = text.replace('{bot_name}', bot_name)
+            text = text.replace('{bot_name}', html.escape(bot_name, quote=False))
 
             if user_data:
                 first_name = (
@@ -282,9 +282,11 @@ class DeveloperCommands(BroadcastCommandsMixin, QuizEditorMixin):
                     username = "User"
                     chat_title = "Chat"
 
-            text = text.replace('{first_name}', first_name)
-            text = text.replace('{username}', username)
-            text = text.replace('{chat_title}', chat_title)
+            # Broadcasts are sent as HTML: escape names so "<" or "&" in a
+            # user's name can't break the message or inject markup.
+            text = text.replace('{first_name}', html.escape(first_name, quote=False))
+            text = text.replace('{username}', html.escape(username, quote=False))
+            text = text.replace('{chat_title}', html.escape(chat_title, quote=False))
             return text
 
         except Exception as e:

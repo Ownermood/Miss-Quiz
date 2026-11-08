@@ -8,16 +8,15 @@ to be available (set by DeveloperCommands.__init__).
 
 import html
 import logging
+import re
 import asyncio
 import time
 from datetime import datetime
-from typing import Optional
 
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, LinkPreviewOptions
+from telegram import Update
 from telegram.ext import ContextTypes
 from telegram.constants import ParseMode
 
-from src.bot.ui import UI
 
 logger = logging.getLogger(__name__)
 
@@ -90,25 +89,25 @@ class BroadcastCommandsMixin:
                 if replied_message.photo:
                     media_type = 'photo'
                     media_file_id = replied_message.photo[-1].file_id
-                    media_caption = replied_message.caption
+                    media_caption = replied_message.caption_html
                     media_preview = "📷 Photo"
                     logger.info("Detected photo in broadcast")
                 elif replied_message.video:
                     media_type = 'video'
                     media_file_id = replied_message.video.file_id
-                    media_caption = replied_message.caption
+                    media_caption = replied_message.caption_html
                     media_preview = "🎥 Video"
                     logger.info("Detected video in broadcast")
                 elif replied_message.document:
                     media_type = 'document'
                     media_file_id = replied_message.document.file_id
-                    media_caption = replied_message.caption
+                    media_caption = replied_message.caption_html
                     media_preview = "📄 Document"
                     logger.info("Detected document in broadcast")
                 elif replied_message.animation:
                     media_type = 'animation'
                     media_file_id = replied_message.animation.file_id
-                    media_caption = replied_message.caption
+                    media_caption = replied_message.caption_html
                     media_preview = "🎬 GIF/Animation"
                     logger.info("Detected animation in broadcast")
 
@@ -148,10 +147,18 @@ class BroadcastCommandsMixin:
                 logger.info(f"Broadcast ({media_type or 'forward'}) prepared by {update.effective_user.id}")
 
             elif context.args:
-                message_text = ' '.join(context.args)
+                # Keep the admin's Telegram formatting (bold, quote, spoiler,
+                # links, custom emoji...) and line breaks: work on text_html
+                # instead of ' '.join(context.args), which flattened everything.
+                raw_plain = re.sub(r'^/\S+\s*', '', update.message.text or '', count=1)
+                html_text = re.sub(r'^/\S+\s*', '', update.message.text_html or '', count=1)
 
-                # Parse inline buttons from text
-                cleaned_text, reply_markup = self.parse_inline_buttons(message_text)
+                # Buttons are parsed from the plain text (URLs un-escaped),
+                # then the trailing [[...]] block is cut from the HTML version.
+                _, reply_markup = self.parse_inline_buttons(raw_plain)
+                cleaned_text = html_text.strip()
+                if reply_markup:
+                    cleaned_text = re.sub(r'\[\[(.*?)\]\]\s*$', '', cleaned_text, flags=re.DOTALL).strip()
 
                 users = await asyncio.to_thread(self.db.get_pm_accessible_users)
                 groups = await asyncio.to_thread(self.db.get_active_groups)
@@ -362,19 +369,19 @@ class BroadcastCommandsMixin:
                         if broadcast_type == 'photo':
                             sent_msg = await context.bot.send_photo(
                                 chat_id=user['user_id'], photo=media_file_id,
-                                caption=caption if caption else None, reply_markup=reply_markup)
+                                caption=caption if caption else None, parse_mode=ParseMode.HTML, reply_markup=reply_markup)
                         elif broadcast_type == 'video':
                             sent_msg = await context.bot.send_video(
                                 chat_id=user['user_id'], video=media_file_id,
-                                caption=caption if caption else None, reply_markup=reply_markup)
+                                caption=caption if caption else None, parse_mode=ParseMode.HTML, reply_markup=reply_markup)
                         elif broadcast_type == 'document':
                             sent_msg = await context.bot.send_document(
                                 chat_id=user['user_id'], document=media_file_id,
-                                caption=caption if caption else None, reply_markup=reply_markup)
+                                caption=caption if caption else None, parse_mode=ParseMode.HTML, reply_markup=reply_markup)
                         elif broadcast_type == 'animation':
                             sent_msg = await context.bot.send_animation(
                                 chat_id=user['user_id'], animation=media_file_id,
-                                caption=caption if caption else None, reply_markup=reply_markup)
+                                caption=caption if caption else None, parse_mode=ParseMode.HTML, reply_markup=reply_markup)
                         else:
                             continue
 
@@ -409,19 +416,19 @@ class BroadcastCommandsMixin:
                         if broadcast_type == 'photo':
                             sent_msg = await context.bot.send_photo(
                                 chat_id=group['chat_id'], photo=media_file_id,
-                                caption=caption if caption else None, reply_markup=reply_markup)
+                                caption=caption if caption else None, parse_mode=ParseMode.HTML, reply_markup=reply_markup)
                         elif broadcast_type == 'video':
                             sent_msg = await context.bot.send_video(
                                 chat_id=group['chat_id'], video=media_file_id,
-                                caption=caption if caption else None, reply_markup=reply_markup)
+                                caption=caption if caption else None, parse_mode=ParseMode.HTML, reply_markup=reply_markup)
                         elif broadcast_type == 'document':
                             sent_msg = await context.bot.send_document(
                                 chat_id=group['chat_id'], document=media_file_id,
-                                caption=caption if caption else None, reply_markup=reply_markup)
+                                caption=caption if caption else None, parse_mode=ParseMode.HTML, reply_markup=reply_markup)
                         elif broadcast_type == 'animation':
                             sent_msg = await context.bot.send_animation(
                                 chat_id=group['chat_id'], animation=media_file_id,
-                                caption=caption if caption else None, reply_markup=reply_markup)
+                                caption=caption if caption else None, parse_mode=ParseMode.HTML, reply_markup=reply_markup)
                         else:
                             continue
 
@@ -460,12 +467,12 @@ class BroadcastCommandsMixin:
                         try:
                             sent_msg = await context.bot.send_message(
                                 chat_id=user['user_id'], text=message_text,
-                                parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup)
+                                parse_mode=ParseMode.HTML, reply_markup=reply_markup)
                         except Exception as parse_error:
                             if "parse entities" in str(parse_error).lower() or "can't parse" in str(parse_error).lower():
-                                logger.warning(f"Markdown parse error for user {user['user_id']}, falling back to plain text")
+                                logger.warning(f"HTML parse error for user {user['user_id']}, falling back to plain text")
                                 sent_msg = await context.bot.send_message(
-                                    chat_id=user['user_id'], text=message_text,
+                                    chat_id=user['user_id'], text=html.unescape(re.sub(r'<[^>]+>', '', message_text)),
                                     parse_mode=None, reply_markup=reply_markup)
                             else:
                                 raise
@@ -500,12 +507,12 @@ class BroadcastCommandsMixin:
                         try:
                             sent_msg = await context.bot.send_message(
                                 chat_id=group['chat_id'], text=message_text,
-                                parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup)
+                                parse_mode=ParseMode.HTML, reply_markup=reply_markup)
                         except Exception as parse_error:
                             if "parse entities" in str(parse_error).lower() or "can't parse" in str(parse_error).lower():
-                                logger.warning(f"Markdown parse error for group {group['chat_id']}, falling back to plain text")
+                                logger.warning(f"HTML parse error for group {group['chat_id']}, falling back to plain text")
                                 sent_msg = await context.bot.send_message(
-                                    chat_id=group['chat_id'], text=message_text,
+                                    chat_id=group['chat_id'], text=html.unescape(re.sub(r'<[^>]+>', '', message_text)),
                                     parse_mode=None, reply_markup=reply_markup)
                             else:
                                 raise
