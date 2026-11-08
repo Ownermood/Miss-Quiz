@@ -47,6 +47,8 @@ tests/                      test_config.py, test_quiz_manager.py, test_ui.py
 - Web API: `_check_api_auth()` (`src/web/app.py`). Fail-closed: `ADMIN_API_KEY` set nahi to API band. Sirf header `X-Admin-Key`, constant-time compare. Panel (`admin.js`) key sessionStorage mein rakhta hai.
 - Webhook: hamesha verify hota hai. Secret `config.webhook_secret(token)` se aata hai: `WEBHOOK_SECRET_TOKEN` ya bot token se derived (HMAC). Wahi `set_webhook` ko jaata hai.
 
+**Auto quiz sirf wahan jahan bot admin hai:** `groups.bot_is_admin` (my_chat_member se update). `get_groups_due_for_quiz` known non-admin groups chhod deta hai; status unknown ho to scheduler ek baar `getChatMember` se check karke save karta hai. Admin banne/hatne pe group mein ON/paused message. `/quiz` aur `/battle` admin ke bina bhi chalte hain.
+
 **Auto quiz flow (`scheduler.py`):** poll bina timer (koi `open_period` nahi) bheja jaata hai, interval 60 min. Pehle naya bheja jaata hai, phir purana delete hota hai (send fail ho to purana bacha rehta hai). 429 pe `retry_after` ke baad retry, network error pe 2 min baad retry. `message_id` `auto_quiz_state` mein save hota hai, to restart ke baad bhi delete chalta hai. Abhi sirf groups mein chalta hai, channels mein nahi (`is_anonymous=False` hard-coded hai).
 
 ## 3. Commands (dev)

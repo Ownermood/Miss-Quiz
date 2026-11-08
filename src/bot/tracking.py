@@ -5,7 +5,6 @@ TrackingMixin — group and user registration pipeline methods.
 import logging
 import time
 from datetime import datetime
-from typing import Optional
 
 from telegram import Update
 from telegram.error import Forbidden, BadRequest
@@ -153,6 +152,23 @@ class TrackingMixin(object):
                     self.db.update_group_admin_status(chat.id, is_admin, perms)
                 except Exception as e:
                     logger.error(f"update_group_admin_status {chat.id}: {e}")
+
+            # Tell the group whether auto quiz is on (it needs admin rights)
+            was_admin = old_status == "administrator"
+            now_admin = new_status == "administrator"
+            note = None
+            if now_admin and not was_admin:
+                note = ("✅ <b>Auto quiz is ON</b>\n"
+                        "A quiz will be posted here every hour.")
+            elif new_status == "member" and (was_admin or old_status in ("left", "kicked", "banned")):
+                note = ("⏸ <b>Auto quiz is paused</b>\n"
+                        "Make me an <b>admin</b> to get a quiz here every hour.\n"
+                        "/quiz still works anytime.")
+            if note:
+                try:
+                    await context.bot.send_message(chat.id, note, parse_mode="HTML")
+                except Exception as e:
+                    logger.debug(f"admin-status note to {chat.id} failed: {e}")
 
             action = {
                 "member":        "added",

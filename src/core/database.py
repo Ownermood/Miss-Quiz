@@ -588,12 +588,15 @@ class DatabaseManager:
 
     def get_groups_due_for_quiz(self) -> List[Dict]:
         """Return active groups whose next_quiz_due_at has arrived.
-        This is the only query the scheduler needs — O(log n) via compound index."""
+        Groups where the bot is known NOT to be admin are excluded; groups with
+        unknown status (bot_is_admin missing) are returned so the scheduler can
+        check once via getChatMember and store the answer."""
         now = datetime.utcnow().isoformat()
         return list(self.groups_col.find(
             {
                 "active_status":    {"$ne":  "inactive"},
                 "next_quiz_due_at": {"$lte": now},
+                "bot_is_admin":     {"$ne":  False},
             },
             {"_id": 0}
         ))

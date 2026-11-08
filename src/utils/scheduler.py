@@ -19,7 +19,6 @@ next_quiz_due_at is advanced by `interval` minutes.  This means:
 """
 
 import logging
-import asyncio
 from datetime import datetime
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from telegram.error import RetryAfter, NetworkError, BadRequest
@@ -191,6 +190,32 @@ class AutoQuizScheduler:
         "need administrator rights",
     )
 
+    async def _bot_is_admin(self, chat_id: int, known) -> bool:
+        """Auto quiz only runs where the bot is an admin.
+
+        known=True/False comes from groups.bot_is_admin (kept up to date by
+        my_chat_member). If unknown (older groups), ask Telegram once and store
+        it; a stored False removes the group from get_groups_due_for_quiz()
+        until the bot is promoted. On API errors, return True so the normal
+        send path and its error handling (inactive marking, retries) apply."""
+        if known is True:
+            return True
+        if known is False:
+            return False
+        tg = self.bot.application.bot
+        try:
+            member = await tg.get_chat_member(chat_id, tg.id)
+        except Exception as e:
+            logger.warning(f"[SCHEDULER] admin check failed for {chat_id}: {e}")
+            return True
+        is_admin = member.status in ("administrator", "creator")
+        if self.db:
+            try:
+                self.db.update_group_admin_status(chat_id, is_admin)
+            except Exception as e:
+                logger.warning(f"[SCHEDULER] could not store admin status for {chat_id}: {e}")
+        return is_admin
+
     async def _send_auto_quiz(self):
         """Poll entry point — called by APScheduler every minute.
         Outer guard keeps the job alive if _do_send_auto_quiz raises."""
@@ -209,14 +234,14 @@ class AutoQuizScheduler:
                 return
 
             group_targets = [
-                (g["chat_id"], g.get("message_thread_id"))
+                (g["chat_id"], g.get("message_thread_id"), g.get("bot_is_admin"))
                 for g in groups
                 if g.get("chat_id")
             ]
         else:
             # No DB (dev/polling mode): fall back to all active chats.
             # Schedule tracking requires DB; without it every poll delivers.
-            group_targets = [(cid, None) for cid in self.quiz_manager.active_chats]
+            group_targets = [(cid, None, None) for cid in self.quiz_manager.active_chats]
 
         if not group_targets:
             return  # Nothing due — silent; most 1-min polls are empty
@@ -229,8 +254,13 @@ class AutoQuizScheduler:
         sent = failed = skipped = 0
 
         from telegram import Poll
-        for chat_id, thread_id in group_targets:
+        for chat_id, thread_id, known_admin in group_targets:
             try:
+                if not await self._bot_is_admin(chat_id, known_admin):
+                    logger.info(f"[SCHEDULER] ⏸ {chat_id}: bot is not admin — auto quiz paused")
+                    skipped += 1
+                    continue
+
                 question = self.quiz_manager.get_random_question(chat_id=chat_id)
                 if not question:
                     logger.warning(
