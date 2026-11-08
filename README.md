@@ -29,13 +29,13 @@
 
 ## ✨ What is Miss Quiz?
 
-**Miss Quiz** is a production-ready, feature-rich Telegram quiz bot built for **CLAT aspirants**. It delivers interactive multiple-choice questions, tracks progress across groups, runs a live global leaderboard, and auto-broadcasts quizzes every 30 minutes — all backed by MongoDB Atlas.
+**Miss Quiz** is a production-ready, feature-rich Telegram quiz bot built for **CLAT aspirants**. It delivers interactive multiple-choice questions, tracks progress across groups, runs a live global leaderboard, and auto-broadcasts quizzes every 60 minutes — all backed by MongoDB Atlas.
 
 ```
 👤 Users          →   /quiz /score /stats /achievements /leaderboard
 🛡️ Admins         →   /addquiz /delquiz /editquiz /importquiz /broadcast
 📊 Analytics      →   /botstats + Web Admin Panel at /admin
-⏰ Auto Quiz      →   Every 30 min to all registered groups
+⏰ Auto Quiz      →   Every 60 min to all registered groups
 ```
 
 ---
@@ -240,7 +240,7 @@ TelegramQuizBot  ←── inherits ──→  PollMixin
      │       ├── poll_map_col
      │       └── broadcasts_col
      │
-     ├── AutoQuizScheduler  ─────────→  every 30 min → all groups
+     ├── AutoQuizScheduler  ─────────→  every 60 min → all groups
      │
      └── Flask (Waitress)  ──────────→  /admin  /api/*  /webhook
 ```

@@ -158,7 +158,7 @@ def run_polling_mode(config: Config):
         except Exception as e:
             logger.warning(f"Startup group sync failed: {e}")
 
-        scheduler = AutoQuizScheduler(bot, quiz_mgr, db_manager=db_mgr, interval_minutes=30)
+        scheduler = AutoQuizScheduler(bot, quiz_mgr, db_manager=db_mgr, interval_minutes=60)
 
         logger.info("🎯 Bot is live! Listening for messages… (Ctrl+C to stop)")
         async with bot.application:

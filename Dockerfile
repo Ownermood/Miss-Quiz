@@ -6,7 +6,6 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     g++ \
-    libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
@@ -21,10 +20,6 @@ RUN pip install --no-cache-dir --upgrade pip && \
 FROM python:3.11-slim
 
 WORKDIR /app
-
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    postgresql-client \
-    && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /opt/venv /opt/venv
 
@@ -41,8 +36,6 @@ USER botuser
 EXPOSE 5000
 
 ENV TELEGRAM_TOKEN="" \
-    DATABASE_URL="" \
-    REDIS_URL="" \
     SESSION_SECRET="" \
     OWNER_ID="" \
     WIFU_ID="" \

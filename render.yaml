@@ -10,19 +10,15 @@ services:
         sync: false
       - key: SESSION_SECRET
         generateValue: true
-      - key: DATABASE_URL
-        fromDatabase:
-          name: missquiz-db
-          property: connectionString
+      - key: ADMIN_API_KEY
+        generateValue: true
+      - key: MONGODB_URL
+        sync: false
+      - key: MONGODB_DB
+        value: quiz_bot
       - key: OWNER_ID
         value: 7970305771
       - key: MODE
         value: webhook
       - key: WEBHOOK_URL
         value: https://missquiz-bot.onrender.com
-
-databases:
-  - name: missquiz-db
-    plan: free
-    databaseName: missquiz
-    user: missquiz
