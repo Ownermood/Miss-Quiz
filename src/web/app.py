@@ -1,6 +1,7 @@
 """Flask web app for CLAT Vision Quiz Bot."""
 
 import os
+import hmac
 import logging
 import asyncio
 import threading
@@ -72,17 +73,14 @@ def get_app():
 
 
 def _check_api_auth():
-    """Return True if the request has a valid API key.
-    In production (Heroku DYNO set), an unset key blocks all API access.
-    In dev mode (no DYNO), an unset key allows access."""
+    """Return True only if the request carries the correct X-Admin-Key header.
+    Fail-closed: if ADMIN_API_KEY is not configured, every API call is refused."""
     api_key = os.environ.get("ADMIN_API_KEY", "")
     if not api_key:
-        if os.environ.get("DYNO"):  # Heroku production environment
-            logger.warning("[SECURITY] ADMIN_API_KEY not configured — blocking API access")
-            return False
-        return True  # dev mode — no key configured
-    req_key = request.headers.get("X-Admin-Key", "") or request.args.get("api_key", "")
-    return bool(req_key and req_key == api_key)
+        logger.warning("[SECURITY] ADMIN_API_KEY not configured — admin API disabled")
+        return False
+    req_key = request.headers.get("X-Admin-Key", "")
+    return bool(req_key) and hmac.compare_digest(req_key.encode(), api_key.encode())
 
 
 # ── Bot lifecycle (webhook mode) ──────────────────────────────────────────────
@@ -106,8 +104,8 @@ async def _bot_lifecycle():
 
     if not os.environ.get("ADMIN_API_KEY"):
         logger.critical(
-            "[SECURITY] ADMIN_API_KEY is not set — admin API endpoints are unprotected. "
-            "Set ADMIN_API_KEY to a strong random secret."
+            "[SECURITY] ADMIN_API_KEY is not set — admin API endpoints are disabled. "
+            "Set ADMIN_API_KEY to a strong random secret to use the web admin panel."
         )
 
     mongo_url = os.environ.get("MONGODB_URL", "mongodb://localhost:27017")
@@ -185,13 +183,13 @@ def webhook():
             logger.error("[WEBHOOK] bot not ready — returning 500")
             return jsonify({'status': 'error', 'message': 'Bot not initialized'}), 500
 
-        # Validate webhook secret token if configured
-        _expected_secret = os.environ.get("WEBHOOK_SECRET_TOKEN", "")
-        if _expected_secret:
-            received_secret = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
-            if received_secret != _expected_secret:
-                logger.warning("[WEBHOOK] Invalid secret token — rejecting request")
-                return jsonify({'status': 'error', 'message': 'Forbidden'}), 403
+        # Always verify Telegram's secret header (see config.webhook_secret)
+        from src.core.config import webhook_secret
+        expected = webhook_secret(os.environ.get("TELEGRAM_TOKEN", ""))
+        received = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
+        if not hmac.compare_digest(received.encode(), expected.encode()):
+            logger.warning("[WEBHOOK] Invalid secret token — rejecting request")
+            return jsonify({'status': 'error', 'message': 'Forbidden'}), 403
 
         update_data = request.get_json(force=True)
         if not update_data:
@@ -205,7 +203,7 @@ def webhook():
 
     except Exception as e:
         logger.error(f"[WEBHOOK] error: {e}", exc_info=True)
-        return jsonify({'status': 'error', 'message': str(e)}), 500
+        return jsonify({'status': 'error', 'message': 'Internal error'}), 500
 
 
 # ── Admin API ─────────────────────────────────────────────────────────────────

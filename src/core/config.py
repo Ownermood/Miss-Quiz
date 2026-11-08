@@ -198,3 +198,20 @@ UNAUTHORIZED_MESSAGE = (
     "──────────────────────────\n"
     "  Contact @CLAT_Vision for access."
 )
+
+
+def webhook_secret(token: str) -> str:
+    """Secret for Telegram's X-Telegram-Bot-Api-Secret-Token header.
+
+    Uses WEBHOOK_SECRET_TOKEN if set, otherwise derives a stable secret from
+    the bot token so webhook requests are ALWAYS verified, across restarts
+    and processes, without extra configuration. Output is hex (allowed charset,
+    64 chars, within Telegram's 1-256 limit)."""
+    import hashlib
+    import hmac as _hmac
+    explicit = os.environ.get("WEBHOOK_SECRET_TOKEN", "")
+    if explicit:
+        return explicit
+    if not token:
+        raise ValueError("Cannot derive webhook secret: TELEGRAM_TOKEN is empty")
+    return _hmac.new(token.encode(), b"missquiz-webhook-secret", hashlib.sha256).hexdigest()

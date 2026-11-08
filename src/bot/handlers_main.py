@@ -156,14 +156,13 @@ class TelegramQuizBot(
         logger.info("✅ Bot initialized — polling mode")
 
     async def initialize_webhook(self, token: str, webhook_url: str):
-        import os as _os
+        from src.core.config import webhook_secret
         self.application = Application.builder().token(token).build()
         self._register_handlers()
         await self.application.initialize()
-        _secret = _os.environ.get("WEBHOOK_SECRET_TOKEN", "")
         await self.application.bot.set_webhook(
             url=webhook_url,
-            secret_token=_secret if _secret else None,
+            secret_token=webhook_secret(token),
         )
         await self._set_commands()
         logger.info("✅ Bot initialized — webhook configured")

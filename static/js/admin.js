@@ -36,12 +36,28 @@ function toast(msg, type = 'success') {
 }
 
 // ── API helpers ────────────────────────────────────────────────────────────
+// Admin key is kept only for this browser tab (sessionStorage) and sent as
+// the X-Admin-Key header. On 401 it is cleared so the next call asks again.
+function adminKey() {
+  let key = null;
+  try { key = sessionStorage.getItem('adminKey'); } catch (e) {}
+  if (!key) {
+    key = (prompt('Admin API key:') || '').trim();
+    try { if (key) sessionStorage.setItem('adminKey', key); } catch (e) {}
+  }
+  return key;
+}
+
 async function api(path, opts = {}) {
   try {
     const res = await fetch(path, {
-      headers: { 'Content-Type': 'application/json' },
       ...opts,
+      headers: { 'Content-Type': 'application/json', 'X-Admin-Key': adminKey() },
     });
+    if (res.status === 401) {
+      try { sessionStorage.removeItem('adminKey'); } catch (e) {}
+      toast('Invalid or missing admin key', 'error');
+    }
     return res.json();
   } catch (e) {
     console.error(e);
