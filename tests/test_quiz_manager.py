@@ -182,3 +182,23 @@ class TestDeleteQuestion:
         mgr.db.delete_question.return_value = False
         result = mgr.delete_question_by_db_id(999)
         assert result is False
+
+
+# ── startup ────────────────────────────────────────────────────────────────
+
+class TestStartup:
+
+    def test_init_fetches_questions_once_and_still_migrates(self):
+        long_opt = "x" * 150
+        db = MagicMock()
+        db.get_all_questions.return_value = [
+            {"id": 1, "question": "Q?", "options": ["A", long_opt], "correct_answer": 0, "category": "GK"},
+            {"id": 2, "question": "Q2?", "options": ["A", "B"], "correct_answer": 1, "category": "GK"},
+        ]
+        mgr = QuizManager(db_manager=db)
+        assert db.get_all_questions.call_count == 1
+        assert len(mgr.questions) == 2
+        # only the over-long question is rewritten, with an option within the 100-char limit
+        assert db.update_question.call_count == 1
+        args = db.update_question.call_args
+        assert args.args[0] == 1 and len(args.args[2][1]) <= 100

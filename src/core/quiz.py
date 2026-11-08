@@ -72,12 +72,12 @@ class QuizManager:
         self.last_question_time = defaultdict(dict)
         self.available_questions = defaultdict(list)
 
-        self._load_questions()
-        self._migrate_option_lengths()
+        raw = self._load_questions()
+        self._migrate_option_lengths(raw)   # reuse the same fetch — no 2nd full scan
 
     # ─── Internal helpers ────────────────────────────────────────────────────
 
-    def _migrate_option_lengths(self) -> None:
+    def _migrate_option_lengths(self, all_q: Optional[List[Dict]] = None) -> None:
         """One-time startup scan: truncate any DB option > 100 chars in-place.
 
         Runs synchronously at init. Safe to fail — bot continues regardless.
@@ -87,7 +87,8 @@ class QuizManager:
         if not self.db:
             return
         try:
-            all_q = self.db.get_all_questions()
+            if all_q is None:
+                all_q = self.db.get_all_questions()
             to_fix = []
             for q in all_q:
                 opts = q.get("options", [])
@@ -140,8 +141,9 @@ class QuizManager:
         except Exception as e:
             logger.error(f"[MIGRATION] _migrate_option_lengths error: {e}")
 
-    def _load_questions(self):
-        """Load all questions from DB into memory, with up to 3 retries."""
+    def _load_questions(self) -> List[Dict]:
+        """Load all questions from DB into memory, with up to 3 retries.
+        Returns the raw DB documents so startup checks can reuse them."""
         import time as _time
         last_err = None
         for attempt in range(1, 4):
@@ -149,7 +151,7 @@ class QuizManager:
                 raw = self.db.get_all_questions()
                 self.questions = [_fmt_question(q) for q in raw]
                 logger.info(f"Loaded {len(self.questions)} questions from MongoDB")
-                return
+                return raw
             except Exception as e:
                 last_err = e
                 logger.warning(f"_load_questions attempt {attempt}/3 failed: {e}")
