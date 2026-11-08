@@ -104,7 +104,8 @@ Pakke bugs aur sirf "possible risks" alag-alag likho.
 
 ## 5. Faisle jo ho chuke hain (dobara mat poochna)
 
-- **Bot mein AI nahi (abhi):** koi LLM API ya API key nahi. Questions owner Gemini app (Google AI Pro, Jio offer) se banayega aur `.txt` se `/importquiz` karega. Google AI Pro se Gemini API quota nahi milta. Baad mein AI jodna ho to free tier (AI Studio key, backup Groq) + har explanation DB mein cache. DB fields abhi se tayyar rakho.
+- **Bot mein AI nahi (abhi):** koi LLM API ya API key nahi.
+- **Questions kahin se bhi aa sakte hain:** koi bhi AI chat (Gemini, ChatGPT, Claude...), khud likhe hue, PYQ, books/notes, ya free question banks. Bot ko source se matlab nahi, sirf format se. Isliye importer source-agnostic rahe: tolerant parsing, saaf error report, duplicate detection. Kisi ek AI ya tool pe depend karne wala code mat likho. Google AI Pro (Jio offer) se Gemini API quota nahi milta. Baad mein AI jodna ho to free tier (AI Studio key, backup Groq) + har explanation DB mein cache. DB fields abhi se tayyar rakho.
 - **Auto quiz:** bina timer, 1 ghanta khula, phir purana delete aur turant naya. Groups mein ye pehle se chal raha hai.
 - **Channels:** Telegram channel mein quiz poll anonymous hi ho sakta hai, isliye wahan scoring/leaderboard nahi hogi. Channel quiz ke saath "🏆 Score ke saath khelo" button jo bot DM pe le jaye. Bot ko channel mein Post + Delete permission chahiye.
 - **Do bots, ek codebase:** Miss Quiz (official content) + Quiz Builder (koi bhi admin apna quiz bana ke group/channel mein chalaye). Same engine, DB aur leaderboard, alag bot tokens.
@@ -148,6 +149,8 @@ Pakke bugs aur sirf "possible risks" alag-alag likho.
 - [ ] AI explanation (cached), multi-language, Mini App
 
 ## 7. Import format (`.txt`)
+
+Questions kisi bhi source se aa sakte hain, bas file is format mein ho:
 
 ```
 Q1. Question text
