@@ -198,3 +198,20 @@ def get_thread_id(update: Update) -> Optional[int]:
 
 def get_tracking_id(chat_id: int, thread_id: Optional[int]) -> int:
     return int(f"{abs(chat_id)}{thread_id}") if thread_id else chat_id
+
+
+# ── "Make me admin" alert (auto quiz needs admin rights) ─────────────────────
+ADMIN_ALERT_TEXT = (
+    "⏸ <b>Auto quiz is paused</b>\n"
+    "Make me an <b>admin</b> to get a quiz here every hour.\n"
+    "/quiz still works anytime."
+)
+
+
+def make_admin_keyboard(bot_username: str):
+    """Button that opens Telegram's 'add as admin' screen for this bot."""
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+    if not bot_username:
+        return None
+    url = f"https://t.me/{bot_username}?startgroup&admin=delete_messages+pin_messages"
+    return InlineKeyboardMarkup([[InlineKeyboardButton("➕ Make me admin", url=url)]])

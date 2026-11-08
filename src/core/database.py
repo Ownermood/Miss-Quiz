@@ -886,7 +886,37 @@ class DatabaseManager:
         }
         if permissions is not None:
             data["bot_permissions"] = permissions
-        self.groups_col.update_one({"chat_id": chat_id}, {"$set": data})
+        update: dict = {"$set": data}
+        if is_admin:
+            # promoted: reset reminders so a future demotion starts fresh
+            update["$unset"] = {"admin_reminder_count": "", "admin_reminder_at": ""}
+        self.groups_col.update_one({"chat_id": chat_id}, update)
+
+    def mark_admin_reminder(self, chat_id: int) -> None:
+        """Record that a 'make me admin' alert was sent to this group."""
+        self.groups_col.update_one(
+            {"chat_id": chat_id},
+            {"$set": {"admin_reminder_at": datetime.utcnow().isoformat()},
+             "$inc": {"admin_reminder_count": 1}},
+        )
+
+    def get_groups_needing_admin_reminder(self, gap_hours: int, max_count: int) -> List[Dict]:
+        """Active groups where the bot is known not to be admin, that got fewer
+        than max_count alerts and none in the last gap_hours."""
+        cutoff = (datetime.utcnow() - timedelta(hours=gap_hours)).isoformat()
+        return list(self.groups_col.find(
+            {
+                "active_status": {"$ne": "inactive"},
+                "bot_is_admin":  False,
+                "$and": [
+                    {"$or": [{"admin_reminder_count": {"$exists": False}},
+                             {"admin_reminder_count": {"$lt": max_count}}]},
+                    {"$or": [{"admin_reminder_at": {"$exists": False}},
+                             {"admin_reminder_at": {"$lte": cutoff}}]},
+                ],
+            },
+            {"_id": 0, "chat_id": 1, "message_thread_id": 1},
+        ))
 
     def add_developer(self, user_id: int, username: str = "", name: str = "",
                       first_name: str = "", last_name: str = "",

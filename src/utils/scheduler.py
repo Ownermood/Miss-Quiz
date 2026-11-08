@@ -18,8 +18,9 @@ next_quiz_due_at is advanced by `interval` minutes.  This means:
   • Scales to thousands of groups without hot-spots.
 """
 
+import asyncio
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from telegram.error import RetryAfter, NetworkError, BadRequest
 
@@ -108,6 +109,15 @@ class AutoQuizScheduler:
             replace_existing=True,
             next_run_time=datetime.now(),   # first poll fires immediately
         )
+        # "Make me admin" alerts for groups where auto quiz is paused
+        self.scheduler.add_job(
+            self._send_admin_reminders,
+            trigger="interval",
+            minutes=self.ADMIN_ALERT_EVERY_MIN,
+            id="admin_reminders",
+            replace_existing=True,
+            next_run_time=datetime.now() + timedelta(minutes=2),  # after first admin checks
+        )
         self.scheduler.start()
         logger.info(
             f"[SCHEDULER] Started — poll: 1 min | "
@@ -174,7 +184,10 @@ class AutoQuizScheduler:
 
     # ── Delivery ──────────────────────────────────────────────────────────────
 
-    TRANSIENT_RETRY_MIN = 2   # minutes to wait after a network error/timeout
+    TRANSIENT_RETRY_MIN   = 2    # minutes to wait after a network error/timeout
+    ADMIN_ALERT_EVERY_MIN = 60   # how often to look for groups needing an alert
+    ADMIN_ALERT_GAP_H     = 72   # min hours between two alerts to the same group
+    ADMIN_ALERT_MAX       = 3    # max alerts per group (reset when promoted)
 
     _INACTIVE_ERRORS = (
         "forbidden",
@@ -215,6 +228,51 @@ class AutoQuizScheduler:
             except Exception as e:
                 logger.warning(f"[SCHEDULER] could not store admin status for {chat_id}: {e}")
         return is_admin
+
+    async def _send_admin_reminders(self):
+        """Ask non-admin groups to promote the bot. Max ADMIN_ALERT_MAX alerts per
+        group, at least ADMIN_ALERT_GAP_H hours apart; reset when promoted."""
+        if not self.db:
+            return
+        try:
+            groups = self.db.get_groups_needing_admin_reminder(
+                self.ADMIN_ALERT_GAP_H, self.ADMIN_ALERT_MAX)
+        except Exception as e:
+            logger.error(f"[SCHEDULER] get_groups_needing_admin_reminder failed: {e}")
+            return
+        if not groups:
+            return
+        from src.bot.ui import ADMIN_ALERT_TEXT, make_admin_keyboard
+        tg = self.bot.application.bot
+        kb = make_admin_keyboard(getattr(tg, "username", ""))
+        sent = 0
+        for g in groups:
+            chat_id = g.get("chat_id")
+            if not chat_id:
+                continue
+            kw = {"parse_mode": "HTML", "reply_markup": kb}
+            if g.get("message_thread_id"):
+                kw["message_thread_id"] = g["message_thread_id"]
+            try:
+                await tg.send_message(chat_id, ADMIN_ALERT_TEXT, **kw)
+                self.db.mark_admin_reminder(chat_id)
+                sent += 1
+            except RetryAfter as e:
+                logger.warning(f"[SCHEDULER] admin alerts: flood limit, stopping this round ({e})")
+                break
+            except Exception as e:
+                err = str(e).lower()
+                if any(kw_ in err for kw_ in self._INACTIVE_ERRORS):
+                    await self._mark_group_inactive(chat_id)
+                else:
+                    # can't post (e.g. members can't send messages): count it so we don't retry forever
+                    logger.warning(f"[SCHEDULER] admin alert to {chat_id} failed: {e}")
+                    try:
+                        self.db.mark_admin_reminder(chat_id)
+                    except Exception:
+                        pass
+            await asyncio.sleep(0.05)   # stay well under 30 msg/sec
+        logger.info(f"[SCHEDULER] Admin alerts sent: {sent}/{len(groups)}")
 
     async def _send_auto_quiz(self):
         """Poll entry point — called by APScheduler every minute.

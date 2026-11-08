@@ -156,17 +156,19 @@ class TrackingMixin(object):
             # Tell the group whether auto quiz is on (it needs admin rights)
             was_admin = old_status == "administrator"
             now_admin = new_status == "administrator"
-            note = None
+            note, kb, is_alert = None, None, False
             if now_admin and not was_admin:
                 note = ("✅ <b>Auto quiz is ON</b>\n"
                         "A quiz will be posted here every hour.")
             elif new_status == "member" and (was_admin or old_status in ("left", "kicked", "banned")):
-                note = ("⏸ <b>Auto quiz is paused</b>\n"
-                        "Make me an <b>admin</b> to get a quiz here every hour.\n"
-                        "/quiz still works anytime.")
+                from src.bot.ui import ADMIN_ALERT_TEXT, make_admin_keyboard
+                note, is_alert = ADMIN_ALERT_TEXT, True
+                kb = make_admin_keyboard(getattr(context.bot, "username", ""))
             if note:
                 try:
-                    await context.bot.send_message(chat.id, note, parse_mode="HTML")
+                    await context.bot.send_message(chat.id, note, parse_mode="HTML", reply_markup=kb)
+                    if is_alert and self.db:
+                        self.db.mark_admin_reminder(chat.id)
                 except Exception as e:
                     logger.debug(f"admin-status note to {chat.id} failed: {e}")
 
