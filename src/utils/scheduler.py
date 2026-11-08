@@ -186,8 +186,8 @@ class AutoQuizScheduler:
 
     TRANSIENT_RETRY_MIN   = 2    # minutes to wait after a network error/timeout
     ADMIN_ALERT_EVERY_MIN = 60   # how often to look for groups needing an alert
-    ADMIN_ALERT_GAP_H     = 72   # min hours between two alerts to the same group
-    ADMIN_ALERT_MAX       = 3    # max alerts per group (reset when promoted)
+    ADMIN_ALERT_GAP_H     = 24   # one alert per day per group
+    ADMIN_ALERT_MAX       = None # no cap: daily until promoted, kicked or inactive
 
     _INACTIVE_ERRORS = (
         "forbidden",
@@ -230,8 +230,8 @@ class AutoQuizScheduler:
         return is_admin
 
     async def _send_admin_reminders(self):
-        """Ask non-admin groups to promote the bot. Max ADMIN_ALERT_MAX alerts per
-        group, at least ADMIN_ALERT_GAP_H hours apart; reset when promoted."""
+        """Ask non-admin groups to promote the bot: one alert every
+        ADMIN_ALERT_GAP_H hours (ADMIN_ALERT_MAX caps it if set); reset when promoted."""
         if not self.db:
             return
         try:

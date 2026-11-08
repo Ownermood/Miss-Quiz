@@ -81,7 +81,7 @@ async def test_job_alerts_each_group_with_button_and_marks():
     assert "startgroup&admin=" in first.kwargs["reply_markup"].inline_keyboard[0][0].url
     assert tg.send_message.await_args_list[1].kwargs["message_thread_id"] == 9
     assert db.mark_admin_reminder.call_count == 2
-    db.get_groups_needing_admin_reminder.assert_called_once_with(72, 3)
+    db.get_groups_needing_admin_reminder.assert_called_once_with(24, None)
 
 
 async def test_job_marks_kicked_group_inactive():
@@ -142,3 +142,12 @@ def test_due_query_keeps_unknown_and_admin_groups_only():
         {"chat_id": 3, "next_quiz_due_at": now_past, "bot_is_admin": False},  # skipped
     ])
     assert {g["chat_id"] for g in db.get_groups_due_for_quiz()} == {1, 2}
+
+
+def test_daily_no_cap_query():
+    db = real_db()
+    db.groups_col.insert_many([
+        {"chat_id": 1, "bot_is_admin": False, "admin_reminder_count": 50, "admin_reminder_at": ago(25)},
+        {"chat_id": 2, "bot_is_admin": False, "admin_reminder_count": 1, "admin_reminder_at": ago(5)},
+    ])
+    assert {g["chat_id"] for g in db.get_groups_needing_admin_reminder(24)} == {1}

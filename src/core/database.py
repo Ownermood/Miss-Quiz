@@ -900,20 +900,21 @@ class DatabaseManager:
              "$inc": {"admin_reminder_count": 1}},
         )
 
-    def get_groups_needing_admin_reminder(self, gap_hours: int, max_count: int) -> List[Dict]:
-        """Active groups where the bot is known not to be admin, that got fewer
-        than max_count alerts and none in the last gap_hours."""
+    def get_groups_needing_admin_reminder(self, gap_hours: int,
+                                          max_count: Optional[int] = None) -> List[Dict]:
+        """Active groups where the bot is known not to be admin and that got no
+        alert in the last gap_hours (and fewer than max_count alerts, if set)."""
         cutoff = (datetime.utcnow() - timedelta(hours=gap_hours)).isoformat()
+        conds = [{"$or": [{"admin_reminder_at": {"$exists": False}},
+                          {"admin_reminder_at": {"$lte": cutoff}}]}]
+        if max_count:
+            conds.append({"$or": [{"admin_reminder_count": {"$exists": False}},
+                                  {"admin_reminder_count": {"$lt": max_count}}]})
         return list(self.groups_col.find(
             {
                 "active_status": {"$ne": "inactive"},
                 "bot_is_admin":  False,
-                "$and": [
-                    {"$or": [{"admin_reminder_count": {"$exists": False}},
-                             {"admin_reminder_count": {"$lt": max_count}}]},
-                    {"$or": [{"admin_reminder_at": {"$exists": False}},
-                             {"admin_reminder_at": {"$lte": cutoff}}]},
-                ],
+                "$and": conds,
             },
             {"_id": 0, "chat_id": 1, "message_thread_id": 1},
         ))
