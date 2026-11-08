@@ -22,6 +22,7 @@ import logging
 import asyncio
 from datetime import datetime
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from telegram.error import RetryAfter, NetworkError, BadRequest
 
 logger = logging.getLogger(__name__)
 
@@ -174,6 +175,8 @@ class AutoQuizScheduler:
 
     # ── Delivery ──────────────────────────────────────────────────────────────
 
+    TRANSIENT_RETRY_MIN = 2   # minutes to wait after a network error/timeout
+
     _INACTIVE_ERRORS = (
         "forbidden",
         "bot was blocked",
@@ -239,8 +242,6 @@ class AutoQuizScheduler:
                         self.db.update_group_quiz_schedule(chat_id, self.interval)
                     continue
 
-                await self._delete_previous_quiz(chat_id)
-
                 options     = question.get("options", [])
                 correct_idx = question.get("correct_answer", 0)
                 category    = question.get("category", "General Knowledge")
@@ -276,6 +277,11 @@ class AutoQuizScheduler:
 
                 msg = await self.bot.application.bot.send_poll(**send_kwargs)
                 poll_id_str = str(msg.poll.id)
+
+                # Remove the previous quiz only AFTER the new one is out, so a
+                # failed send never leaves the group empty until the next slot.
+                # Must run before _save_active_quiz() overwrites the old state.
+                await self._delete_previous_quiz(chat_id)
 
                 # Advance this group's schedule immediately after delivery
                 if self.db:
@@ -315,9 +321,32 @@ class AutoQuizScheduler:
                 )
                 sent += 1
 
+            except RetryAfter as e:
+                # Flood control: retry as soon as Telegram allows, not in 1 hour
+                wait_s = getattr(e, "retry_after", 60)
+                wait_s = wait_s.total_seconds() if hasattr(wait_s, "total_seconds") else float(wait_s)
+                logger.warning(f"[SCHEDULER] ⏳ Flood limit for {chat_id} — retry in {wait_s:.0f}s")
+                if self.db:
+                    try:
+                        self.db.update_group_quiz_schedule(chat_id, max(1.0, wait_s / 60 + 0.5))
+                    except Exception:
+                        pass
+                failed += 1
+
             except Exception as e:
                 err = str(e).lower()
-                if any(kw in err for kw in self._INACTIVE_ERRORS):
+                # BadRequest subclasses NetworkError in PTB, so exclude it:
+                # "chat not found" etc. must still mark the group inactive.
+                if isinstance(e, NetworkError) and not isinstance(e, BadRequest):
+                    # Transient network problem: short retry, not a full interval
+                    logger.warning(f"[SCHEDULER] 🌐 Network error for {chat_id}: {e} — "
+                                   f"retry in {self.TRANSIENT_RETRY_MIN} min")
+                    if self.db:
+                        try:
+                            self.db.update_group_quiz_schedule(chat_id, self.TRANSIENT_RETRY_MIN)
+                        except Exception:
+                            pass
+                elif any(kw in err for kw in self._INACTIVE_ERRORS):
                     logger.warning(
                         f"[SCHEDULER] ⛔ Bot removed/blocked from {chat_id} "
                         f"— marking inactive. Reason: {e}"
