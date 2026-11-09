@@ -6,7 +6,7 @@ Start:  /startquiz in a group (admins) → pick a quiz, or the quiz card's
 Flow:   countdown → one timed quiz poll after another → mini leaderboard every
         10 questions → final result + Play again.
 Rules:  one session per group · only group admins (or the starter) control it ·
-        first answer per user counts · +1 correct, tie → less time ·
+        first answer per user counts · negative marking support (-0.25 standard) ·
         the group's hourly auto quiz waits while a session runs ·
         sessions are saved in MongoDB (`quiz_sessions`) and continue after a restart.
 Answers here don't change /score (same as battles).
@@ -59,27 +59,39 @@ class Session:
     set_id:    str = ""
     idx:       int = 0                     # next question to send
     status:    str = "running"             # running | paused | stopped | done
-    scores:    Dict[str, Dict] = field(default_factory=dict)   # uid → {name, correct, wrong, time}
+    scores:    Dict[str, Dict] = field(default_factory=dict)   # uid → {name, correct, wrong, score, time}
     ctrl_msg_id: Optional[int] = None
     paused_at: float = 0.0
     polls:     Dict[str, Tuple[int, int, float]] = field(default_factory=dict)  # poll → (idx, correct, sent)
     answered:  set = field(default_factory=set)
     wake:      asyncio.Event = field(default_factory=asyncio.Event)
     skip:      bool = False
+    negative_rate: float = 0.25            # -0.25 marks per wrong answer
+    marks_per_q:   float = 1.0             # +1.0 marks per correct answer
+    user_history:  Dict[str, List[Dict]] = field(default_factory=dict) # uid → list of answered questions
 
     def to_doc(self) -> Dict:
-        return {"chat_id": self.chat_id, "thread_id": self.thread_id, "title": self.title,
-                "questions": self.questions, "secs": self.secs, "started_by": self.started_by,
-                "starter_name": self.starter_name, "set_id": self.set_id, "idx": self.idx,
-                "status": self.status, "scores": self.scores, "ctrl_msg_id": self.ctrl_msg_id}
+        return {
+            "chat_id": self.chat_id, "thread_id": self.thread_id, "title": self.title,
+            "questions": self.questions, "secs": self.secs, "started_by": self.started_by,
+            "starter_name": self.starter_name, "set_id": self.set_id, "idx": self.idx,
+            "status": self.status, "scores": self.scores, "ctrl_msg_id": self.ctrl_msg_id,
+            "negative_rate": self.negative_rate, "marks_per_q": self.marks_per_q,
+            "user_history": self.user_history
+        }
 
     @classmethod
     def from_doc(cls, d: Dict) -> "Session":
-        return cls(chat_id=d["chat_id"], title=d.get("title", "Quiz"), questions=d.get("questions") or [],
-                   secs=int(d.get("secs") or BOT_SECS), started_by=d.get("started_by", 0),
-                   starter_name=d.get("starter_name", ""), thread_id=d.get("thread_id"),
-                   set_id=d.get("set_id", ""), idx=int(d.get("idx") or 0), status=d.get("status", "running"),
-                   scores=d.get("scores") or {}, ctrl_msg_id=d.get("ctrl_msg_id"))
+        return cls(
+            chat_id=d["chat_id"], title=d.get("title", "Quiz"), questions=d.get("questions") or [],
+            secs=int(d.get("secs") or BOT_SECS), started_by=d.get("started_by", 0),
+            starter_name=d.get("starter_name", ""), thread_id=d.get("thread_id"),
+            set_id=d.get("set_id", ""), idx=int(d.get("idx") or 0), status=d.get("status", "running"),
+            scores=d.get("scores") or {}, ctrl_msg_id=d.get("ctrl_msg_id"),
+            negative_rate=float(d.get("negative_rate") if d.get("negative_rate") is not None else 0.25),
+            marks_per_q=float(d.get("marks_per_q") or 1.0),
+            user_history=d.get("user_history") or {}
+        )
 
     def record(self, poll_id: str, uid: int, name: str, option_ids) -> bool:
         """True when the poll belongs to this session (answer counted or ignored)."""
@@ -89,19 +101,41 @@ class Session:
         if (poll_id, uid) in self.answered or not option_ids:
             return True
         self.answered.add((poll_id, uid))
-        _, correct, sent = info
-        sc = self.scores.setdefault(str(uid), {"name": name, "correct": 0, "wrong": 0, "time": 0.0})
+        q_idx, correct, sent = info
+        sc = self.scores.setdefault(str(uid), {"name": name, "correct": 0, "wrong": 0, "score": 0.0, "time": 0.0})
         sc["name"] = name or sc.get("name", "")
-        if option_ids[0] == correct:
+        is_right = (option_ids[0] == correct)
+        if is_right:
             sc["correct"] += 1
             sc["time"] = round(sc["time"] + max(0.0, time.monotonic() - sent), 2)
         else:
             sc["wrong"] += 1
+
+        # Calculate net score with negative marking
+        sc["score"] = round(sc["correct"] * self.marks_per_q - sc["wrong"] * self.negative_rate, 2)
+
+        # Record answer history for personal review (/result)
+        if 0 <= q_idx < len(self.questions):
+            q_data = self.questions[q_idx]
+            q_text = str(q_data.get("question") or "")
+            opts = [str(o) for o in (q_data.get("options") or [])]
+            selected_txt = opts[option_ids[0]] if 0 <= option_ids[0] < len(opts) else "Option"
+            correct_txt = opts[correct] if 0 <= correct < len(opts) else "Option"
+            exp = str(q_data.get("explanation") or "").strip()
+            self.user_history.setdefault(str(uid), []).append({
+                "q_num": q_idx + 1,
+                "question": q_text,
+                "selected": selected_txt,
+                "correct": correct_txt,
+                "is_correct": is_right,
+                "explanation": exp
+            })
         return True
 
     def ranking(self) -> List[Tuple[int, Dict]]:
         rows = [(int(u), s) for u, s in self.scores.items()]
-        return sorted(rows, key=lambda r: (-r[1]["correct"], r[1]["time"], r[1]["wrong"]))
+        # Sort by points descending, then total time ascending, then wrong answers ascending
+        return sorted(rows, key=lambda r: (-r[1].get("score", r[1]["correct"]), r[1]["time"], r[1]["wrong"]))
 
 
 def _kb(s: Session) -> InlineKeyboardMarkup:
@@ -148,8 +182,9 @@ class GroupQuizMixin:
         return await self._bt_is_group_admin(context, chat_id, user.id)
 
     def _gq_head(self, s: Session) -> str:
+        neg = f"\n⚖️ Negative › -{s.negative_rate} marks" if s.negative_rate > 0 else ""
         return (f"📚 <b>{html.escape(s.title)}</b>\n"
-                f"<blockquote>❓ Questions › {len(s.questions)}\n⏱ Timer › {s.secs}s each\n"
+                f"<blockquote>❓ Questions › {len(s.questions)}\n⏱ Timer › {s.secs}s each{neg}\n"
                 f"👤 Started by › {UI.mention(s.started_by, s.starter_name or 'admin')}</blockquote>\n")
 
     def _gq_board(self, s: Session, top: int) -> str:
@@ -157,9 +192,11 @@ class GroupQuizMixin:
         if not rank:
             return "<i>No answers yet.</i>"
         total = max(1, min(s.idx, len(s.questions)))
-        lines = [f"{_medal(i)} {UI.mention(uid, sc.get('name') or 'Player')} › "
-                 f"<b>{sc['correct']}</b>/{total} · {round(100 * sc['correct'] / total)}%"
-                 for i, (uid, sc) in enumerate(rank[:top])]
+        lines = []
+        for i, (uid, sc) in enumerate(rank[:top]):
+            pts = f" · <b>{sc.get('score', sc['correct'])} pts</b>" if s.negative_rate > 0 else ""
+            lines.append(f"{_medal(i)} {UI.mention(uid, sc.get('name') or 'Player')} › "
+                         f"<b>{sc['correct']}</b>/{total} ({round(100 * sc['correct'] / total)}%){pts}")
         return "<blockquote>" + "\n".join(lines) + "</blockquote>"
 
     async def _gq_send(self, context, s: Session, text: str, kb=None):
@@ -214,7 +251,7 @@ class GroupQuizMixin:
         rows.append([InlineKeyboardButton(f"🤖 {n} Q", callback_data=f"gq|bot|{user.id}|{n}", style="primary")
                      for n in BOT_COUNTS])
         rows.append([InlineKeyboardButton("❌ Cancel", callback_data=f"gq|close|{user.id}", style="danger")])
-        await self._reply(update, "👥 <b>GROUP QUIZ</b>\n<i>Pick one of your quizzes, or bot questions.</i>",
+        await self._reply(update, "👥 <b>UNIVERSAL GROUP QUIZ</b>\n<i>Pick one of your quizzes, or bot questions.</i>",
                           reply_markup=InlineKeyboardMarkup(rows))
 
     async def gq_start_from_link(self, update: Update, context, set_id: str) -> None:
@@ -248,17 +285,19 @@ class GroupQuizMixin:
                              int(qs.get("secs") or BOT_SECS), set_id)
 
     async def _gq_begin(self, context, chat_id: int, thread_id, user, title: str,
-                        questions: List[Dict], secs: int, set_id: str = "") -> Optional[Session]:
+                        questions: List[Dict], secs: int, set_id: str = "",
+                        negative_rate: float = 0.25) -> Optional[Session]:
         if is_active(chat_id):
             return None
         random.shuffle(questions)
         s = Session(chat_id=chat_id, title=title[:60], questions=questions, secs=max(5, min(secs, 600)),
-                    started_by=user.id, starter_name=self._bt_name(user), thread_id=thread_id, set_id=set_id)
+                    started_by=user.id, starter_name=self._bt_name(user), thread_id=thread_id, set_id=set_id,
+                    negative_rate=negative_rate)
         ACTIVE[chat_id] = s
         sent = await self._gq_send(context, s, self._gq_head(s) + f"🚀 <b>Starting in {START_DELAY}s…</b>", _kb(s))
         s.ctrl_msg_id = getattr(sent, "message_id", None)
         await self._gq_save(s)
-        logger.info(f"[GQUIZ] {chat_id} started '{title}' ({len(questions)} Q, {s.secs}s) by {user.id}")
+        logger.info(f"[GQUIZ] {chat_id} started '{title}' ({len(questions)} Q, {s.secs}s, neg={negative_rate}) by {user.id}")
         asyncio.create_task(self._gq_run(s, context))
         return s
 
@@ -344,8 +383,7 @@ class GroupQuizMixin:
         return s.record(poll_id, user.id, self._bt_name(user), list(option_ids or []))
 
     def _gq_share_kb(self, context, s: Session) -> InlineKeyboardMarkup:
-        """Play again (admins) + Share Quiz: a link anyone can open to run this
-        same quiz in their own group (t.me/<bot>?startgroup=gq_<id>)."""
+        """Play again (admins) + Share Quiz."""
         key = s.set_id or f"bot{len(s.questions)}"
         link = f"https://t.me/{getattr(context.bot, 'username', '')}?startgroup=gq_{key}"
         msg = (f"🏆 Play “{s.title}” in your group with Miss Quiz! "
@@ -356,23 +394,32 @@ class GroupQuizMixin:
             InlineKeyboardButton("📤 Share Quiz", url=share, style="primary")]])
 
     def _gq_result_texts(self, s: Session, stopped: bool) -> List[str]:
-        """Podium with greetings for the top 3, then EVERY player (in a quote,
-        split over several messages when the group is big)."""
+        """Podium with greetings for the top 3, then EVERY player with marks breakdown."""
         rank = s.ranking()
         total = max(1, min(s.idx, len(s.questions)))
+        neg_note = f" (Negative: -{s.negative_rate})" if s.negative_rate > 0 else ""
         head = (f"🏆 <b>FINAL RESULT</b> — {html.escape(s.title)}\n"
                 + (f"<i>Stopped after {s.idx} of {len(s.questions)} questions.</i>\n" if stopped else ""))
         if not rank:
             return [head + "<i>Nobody answered this time. Play again? 🙂</i>"]
         podium = ["🎉 <b>Congratulations to our winners!</b>"]
         for i, (uid, sc) in enumerate(rank[:3]):
+            pts_str = f" · <b>{sc.get('score', sc['correct'])} pts</b>" if s.negative_rate > 0 else ""
             podium.append(f"{_medal(i)} {UI.mention(uid, sc.get('name') or 'Player')} › "
-                          f"<b>{sc['correct']}</b>/{total}\n{_PRAISE[i]}")
-        line = lambda i, uid, sc: (f"{_medal(i)} {UI.mention(uid, sc.get('name') or 'Player')} › "
-                                   f"<b>{sc['correct']}</b>/{total} · {round(100 * sc['correct'] / total)}% · "
-                                   f"✅ {sc['correct']} ❌ {sc.get('wrong', 0)}")
-        lines = [line(i, uid, sc) for i, (uid, sc) in enumerate(rank)]
-        foot = f"\n👥 Players › {len(rank)} · ❓ Questions › {total}"
+                          f"<b>{sc['correct']}</b>/{total}{pts_str}\n{_PRAISE[i]}")
+
+        def format_line(i, uid, sc):
+            if s.negative_rate > 0:
+                return (f"{_medal(i)} {UI.mention(uid, sc.get('name') or 'Player')} › "
+                        f"<b>{sc.get('score', sc['correct'])} pts</b> ({sc['correct']}/{total}) · "
+                        f"✅ {sc['correct']} ❌ {sc.get('wrong', 0)}")
+            else:
+                return (f"{_medal(i)} {UI.mention(uid, sc.get('name') or 'Player')} › "
+                        f"<b>{sc['correct']}</b>/{total} · {round(100 * sc['correct'] / total)}% · "
+                        f"✅ {sc['correct']} ❌ {sc.get('wrong', 0)}")
+
+        lines = [format_line(i, uid, sc) for i, (uid, sc) in enumerate(rank)]
+        foot = f"\n👥 Players › {len(rank)} · ❓ Questions › {total}{neg_note}\n💡 <i>Tip: Send /result to get your wrong answers review in DM!</i>"
         texts = []
         for k in range(0, len(lines), PER_RESULT_MSG):
             chunk = "<blockquote expandable>" + "\n".join(lines[k:k + PER_RESULT_MSG]) + "</blockquote>"
@@ -399,6 +446,200 @@ class GroupQuizMixin:
             await self._gq_send(context, s, text, self._gq_share_kb(context, s) if k == len(texts) - 1 else None)
         await self._gq_edit_ctrl(context, s, "🏁 <b>Finished.</b>" if not stopped else "⏹ <b>Stopped.</b>")
         logger.info(f"[GQUIZ] {s.chat_id} ended ({'stopped' if stopped else 'done'}) players={len(s.scores)}")
+
+    # ── speed control commands ───────────────────────────────────────────
+
+    async def cmd_slow(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """/slow in group: increase question timer by 10s (admins)."""
+        user, chat, msg = update.effective_user, update.effective_chat, update.effective_message
+        s = ACTIVE.get(chat.id) if chat else None
+        if not s:
+            await self._reply(update, "ℹ️ <b>No active quiz running here.</b>")
+            return
+        if user.id != s.started_by and not await self._gq_is_admin(context, chat.id, user, msg):
+            await self._reply(update, "⛔ <b>Only group admins can adjust quiz speed.</b>")
+            return
+        s.secs = min(300, s.secs + 10)
+        await self._gq_save(s)
+        await self._reply(update, f"🐢 <b>Speed decreased:</b> timer set to <b>{s.secs}s</b> per question.")
+
+    async def cmd_fast(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """/fast in group: decrease question timer by 5s (admins)."""
+        user, chat, msg = update.effective_user, update.effective_chat, update.effective_message
+        s = ACTIVE.get(chat.id) if chat else None
+        if not s:
+            await self._reply(update, "ℹ️ <b>No active quiz running here.</b>")
+            return
+        if user.id != s.started_by and not await self._gq_is_admin(context, chat.id, user, msg):
+            await self._reply(update, "⛔ <b>Only group admins can adjust quiz speed.</b>")
+            return
+        s.secs = max(5, s.secs - 5)
+        await self._gq_save(s)
+        await self._reply(update, f"⚡ <b>Speed increased:</b> timer set to <b>{s.secs}s</b> per question.")
+
+    async def cmd_normal(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """/normal in group: reset question timer to default (admins)."""
+        user, chat, msg = update.effective_user, update.effective_chat, update.effective_message
+        s = ACTIVE.get(chat.id) if chat else None
+        if not s:
+            await self._reply(update, "ℹ️ <b>No active quiz running here.</b>")
+            return
+        if user.id != s.started_by and not await self._gq_is_admin(context, chat.id, user, msg):
+            await self._reply(update, "⛔ <b>Only group admins can adjust quiz speed.</b>")
+            return
+        s.secs = BOT_SECS
+        await self._gq_save(s)
+        await self._reply(update, f"⏱️ <b>Speed reset:</b> timer restored to default <b>{s.secs}s</b> per question.")
+
+    # ── personal /result & /compare ──────────────────────────────────────
+
+    async def cmd_result(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """/result - get personal detailed performance review and wrong answers in DM."""
+        user, chat = update.effective_user, update.effective_chat
+        if not user or not chat:
+            return
+
+        s = ACTIVE.get(chat.id)
+        if not s and hasattr(self, "_gq_last"):
+            s = self._gq_last.get(chat.id)
+
+        if not s:
+            for past in getattr(self, "_gq_last", {}).values():
+                if str(user.id) in past.scores:
+                    s = past
+                    break
+
+        if not s or str(user.id) not in s.scores:
+            await self._reply(update, "ℹ️ <b>No quiz record found for you.</b> Participate in a quiz first!")
+            return
+
+        sc = s.scores[str(user.id)]
+        total = max(1, min(s.idx, len(s.questions)))
+        correct = sc.get("correct", 0)
+        wrong = sc.get("wrong", 0)
+        score = sc.get("score", correct)
+        accuracy = round(100 * correct / total) if total else 0
+        ans_list = s.user_history.get(str(user.id), [])
+
+        report = [
+            f"📊 <b>Personal Quiz Scorecard</b>",
+            f"<b>Quiz:</b> {html.escape(s.title)}",
+            f"━━━━━━━━━━━━━━━━━━",
+            f"🎯 <b>Net Score:</b> <b>{score} pts</b>" + (f" (Negative: -{s.negative_rate})" if s.negative_rate > 0 else ""),
+            f"✅ <b>Correct:</b> {correct}",
+            f"❌ <b>Wrong:</b> {wrong}",
+            f"⏳ <b>Total Attempted:</b> {correct + wrong} / {total}",
+            f"📈 <b>Accuracy:</b> {accuracy}%",
+            f"⏱️ <b>Total Time:</b> {sc.get('time', 0.0)}s",
+            f"━━━━━━━━━━━━━━━━━━"
+        ]
+
+        wrong_answers = [item for item in ans_list if not item.get("is_correct")]
+        if wrong_answers:
+            report.append("\n❌ <b>Questions you missed:</b>\n")
+            for w in wrong_answers[:15]:
+                q_text = html.escape(w['question'][:120])
+                your_ans = html.escape(str(w.get('selected', '')))
+                right_ans = html.escape(str(w.get('correct', '')))
+                exp = html.escape(str(w.get('explanation', '')[:100]))
+                exp_text = f"\n   💡 <i>{exp}</i>" if exp else ""
+                report.append(
+                    f"❓ <b>Q{w['q_num']}:</b> {q_text}\n"
+                    f"   ❌ Your Answer: <code>{your_ans}</code>\n"
+                    f"   ✅ Correct: <b>{right_ans}</b>{exp_text}\n"
+                )
+        else:
+            report.append("\n🌟 <b>Flawless! Zero wrong answers recorded.</b>")
+
+        full_text = "\n".join(report)
+
+        if chat.type != "private":
+            try:
+                await context.bot.send_message(user.id, full_text, parse_mode=ParseMode.HTML)
+                await self._reply(update, f"📩 {UI.mention(user.id, user.first_name)}, I have sent your detailed scorecard to your DM!")
+            except Exception:
+                bot_user = getattr(context.bot, "username", "")
+                await self._reply(update, f"⚠️ {UI.mention(user.id, user.first_name)}, please start me in private chat first (DM) so I can send your scorecard: @{bot_user}")
+        else:
+            await self._reply(update, full_text)
+
+    async def cmd_compare(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """/compare @username - compare quiz stats between two users in the group."""
+        user, chat, msg = update.effective_user, update.effective_chat, update.effective_message
+        if not user or not chat or chat.type == "private":
+            await self._reply(update, "👥 Use <code>/compare</code> in a group after or during a quiz!")
+            return
+
+        s = ACTIVE.get(chat.id)
+        if not s and hasattr(self, "_gq_last"):
+            s = self._gq_last.get(chat.id)
+
+        if not s:
+            await self._reply(update, "ℹ️ <b>No active or recent quiz session found here.</b>")
+            return
+
+        target_uid = None
+        target_name = None
+
+        if msg.reply_to_message and msg.reply_to_message.from_user:
+            t_user = msg.reply_to_message.from_user
+            if not t_user.is_bot:
+                target_uid = t_user.id
+                target_name = t_user.first_name
+
+        if not target_uid and context.args:
+            arg = context.args[0].lstrip("@").lower()
+            for uid_str, sc in s.scores.items():
+                if sc.get("name", "").lower() == arg:
+                    target_uid = int(uid_str)
+                    target_name = sc.get("name")
+                    break
+
+        if not target_uid:
+            await self._reply(update, "👉 <b>Usage:</b> Reply to someone with <code>/compare</code> or use <code>/compare @username</code>")
+            return
+
+        if target_uid == user.id:
+            await self._reply(update, "😄 You cannot compare with yourself! Pick a friend or rival.")
+            return
+
+        sc1 = s.scores.get(str(user.id))
+        sc2 = s.scores.get(str(target_uid))
+
+        if not sc1 or not sc2:
+            await self._reply(update, "⚠️ Both users must have answered at least one question in this quiz.")
+            return
+
+        p1_name = sc1.get("name") or user.first_name
+        p2_name = target_name or sc2.get("name") or "Opponent"
+
+        p1_score = sc1.get("score", sc1.get("correct", 0))
+        p2_score = sc2.get("score", sc2.get("correct", 0))
+
+        p1_time = sc1.get("time", 0.0)
+        p2_time = sc2.get("time", 0.0)
+
+        if p1_score > p2_score or (p1_score == p2_score and p1_time < p2_time):
+            winner = f"🏆 <b>Winner:</b> {UI.mention(user.id, p1_name)} 🎉"
+        elif p2_score > p1_score or (p1_score == p2_score and p2_time < p1_time):
+            winner = f"🏆 <b>Winner:</b> {UI.mention(target_uid, p2_name)} 🎉"
+        else:
+            winner = "🤝 <b>It's an exact TIE!</b>"
+
+        card = (
+            f"⚔️ <b>QUIZ HEAD-TO-HEAD COMPARISON</b>\n"
+            f"<b>Quiz:</b> {html.escape(s.title)}\n\n"
+            f"<blockquote>"
+            f"👤 <b>{html.escape(p1_name)}</b> vs <b>{html.escape(p2_name)}</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"🎯 <b>Points:</b> {p1_score} vs {p2_score}\n"
+            f"✅ <b>Correct:</b> {sc1.get('correct', 0)} vs {sc2.get('correct', 0)}\n"
+            f"❌ <b>Wrong:</b> {sc1.get('wrong', 0)} vs {sc2.get('wrong', 0)}\n"
+            f"⏱️ <b>Time:</b> {p1_time}s vs {p2_time}s\n"
+            f"</blockquote>\n\n"
+            f"{winner}"
+        )
+        await self._reply(update, card)
 
     # ── buttons ──────────────────────────────────────────────────────────
 

@@ -1021,3 +1021,40 @@ class DatabaseManager:
         except Exception as e:
             logger.error(f"get_user error: {e}")
             return None
+
+
+    def get_user_custom_words(self, user_id: int) -> List[str]:
+        """Get custom blacklist/filter words for a user."""
+        try:
+            doc = self.users_col.find_one({"user_id": user_id}, {"custom_words": 1, "_id": 0})
+            return (doc or {}).get("custom_words") or []
+        except Exception as e:
+            logger.error(f"get_user_custom_words error: {e}")
+            return []
+
+    def set_user_custom_words(self, user_id: int, words: List[str]) -> bool:
+        """Save custom blacklist/filter words for a user."""
+        try:
+            clean_list = [w.strip() for w in words if w and w.strip()][:100]
+            self.users_col.update_one(
+                {"user_id": user_id},
+                {"$set": {"custom_words": clean_list}},
+                upsert=True
+            )
+            return True
+        except Exception as e:
+            logger.error(f"set_user_custom_words error: {e}")
+            return False
+
+
+    def update_quiz_set(self, sid: str, owner: int, updates: Dict) -> bool:
+        """Update fields (e.g. title, secs, questions) on a user's quiz set."""
+        try:
+            res = self.quiz_sets_col.update_one(
+                {"id": str(sid), "owner": int(owner)},
+                {"$set": updates}
+            )
+            return res.modified_count > 0
+        except Exception as e:
+            logger.error(f"update_quiz_set error: {e}")
+            return False

@@ -216,3 +216,67 @@ class UserCommandsMixin(object):
         )
         kb = InlineKeyboardMarkup([self._nav_row(back_screen="home")])
         await self._smart_edit(update, text, kb, edit_msg=edit_msg)
+
+
+    # ─── /mywords (Safai Filter Custom Words) ──────────────────
+
+    async def cmd_mywords(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """/mywords [add|del|clear] [word] - manage custom blacklist/filter words."""
+        user = update.effective_user
+        if not user:
+            return
+
+        words = []
+        if self.db and hasattr(self.db, "get_user_custom_words"):
+            words = await asyncio.to_thread(self.db.get_user_custom_words, user.id)
+
+        args = context.args or []
+        if not args:
+            w_list = ", ".join(f"<code>{html.escape(w)}</code>" for w in words) if words else "<i>No custom words set yet.</i>"
+            text = (
+                "🧹 <b>SAFAI FILTER — CUSTOM WORDS</b>\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "Polls and text imported into your quizzes will automatically filter out:\n"
+                "• <code>[1/100]</code> counters\n"
+                "• <code>@channel_names</code> and invite links\n"
+                "• Your custom words below:\n\n"
+                f"📝 <b>Your Words:</b>\n{w_list}\n\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "👉 <b>How to use:</b>\n"
+                "• <code>/mywords add &lt;word&gt;</code> — add word to blacklist\n"
+                "• <code>/mywords del &lt;word&gt;</code> — remove word\n"
+                "• <code>/mywords clear</code> — clear all custom words"
+            )
+            await self._reply(update, text)
+            return
+
+        sub = args[0].lower()
+        if sub == "clear":
+            if self.db and hasattr(self.db, "set_user_custom_words"):
+                await asyncio.to_thread(self.db.set_user_custom_words, user.id, [])
+            await self._reply(update, "🧹 <b>Cleared!</b> All your custom filter words have been removed.")
+            return
+
+        target = " ".join(args[1:]).strip() if len(args) > 1 else ""
+        if not target:
+            await self._reply(update, f"⚠️ Please specify a word: <code>/mywords {sub} &lt;word&gt;</code>")
+            return
+
+        if sub == "add":
+            if target.lower() not in [w.lower() for w in words]:
+                words.append(target)
+                if self.db and hasattr(self.db, "set_user_custom_words"):
+                    await asyncio.to_thread(self.db.set_user_custom_words, user.id, words)
+                await self._reply(update, f"✅ Added <code>{html.escape(target)}</code> to your auto-clean filter!")
+            else:
+                await self._reply(update, f"ℹ️ <code>{html.escape(target)}</code> is already in your list.")
+        elif sub in ("del", "remove", "delete"):
+            new_words = [w for w in words if w.lower() != target.lower()]
+            if len(new_words) != len(words):
+                if self.db and hasattr(self.db, "set_user_custom_words"):
+                    await asyncio.to_thread(self.db.set_user_custom_words, user.id, new_words)
+                await self._reply(update, f"🗑️ Removed <code>{html.escape(target)}</code> from your filter list.")
+            else:
+                await self._reply(update, f"⚠️ <code>{html.escape(target)}</code> was not found in your list.")
+        else:
+            await self._reply(update, "👉 Usage: <code>/mywords add &lt;word&gt;</code> or <code>/mywords del &lt;word&gt;</code>")

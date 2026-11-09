@@ -360,6 +360,12 @@ class TelegramQuizBot(
         app.add_handler(CommandHandler("myquiz",      self.cmd_myquiz))
         app.add_handler(CommandHandler("startquiz",   self.cmd_startquiz))
         app.add_handler(CommandHandler("stopquiz",    self.cmd_stopquiz))
+        app.add_handler(CommandHandler("slow",        self.cmd_slow))
+        app.add_handler(CommandHandler("fast",        self.cmd_fast))
+        app.add_handler(CommandHandler("normal",      self.cmd_normal))
+        app.add_handler(CommandHandler("result",      self.cmd_result))
+        app.add_handler(CommandHandler("compare",     self.cmd_compare))
+        app.add_handler(CommandHandler("mywords",     self.cmd_mywords))
 
         # Admin commands
         app.add_handler(CommandHandler("addquiz",     self.cmd_addquiz))
@@ -373,6 +379,8 @@ class TelegramQuizBot(
         app.add_handler(CommandHandler("restart",     self.cmd_restart))
         app.add_handler(CommandHandler("admin",       self.cmd_admin))
         app.add_handler(CommandHandler("cancel",      self.cmd_cancel))
+        app.add_handler(CommandHandler("check",       self.cmd_check))
+        app.add_handler(CommandHandler("cleanup",     self.cmd_cleanup))
 
         # ── Group tracking — three complementary mechanisms ──────────
         # 1. my_chat_member: bot add/remove/promote/demote/restrict

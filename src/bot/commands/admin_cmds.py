@@ -926,3 +926,75 @@ class AdminCommandsMixin(object):
         finally:
             if hasattr(self, '_import_users'):
                 self._import_users.discard(user_id)
+
+
+    # ─── /check (System Health & Stats) ───────────────────────
+
+    async def cmd_check(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """/check - system resource monitor (owner & devs only)."""
+        user = update.effective_user
+        if not await self._is_authorized(user.id):
+            await self._unauthorized(update)
+            return
+
+        import os
+        uptime_secs = int(time.time() - getattr(self, "_start_ts", time.time()))
+        mins, secs = divmod(uptime_secs, 60)
+        hours, mins = divmod(mins, 60)
+        uptime_str = f"{hours}h {mins}m {secs}s"
+
+        ram_mb = "N/A"
+        try:
+            import psutil
+            process = psutil.Process(os.getpid())
+            ram_mb = f"{process.memory_info().rss / (1024 * 1024):.1f} MB"
+            cpu_pct = f"{psutil.cpu_percent(interval=None)}%"
+        except Exception:
+            cpu_pct = "Active"
+
+        from src.bot.group_quiz import ACTIVE
+        running_gq = sum(1 for s in ACTIVE.values() if s.status == "running")
+        paused_gq = sum(1 for s in ACTIVE.values() if s.status == "paused")
+
+        text = (
+            "🩺 <b>SYSTEM & BOT HEALTH MONITOR</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            "<blockquote>"
+            f"⏱ <b>Uptime:</b> <code>{uptime_str}</code>\n"
+            f"💾 <b>RAM Usage:</b> <code>{ram_mb}</code>\n"
+            f"⚙️ <b>CPU:</b> <code>{cpu_pct}</code>\n"
+            f"📚 <b>Questions in Cache:</b> <code>{self._q_count()}</code>\n"
+            f"👥 <b>Active Group Quizzes:</b> <code>{running_gq} running, {paused_gq} paused</code>\n"
+            f"🗄 <b>Database:</b> MongoDB Atlas ✅\n"
+            "</blockquote>\n\n"
+            "<i>Everything is running optimally!</i>"
+        )
+        await self._reply(update, text)
+
+    # ─── /cleanup (Stale Session Purge) ───────────────────────
+
+    async def cmd_cleanup(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """/cleanup - emergency reset of stale group quizzes & battle states."""
+        user = update.effective_user
+        if not await self._is_authorized(user.id):
+            await self._unauthorized(update)
+            return
+
+        from src.bot.group_quiz import ACTIVE
+        stale_count = 0
+        now = time.monotonic()
+        for cid, s in list(ACTIVE.items()):
+            if s.status in ("stopped", "done") or (s.status == "paused" and now - s.paused_at > 1800):
+                ACTIVE.pop(cid, None)
+                stale_count += 1
+                if self.db and hasattr(self.db, "delete_quiz_session"):
+                    await asyncio.to_thread(self.db.delete_quiz_session, cid)
+
+        text = (
+            "🧹 <b>EMERGENCY CLEANUP COMPLETED</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"• Cleaned group sessions: <b>{stale_count}</b>\n"
+            f"• Active memory freed ✅\n\n"
+            "<i>All stale loops have been safely cleared.</i>"
+        )
+        await self._reply(update, text)

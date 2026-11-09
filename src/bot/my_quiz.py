@@ -5,6 +5,11 @@ A user sends questions in the bot's DM — pasted text, any file the importer
 reads, or forwarded quiz polls — taps Done, names it, and gets a private quiz
 set (`quiz_sets` collection) to battle with. These questions never go into the
 bot's own pool or the auto quiz.
+
+Includes:
+- Safai Filter (clean counters, @usernames, URLs, custom words)
+- Quiz Editor (rename, change timer)
+- Practice Mode in DM (instant explanation per question)
 """
 
 import asyncio
@@ -17,6 +22,8 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ParseMode
 from telegram.ext import ApplicationHandlerStop, ContextTypes
 
+from src.utils.cleaner import clean_text
+
 logger = logging.getLogger(__name__)
 
 MIN_Q         = 3                   # questions needed to save
@@ -26,8 +33,9 @@ PER_PAGE      = 8                   # quizzes per list page
 
 HELP = ("<blockquote>📄 Paste questions as text\n"
         "📎 Send any file: PDF, DOCX, PPTX, TXT, CSV, XLSX, JSON, HTML, ZIP…\n"
-        "🗳 Forward quiz polls</blockquote>\n"
-        "<i>Each question needs its options and the answer. Send as many as you like, then tap Done.</i>")
+        "🗳 Forward quiz polls (auto-cleaned!)\n"
+        "🧹 Auto-cleans [1/100], @channel_names, and custom words</blockquote>\n"
+        "<i>Each question needs options and the answer. Send as many as you like, then tap Done.</i>")
 EXAMPLE = ("<blockquote>1. Capital of India?\nA) Mumbai\nB) Delhi\nC) Pune\nAnswer: B</blockquote>")
 
 
@@ -36,8 +44,6 @@ def _btn(text: str, data: str, style: Optional[str] = "primary") -> InlineKeyboa
 
 
 def page_rows(pages: int, current: int, data) -> List[List[InlineKeyboardButton]]:
-    """Page-number buttons, 5 per row (1 2 3 4 5 / 6 7 8 9 10). More than 10
-    pages: a window of 10 around the current one. Current page is green."""
     if pages <= 1:
         return []
     start = max(1, min(current - 4, pages - 9))
@@ -48,7 +54,6 @@ def page_rows(pages: int, current: int, data) -> List[List[InlineKeyboardButton]
 
 
 async def load_page(db_call, count_call, owner: int, page: int):
-    """(sets on this page, current page, total pages)."""
     total = await count_call(owner)
     total = total if isinstance(total, int) else 0
     pages = max(1, -(-total // PER_PAGE))
@@ -57,7 +62,8 @@ async def load_page(db_call, count_call, owner: int, page: int):
     return (sets if isinstance(sets, list) else []), page, pages
 
 
-def parse_questions(text: str, items: Optional[List[Dict]] = None) -> Tuple[List[Dict], List[Dict]]:
+def parse_questions(text: str, items: Optional[List[Dict]] = None,
+                    custom_words: Optional[List[str]] = None) -> Tuple[List[Dict], List[Dict]]:
     """Text and/or structured rows → valid poll questions + problems (why skipped)."""
     from src.bot.quiz_parser import SmartQuizParser, items_to_questions, _clamp_option
     parser = SmartQuizParser()
@@ -69,8 +75,9 @@ def parse_questions(text: str, items: Optional[List[Dict]] = None) -> Tuple[List
         problems += more_problems
     out = []
     for it in raw:
-        q = " ".join(str(it.get("question") or "").split())
-        opts = [str(o).strip() for o in it.get("options") or []]
+        raw_q = " ".join(str(it.get("question") or "").split())
+        q = clean_text(raw_q, custom_words)
+        opts = [clean_text(str(o).strip(), custom_words) for o in it.get("options") or []]
         c = it.get("correct_answer")
         where = f"“{q[:30]}”"
         if len(q) < 3:
@@ -81,7 +88,7 @@ def parse_questions(text: str, items: Optional[List[Dict]] = None) -> Tuple[List
             problems.append({"where": where, "reason": "answer missing or doesn't match an option"}); continue
         d = {"question": q[:280], "options": [_clamp_option(o) for o in opts], "correct_answer": c}
         if it.get("explanation"):
-            d["explanation"] = str(it["explanation"]).strip()[:190]
+            d["explanation"] = clean_text(str(it["explanation"]).strip(), custom_words)[:190]
         out.append(d)
     return out, problems
 
@@ -101,42 +108,52 @@ class MyQuizMixin:
         try:
             return await asyncio.to_thread(getattr(self.db, fn), *args)
         except Exception as e:
-            logger.warning(f"[MYQUIZ] {fn} failed: {e}")
+            logger.warning(f"[MYQUIZ] db {fn} failed: {e}")
             return default
 
     # ── views ────────────────────────────────────────────────────────────
 
-    def _mq_collect_view(self, d: Dict):
-        n = len(d["qs"])
-        text = "📝 <b>CREATE YOUR QUIZ</b>\n"
-        if n or d.get("problems") or d.get("note"):
-            text += f"<blockquote>✅ Questions added › {n}</blockquote>\n"
-            if d.get("note"):
-                text += f"⚠️ {html.escape(d['note'])}\n"
-            probs = d.get("problems") or []
-            if probs:
-                text += f"⚠️ Skipped {len(probs)}:\n" + "\n".join(
-                    f"• {html.escape(p['where'])} — {html.escape(p['reason'])}" for p in probs[-5:]) + "\n"
-            text += "<i>Send more, or tap Done.</i>"
+    @staticmethod
+    def _mq_collect_view(d: Dict) -> Tuple[str, InlineKeyboardMarkup]:
+        q_count = len(d["qs"])
+        body = (
+            f"✏️ <b>CREATE OWN QUIZ</b>\n"
+            f"<blockquote>✅ Questions added › <b>{q_count}</b>" +
+            (f"\n📎 From › {html.escape(d['fname'])}" if d.get("fname") else "") +
+            "</blockquote>\n"
+        )
+        if d.get("note"):
+            body += f"💡 <i>{html.escape(d['note'])}</i>\n\n"
         else:
-            text += HELP
-        kb = InlineKeyboardMarkup([[_btn(f"✅ Done ({n})", "mq_done", "success")],
-                                   [_btn("❌ Cancel", "mq_cancel", "danger")]])
-        return text, kb
+            body += HELP + "\n\n"
+        ready = q_count >= MIN_Q
+        top = [
+            _btn(f"✅ Done ({q_count}Q)" if ready else f"Add {MIN_Q - q_count} more…",
+                 "mq_done", "success" if ready else "primary"),
+            _btn("❌ Cancel", "mq_cancel", "danger"),
+        ]
+        return body, InlineKeyboardMarkup([top])
 
-    def _mq_list_view(self, sets: List[Dict], page: int = 1, pages: int = 1):
-        rows = [[_btn("📝 Create Own Quiz", "mq_new", "success")]]
-        rows += [[_btn(f"📝 {s.get('title', 'Quiz')[:28]} · {s.get('count', 0)}Q", f"mq_open:{s['id']}")]
-                 for s in sets]
-        rows += page_rows(pages, page, lambda n: f"mq_list:{n}")
-        if sets:
-            text = ("📚 <b>MY QUIZZES</b>" + (f" · page {page}/{pages}" if pages > 1 else "") +
-                    "\n<i>Open a quiz to battle with it.</i>")
-        else:
-            text = "📚 <b>MY QUIZZES</b>\n<i>No quizzes yet. Make one from your own questions.</i>"
-        return text, InlineKeyboardMarkup(rows)
+    @staticmethod
+    def _mq_list_view(sets: List[Dict], page: int, pages: int) -> Tuple[str, InlineKeyboardMarkup]:
+        from src.bot.battle import _tlabel
+        head = "📚 <b>YOUR QUIZZES</b>\n"
+        if not sets:
+            body = head + "<i>You haven't created any quizzes yet. Make your first one below!</i>"
+            return body, InlineKeyboardMarkup([[_btn("➕ Create New Quiz", "mq_new", "success")]])
+        lines = []
+        for i, s in enumerate(sets, 1 + (page - 1) * PER_PAGE):
+            q_cnt = s.get("count") or (len(s["questions"]) if "questions" in s else 0)
+            t_lbl = _tlabel(int(s.get("secs") or 20))
+            lines.append(f"{i}. <b>{html.escape(s.get('title', 'Quiz')[:30])}</b> · {q_cnt}Q · {t_lbl}")
+        body = head + "<blockquote>" + "\n".join(lines) + "</blockquote>\n<i>Tap a quiz to play, edit, or practice.</i>"
+        item_rows = [[_btn(f"📝 {s.get('title', 'Quiz')[:26]}", f"mq_open:{s['id']}")]
+                     for s in sets]
+        nav_rows = page_rows(pages, page, lambda p: f"mq_list:{p}")
+        foot = [_btn("➕ Create New Quiz", "mq_new", "success")]
+        return body, InlineKeyboardMarkup(item_rows + nav_rows + [foot])
 
-    async def _mq_page(self, owner: int, page: int):
+    async def _mq_page(self, owner: int, page: int = 1):
         call = lambda fn: (lambda *a: self._mq_db(fn, *a))
         return await load_page(call("list_quiz_sets"), call("count_quiz_sets"), owner, page)
 
@@ -148,14 +165,17 @@ class MyQuizMixin:
                 f"<blockquote>❓ Questions › {qs.get('count', 0)}\n"
                 f"⏱ Timer › {_tlabel(int(qs.get('secs') or 20))} each\n"
                 f"📅 Created › {str(qs.get('created_at', ''))[:10]}</blockquote>")
-        kb = InlineKeyboardMarkup([
+        rows = [
             [_btn("⚔️ Battle with this quiz", f"mq_bt:{qs['id']}", "success")],
-            *([[InlineKeyboardButton("👥 Start in Group", style="primary",
-                                     url=f"https://t.me/{bot_username}?startgroup=gq_{qs['id']}")]]
-              if bot_username else []),
-            [_btn("🗑 Delete", f"mq_del:{qs['id']}", "danger"), _btn("⬅️ Back", "mq_list", "danger")],
-        ])
-        return text, kb
+            [_btn("🎯 Practice in DM", f"mq_prac:{qs['id']}", "primary")],
+        ]
+        if bot_username:
+            rows.append([InlineKeyboardButton("👥 Start in Group", style="primary",
+                                              url=f"https://t.me/{bot_username}?startgroup=gq_{qs['id']}")])
+        rows.append([_btn("✏️ Rename", f"mq_rename:{qs['id']}", "primary"),
+                     _btn("⏱️ Timer", f"mq_timer:{qs['id']}", "primary")])
+        rows.append([_btn("🗑 Delete", f"mq_del:{qs['id']}", "danger"), _btn("⬅️ Back", "mq_list", "danger")])
+        return text, InlineKeyboardMarkup(rows)
 
     # ── entry points ─────────────────────────────────────────────────────
 
@@ -178,8 +198,6 @@ class MyQuizMixin:
             await self._reply(update, text, reply_markup=kb)
 
     async def mq_start_draft(self, query, context, user, update: Optional[Update] = None):
-        """Begin collecting questions. From a button (query) the same message
-        becomes the panel; from /start mq_new a new one is sent."""
         d = {"qs": [], "seen": set(), "problems": [], "note": "", "stage": "collect", "fname": ""}
         text, kb = self._mq_collect_view(d)
         if query:
@@ -192,7 +210,6 @@ class MyQuizMixin:
         context.user_data.pop("bt_await", None)
 
     async def _mq_show(self, context, d: Dict, text: str, kb) -> None:
-        """Fresh panel under the user's last message; the old one is removed."""
         old = d.get("msg")
         try:
             sent = await context.bot.send_message(d["chat"], text, parse_mode=ParseMode.HTML, reply_markup=kb)
@@ -209,15 +226,30 @@ class MyQuizMixin:
     # ── input: text / file / forwarded poll ──────────────────────────────
 
     async def handle_myquiz_input(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Group -4 (DM only): feeds the open draft. Does nothing without one.
-        Files sent together are handled one after another (one lock per draft)."""
-        d = self._mq_draft(context)
         msg, user = update.effective_message, update.effective_user
-        if not d or not msg or not user:
+        if not msg or not user:
+            return
+
+        # Check if renaming a quiz
+        renaming_id = context.user_data.get("mq_renaming")
+        if renaming_id and msg.text:
+            new_title = " ".join(msg.text.strip().split())[:40]
+            if new_title:
+                context.user_data.pop("mq_renaming", None)
+                if self.db and hasattr(self.db, "update_quiz_set"):
+                    await asyncio.to_thread(self.db.update_quiz_set, renaming_id, user.id, {"title": new_title})
+                qs = await self._mq_db("get_quiz_set", renaming_id)
+                await self._reply(update, f"✅ <b>Quiz renamed to:</b> <code>{html.escape(new_title)}</code>")
+                if qs:
+                    await self._reply(update, *self._mq_card_view(qs, bot_username=context.bot.username))
+                raise ApplicationHandlerStop
+
+        d = self._mq_draft(context)
+        if not d:
             return
         lock = d.setdefault("lock", asyncio.Lock())
         async with lock:
-            if self._mq_draft(context) is d:            # still the same draft after waiting
+            if self._mq_draft(context) is d:
                 await self._mq_take(context, user, d, msg)
         raise ApplicationHandlerStop
 
@@ -227,7 +259,7 @@ class MyQuizMixin:
             if plain and "\n" not in plain and not msg.document and not msg.poll and not msg.photo:
                 await self._mq_save(context, user, d, " ".join(plain.split())[:40])
                 return
-            d["stage"] = "collect"                      # more questions while naming → keep adding
+            d["stage"] = "collect"
 
         items, text, note = [], "", ""
         if msg.poll:
@@ -238,10 +270,10 @@ class MyQuizMixin:
             else:
                 note = "Only quiz polls with a visible answer can be added."
         elif msg.document or msg.photo:
-            doc = msg.document or msg.photo[-1]                 # biggest photo size
+            doc = msg.document or msg.photo[-1]
             fname = getattr(doc, "file_name", None) or "photo.jpg"
             if doc.file_size and doc.file_size > MAX_FILE:
-                note = "File is too big — Telegram lets bots read files up to 20 MB. Split it and send the parts."
+                note = "File is too big — Telegram lets bots read files up to 20 MB."
             else:
                 try:
                     from src.bot.file_extract import extract
@@ -260,7 +292,11 @@ class MyQuizMixin:
         else:
             note = "Send text, a file, or forward a quiz poll."
 
-        qs, probs = (await asyncio.to_thread(parse_questions, text, items)) if (text or items) else ([], [])
+        user_words = []
+        if self.db and hasattr(self.db, "get_user_custom_words"):
+            user_words = await asyncio.to_thread(self.db.get_user_custom_words, user.id)
+
+        qs, probs = (await asyncio.to_thread(parse_questions, text, items, user_words)) if (text or items) else ([], [])
         added = 0
         for q in qs:
             key = q["question"].lower()
@@ -276,31 +312,53 @@ class MyQuizMixin:
         if not added and not note:
             note = ("No new questions in that (already added)." if qs else
                     "No questions found in that. Use a layout like the example below.")
-        d["note"] = (f"Last file: +{added}. " if added and (msg.document or msg.photo) else "") + note
+        d["note"] = (f"Cleaned & Added: +{added}. " if added and (msg.document or msg.photo or msg.poll) else "") + note
         text_out, kb = self._mq_collect_view(d)
         if note.startswith("No questions found"):
             text_out += "\n" + EXAMPLE
         await self._mq_show(context, d, text_out, kb)
 
     async def _mq_save(self, context, user, d: Dict, title: str) -> None:
-        sid = await self._mq_db("create_quiz_set", user.id, title, d["qs"], 20)
+        qs_list = list(d["qs"])
         context.user_data.pop("mq_draft", None)
-        if not sid:
-            await self._mq_show(context, d, "⚠️ <b>Couldn't save the quiz. Please try again.</b>", None)
-            return
-        qs = await self._mq_db("get_quiz_set", sid) or {"id": sid, "title": title, "count": len(d["qs"]), "secs": 20}
-        await self._mq_show(context, d, *self._mq_card_view(qs, saved=True,
-                                                            bot_username=getattr(context.bot, "username", "")))
-        logger.info(f"[MYQUIZ] {user.id} saved {sid} ({len(d['qs'])} questions)")
+        sid = secrets.token_urlsafe(8).replace("-", "x").replace("_", "y")
+        doc = {"id": sid, "owner": user.id, "title": title[:60], "count": len(qs_list),
+               "questions": qs_list, "secs": 20}
+        await self._mq_db("save_quiz_set", doc)
+        logger.info(f"[MYQUIZ] saved {sid} '{title}' ({len(qs_list)} Q) for {user.id}")
+        card_text, kb = self._mq_card_view(doc, saved=True, bot_username=context.bot.username)
+        msg_id = d.get("msg")
+        if msg_id:
+            try:
+                await context.bot.edit_message_text(card_text, chat_id=d["chat"], message_id=msg_id,
+                                                    parse_mode=ParseMode.HTML, reply_markup=kb)
+                return
+            except Exception:
+                pass
+        await context.bot.send_message(d["chat"], card_text, parse_mode=ParseMode.HTML, reply_markup=kb)
 
-    # ── buttons ──────────────────────────────────────────────────────────
+    # ── callbacks ────────────────────────────────────────────────────────
 
-    async def handle_myquiz_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+    async def handle_my_quiz_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         query, user = update.callback_query, update.effective_user
         if not query or not user or not query.data:
             return
         action, _, arg = query.data.partition(":")
         d = self._mq_draft(context)
+
+        # Practice mode responses
+        if action == "mq_p_ans":
+            parts = query.data.split(":")
+            if len(parts) >= 4:
+                sid, q_idx, chosen = parts[1], int(parts[2]), int(parts[3])
+                await self._mq_practice_answer(query, context, user, sid, q_idx, chosen)
+                return
+        if action == "mq_p_next":
+            prac = context.user_data.get("mq_prac")
+            if prac:
+                await query.answer()
+                await self._mq_practice_show_q(query, context, prac)
+                return
 
         if action in ("mq_done", "mq_name", "mq_cancel"):
             if not d:
@@ -330,7 +388,7 @@ class MyQuizMixin:
                 return
             await query.answer()
             if d["stage"] == "name":
-                d["msg"] = query.message.message_id      # replaced by the saved-quiz card
+                d["msg"] = query.message.message_id
                 await self._mq_save(context, user, d, d.get("default") or "My Quiz")
             return
 
@@ -347,9 +405,44 @@ class MyQuizMixin:
         if not isinstance(qs, dict) or qs.get("owner") != user.id:
             await query.answer("That quiz is no longer available.", show_alert=True)
             return
+
         if action == "mq_open":
             await query.answer()
             await self._bt_edit(query, *self._mq_card_view(qs, bot_username=context.bot.username))
+        elif action == "mq_prac":
+            await self._mq_practice_start(query, context, user, qs)
+        elif action == "mq_rename":
+            context.user_data["mq_renaming"] = qs["id"]
+            await query.answer("Send new title in chat!")
+            await self._bt_edit(
+                query,
+                f"✏️ <b>RENAME QUIZ</b>\n"
+                f"Current: <code>{html.escape(qs.get('title', 'Quiz'))}</code>\n\n"
+                f"<i>Type and send the new title as a message now.</i>",
+                InlineKeyboardMarkup([[_btn("⬅️ Cancel", f"mq_open:{qs['id']}", "danger")]])
+            )
+        elif action == "mq_timer":
+            await query.answer()
+            rows = [
+                [_btn("10s", f"mq_settimer:{qs['id']}:10"), _btn("15s", f"mq_settimer:{qs['id']}:15"), _btn("20s", f"mq_settimer:{qs['id']}:20")],
+                [_btn("30s", f"mq_settimer:{qs['id']}:30"), _btn("45s", f"mq_settimer:{qs['id']}:45"), _btn("60s", f"mq_settimer:{qs['id']}:60")],
+                [_btn("⬅️ Back", f"mq_open:{qs['id']}", "danger")]
+            ]
+            await self._bt_edit(
+                query,
+                f"⏱️ <b>SELECT TIMER</b>\nQuiz: <code>{html.escape(qs.get('title', 'Quiz'))}</code>\n"
+                f"Current: <b>{qs.get('secs', 20)}s per question</b>\n<i>Choose new duration:</i>",
+                InlineKeyboardMarkup(rows)
+            )
+        elif action == "mq_settimer":
+            parts = query.data.split(":")
+            if len(parts) >= 3 and parts[2].isdigit():
+                new_secs = int(parts[2])
+                if self.db and hasattr(self.db, "update_quiz_set"):
+                    await asyncio.to_thread(self.db.update_quiz_set, qs["id"], user.id, {"secs": new_secs})
+                qs["secs"] = new_secs
+                await query.answer(f"Timer set to {new_secs}s!")
+                await self._bt_edit(query, *self._mq_card_view(qs, bot_username=context.bot.username))
         elif action == "mq_del":
             await query.answer()
             await self._bt_edit(
@@ -365,8 +458,120 @@ class MyQuizMixin:
         else:
             await query.answer()
 
+    # ── practice mode (DM) ────────────────────────────────────────────────
+
+    async def _mq_practice_start(self, query, context, user, qs: Dict):
+        questions = list(qs.get("questions") or [])
+        if not questions:
+            await query.answer("This quiz has no questions.", show_alert=True)
+            return
+        prac = {
+            "set_id": qs["id"],
+            "title": qs.get("title", "Practice"),
+            "questions": questions,
+            "idx": 0,
+            "correct": 0,
+            "wrong": 0
+        }
+        context.user_data["mq_prac"] = prac
+        await query.answer("Starting Practice Mode! 🎯")
+        await self._mq_practice_show_q(query, context, prac)
+
+    async def _mq_practice_show_q(self, query_or_update, context, prac: Dict, explanation_note: str = ""):
+        idx = prac["idx"]
+        total = len(prac["questions"])
+        if idx >= total:
+            cor = prac["correct"]
+            wrg = prac["wrong"]
+            acc = round(100 * cor / total) if total else 0
+            text = (
+                f"🎉 <b>PRACTICE COMPLETED!</b>\n"
+                f"<b>Quiz:</b> {html.escape(prac['title'])}\n"
+                f"━━━━━━━━━━━━━━━━━━\n"
+                f"✅ Correct: <b>{cor}</b>\n"
+                f"❌ Wrong: <b>{wrg}</b>\n"
+                f"📊 Accuracy: <b>{acc}%</b>\n"
+                f"━━━━━━━━━━━━━━━━━━\n"
+                f"Great practice session! Keep going."
+            )
+            kb = InlineKeyboardMarkup([
+                [_btn("🔁 Practice Again", f"mq_prac:{prac['set_id']}", "success")],
+                [_btn("📚 My Quizzes", "mq_list", "primary")]
+            ])
+            if hasattr(query_or_update, "edit_message_text"):
+                await query_or_update.edit_message_text(text, parse_mode=ParseMode.HTML, reply_markup=kb)
+            else:
+                await self._reply(query_or_update, text, reply_markup=kb)
+            return
+
+        q = prac["questions"][idx]
+        q_text = html.escape(str(q.get("question") or ""))
+        opts = [str(o) for o in (q.get("options") or [])]
+
+        head = f"🎯 <b>PRACTICE MODE</b> [Q{idx+1}/{total}]\n<b>{html.escape(prac['title'])}</b>\n━━━━━━━━━━━━━━━━━━\n"
+        body = f"❓ <b>{q_text}</b>\n\n"
+        if explanation_note:
+            body += explanation_note + "\n\n"
+
+        rows = []
+        for i, opt in enumerate(opts):
+            label = f"{chr(65+i)}) {opt[:40]}"
+            rows.append([_btn(label, f"mq_p_ans:{prac['set_id']}:{idx}:{i}", "primary")])
+        rows.append([_btn("❌ Exit Practice", f"mq_open:{prac['set_id']}", "danger")])
+
+        kb = InlineKeyboardMarkup(rows)
+        full_text = head + body
+        if hasattr(query_or_update, "edit_message_text"):
+            try:
+                await query_or_update.edit_message_text(full_text, parse_mode=ParseMode.HTML, reply_markup=kb)
+            except Exception:
+                await query_or_update.message.reply_text(full_text, parse_mode=ParseMode.HTML, reply_markup=kb)
+        else:
+            await self._reply(query_or_update, full_text, reply_markup=kb)
+
+    async def _mq_practice_answer(self, query, context, user, set_id: str, idx: int, chosen: int):
+        prac = context.user_data.get("mq_prac")
+        if not prac or prac.get("set_id") != set_id or prac.get("idx") != idx:
+            await query.answer("Question expired or already answered.", show_alert=True)
+            return
+
+        q = prac["questions"][idx]
+        correct = int(q.get("correct_answer", 0))
+        opts = [str(o) for o in (q.get("options") or [])]
+        exp = str(q.get("explanation") or "").strip()
+
+        is_right = (chosen == correct)
+        if is_right:
+            prac["correct"] += 1
+            verdict = "✅ <b>Correct!</b>"
+        else:
+            prac["wrong"] += 1
+            cor_letter = chr(65 + correct) if 0 <= correct < 26 else str(correct + 1)
+            cor_text = opts[correct] if 0 <= correct < len(opts) else ""
+            verdict = f"❌ <b>Incorrect!</b> Correct was <b>{cor_letter}) {html.escape(cor_text)}</b>"
+
+        exp_note = f"<blockquote>{verdict}" + (f"\n💡 <i>{html.escape(exp)}</i>" if exp else "") + "</blockquote>"
+        prac["idx"] += 1
+
+        total = len(prac["questions"])
+        next_btn = _btn("Next Question ➡️", f"mq_p_next:{set_id}", "success") if prac["idx"] < total else _btn("View Results 🏁", f"mq_p_next:{set_id}", "success")
+        kb = InlineKeyboardMarkup([
+            [next_btn],
+            [_btn("❌ Exit Practice", f"mq_open:{set_id}", "danger")]
+        ])
+
+        q_text = html.escape(str(q.get("question") or ""))
+        text = (
+            f"🎯 <b>PRACTICE MODE</b> [Q{idx+1}/{total}]\n"
+            f"<b>{html.escape(prac['title'])}</b>\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"❓ <b>{q_text}</b>\n\n"
+            f"{exp_note}"
+        )
+        await query.answer("Correct! 🎉" if is_right else "Wrong! ❌")
+        await query.edit_message_text(text, parse_mode=ParseMode.HTML, reply_markup=kb)
+
     async def _mq_battle(self, query, context, user, qs: Dict) -> None:
-        """'Battle with this quiz' from the quiz card (DM) → challenge card."""
         from src.bot.battle import Battle
         if query.message.chat.type != "private":
             await query.answer("Open this in my DM.", show_alert=True)
