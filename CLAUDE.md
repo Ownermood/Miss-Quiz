@@ -39,7 +39,7 @@ templates/admin.html, static/js/admin.js   Web admin panel
 tests/                      ~220 tests (pytest, mongomock): web security, scheduler, battle, admin panel, parser, files, ...
 ```
 
-**Battle:** `/battle` (group: open ya reply-target; DM: invite link `start=bt_<id>`). 5 questions × 20s, +1 sahi, tie → kam time. Battle answers regular stats mein nahi jaate. `users` pe `$inc`: `battle_wins`, `battle_losses`, `battle_draws`, `battles_played`. DM mein har poll ka owner hai (forwarded poll se cheating band). Restart pe chalti battle khatam.
+**Battle:** `/battle` (group: open ya reply-target; DM: invite link `start=bt_<id>`). Mode card: Classic 10Q·20s (bada green), Quick 5Q·15s | Marathon 20Q·30s, Last (users.battle_pref) | Custom (questions → timer, tap ya type; timer chunte hi challenge). Challenge card pe ✏️ Change (accept se pehle). +1 sahi, tie → kam time. Battle answers regular stats mein nahi jaate. `users` pe `$inc`: `battle_wins`, `battle_losses`, `battle_draws`, `battles_played`. DM mein har poll ka owner hai (forwarded poll se cheating band). Restart pe chalti battle khatam.
 
 **Branding:** naam "Miss Quiz Bot", community `t.me/VillanCommunity` (`ui.COMMUNITY_URL`). `/start` = photo (agar set) + bold blockquote caption + rangeen buttons (`_start_kb`). `/help` = 3 bold blockquotes (Play / Progress / Groups) + buttons, koi admin section nahi. Command menu mein sirf user commands; admin sab kuch /start ke red Admin Panel se (purane per-admin menus startup pe delete).
 
