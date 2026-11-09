@@ -155,10 +155,17 @@ class TelegramQuizBot(
     def _build_application(token: str) -> Application:
         """Longer timeouts than PTB's defaults (5s connect) so slow or flaky
         networks (WSL, mobile hotspot, far-away servers) don't kill startup."""
-        return (Application.builder().token(token)
-                .connect_timeout(20).read_timeout(30).write_timeout(30).pool_timeout(30)
-                .get_updates_connect_timeout(20).get_updates_read_timeout(40)
-                .build())
+        from telegram.request import HTTPXRequest
+        from src.bot.premium import make_premium_bot_class
+        # PremiumExtBot turns every emoji in outgoing messages/buttons into
+        # premium emoji when PREMIUM_EMOJI=1 (no-op otherwise).
+        bot = make_premium_bot_class()(
+            token,
+            request=HTTPXRequest(connect_timeout=20, read_timeout=30,
+                                 write_timeout=30, pool_timeout=30),
+            get_updates_request=HTTPXRequest(connect_timeout=20, read_timeout=40),
+        )
+        return Application.builder().bot(bot).build()
 
     async def _initialize_with_retry(self, attempts: int = 3) -> None:
         from telegram.error import NetworkError, TimedOut
@@ -353,6 +360,7 @@ class TelegramQuizBot(
         app.add_handler(CommandHandler("reload",        self.cmd_reload))
         app.add_handler(CommandHandler("restart",     self.cmd_restart))
         app.add_handler(CommandHandler("admin",       self.cmd_admin))
+        app.add_handler(CommandHandler("cancel",      self.cmd_cancel))
 
         # ── Group tracking — three complementary mechanisms ──────────
         # 1. my_chat_member: bot add/remove/promote/demote/restrict
@@ -408,7 +416,7 @@ class TelegramQuizBot(
 
         # Admin input (start photo) runs before every other handler group
         app.add_handler(MessageHandler(
-            filters.ChatType.PRIVATE & (filters.PHOTO | (filters.TEXT & ~filters.COMMAND)),
+            filters.ChatType.PRIVATE & ~filters.COMMAND,
             self.handle_admin_input), group=-1)
 
         # Global error handler — catches any unhandled exception in any handler

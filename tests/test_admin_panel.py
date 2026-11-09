@@ -50,7 +50,7 @@ async def test_group_redirects_to_dm(bot):
 async def test_owner_panel_red_buttons_with_restart(bot):
     await bot.cmd_admin(upd(OWNER), None)
     text, kb = bot._reply.await_args.args[1], bot._reply.await_args.kwargs["reply_markup"]
-    assert "ADMIN PANEL" in text and "Paused (not admin)  ›  <b>1</b>" in text
+    assert "ADMIN PANEL" in text and "Paused (not admin)  ›  1" in text
     assert "ap:restart" in buttons(kb)
     styles = {b.callback_data: b.style for row in kb.inline_keyboard for b in row}
     assert styles["ap:stats"] == "primary" and styles["ap:restart"] == "danger"
@@ -192,3 +192,161 @@ async def test_start_sends_photo_with_caption(bot):
     kw = msg.reply_photo.await_args.kwargs
     assert msg.reply_photo.await_args.args[0] == "FILE_SAVED" and "MISS QUIZ" in kw["caption"]
     assert "ap:open" in buttons(kw["reply_markup"])          # owner in DM sees admin button
+
+
+# ── every admin command is a working button ────────────────────────────────
+
+def _cb(uid, data):
+    u = upd(uid, data=data)
+    u.callback_query.message = MagicMock()
+    return u
+
+
+def _ctx():
+    return SimpleNamespace(user_data={}, args=None)
+
+
+def test_panel_has_a_button_for_every_admin_command(bot):
+    cbs = set(buttons(bot._panel_kb(True)))
+    for need in ("ap:stats", "ap:reload", "ap:addquiz", "ap:import", "ap:edit", "ap:delquiz",
+                 "ap:bc", "ap:dbc", "ap:photo", "ap:team", "ap:restart", "ap:close"):
+        assert need in cbs
+
+
+@pytest.mark.parametrize("data,handler", [
+    ("ap:import", "cmd_importquiz"), ("ap:delquiz", "cmd_delquiz"), ("ap:edit", "cmd_editquiz"),
+])
+async def test_one_tap_commands_run_without_reply_target(bot, data, handler):
+    setattr(bot, handler, AsyncMock())
+    await bot.handle_admin_panel_callback(_cb(DEV, data), _ctx())
+    passed = getattr(bot, handler).await_args.args[0]
+    assert passed.message.reply_to_message is None       # panel msg must not look like a reply
+    assert passed.effective_user.id == DEV
+
+
+async def test_addquiz_button_then_text_runs_addquiz(bot):
+    from telegram.ext import ApplicationHandlerStop
+    ctx = _ctx()
+    await bot.handle_admin_panel_callback(_cb(OWNER, "ap:addquiz"), ctx)
+    assert ctx.user_data["ap_await"] == "addquiz"
+    bot.cmd_addquiz = AsyncMock()
+    u = SimpleNamespace(effective_user=SimpleNamespace(id=OWNER), effective_message=MagicMock(text="Q?\nA\nB\nC\nD\n1\nGK"))
+    with pytest.raises(ApplicationHandlerStop):
+        await bot.handle_admin_input(u, ctx)
+    bot.cmd_addquiz.assert_awaited_once()
+    assert "ap_await" not in ctx.user_data
+
+
+async def test_broadcast_text_then_confirm_buttons(bot):
+    from telegram.ext import ApplicationHandlerStop
+    bot._dev = MagicMock(); bot._dev.broadcast = AsyncMock(); bot._dev.broadcast_confirm = AsyncMock()
+    ctx = _ctx(); ctx.user_data["ap_await"] = "broadcast"
+    u = SimpleNamespace(effective_user=SimpleNamespace(id=OWNER), effective_message=MagicMock(text="Hello all", photo=None))
+    with pytest.raises(ApplicationHandlerStop):
+        await bot.handle_admin_input(u, ctx)
+    assert ctx.args == ["Hello", "all"]
+    assert "ap:bc_yes" in buttons(bot._reply.await_args.kwargs["reply_markup"])
+    await bot.handle_admin_panel_callback(_cb(OWNER, "ap:bc_yes"), ctx)
+    bot._dev.broadcast_confirm.assert_awaited_once()
+
+
+async def test_broadcast_media_is_sent_as_replied_message(bot):
+    from telegram.ext import ApplicationHandlerStop
+    bot._dev = MagicMock(); bot._dev.broadcast = AsyncMock()
+    ctx = _ctx(); ctx.user_data["ap_await"] = "broadcast"
+    media = MagicMock(text=None)
+    u = SimpleNamespace(effective_user=SimpleNamespace(id=OWNER), effective_message=media, message=media)
+    with pytest.raises(ApplicationHandlerStop):
+        await bot.handle_admin_input(u, ctx)
+    passed = bot._dev.broadcast.await_args.args[0]
+    assert passed.message.reply_to_message is media
+
+
+async def test_add_developer_needs_numeric_id(bot):
+    from telegram.ext import ApplicationHandlerStop
+    bot._dev = MagicMock(); bot._dev.dev = AsyncMock()
+    ctx = _ctx(); ctx.user_data["ap_await"] = "dev_add"
+    bad = SimpleNamespace(effective_user=SimpleNamespace(id=OWNER), effective_message=MagicMock(text="abc"))
+    with pytest.raises(ApplicationHandlerStop):
+        await bot.handle_admin_input(bad, ctx)
+    bot._dev.dev.assert_not_awaited()
+    good = SimpleNamespace(effective_user=SimpleNamespace(id=OWNER), effective_message=MagicMock(text="12345"))
+    with pytest.raises(ApplicationHandlerStop):
+        await bot.handle_admin_input(good, ctx)
+    assert ctx.args == ["add", "12345"]
+
+
+async def test_cancel_clears_pending_input(bot):
+    ctx = _ctx(); ctx.user_data["ap_await"] = "broadcast"
+    await bot.cmd_cancel(upd(OWNER), ctx)
+    assert "ap_await" not in ctx.user_data
+
+
+# ── outgoing messages: premium emoji everywhere + red Back ─────────────────
+
+async def _capture_post(monkeypatch, premium, endpoint="sendMessage", **data):
+    from src.bot.premium import make_premium_bot_class
+    from telegram.ext import ExtBot
+    monkeypatch.setenv("PREMIUM_EMOJI", "1" if premium else "0")
+    seen = {}
+
+    async def fake(self, endpoint, data, *a, **k):
+        seen.update(data); return True
+    monkeypatch.setattr(ExtBot, "_do_post", fake)
+    bot = make_premium_bot_class()("123:abc")
+    await bot._do_post(endpoint, dict(data))
+    return seen
+
+
+async def test_every_message_emoji_becomes_premium(monkeypatch):
+    from telegram import InlineKeyboardButton as B, InlineKeyboardMarkup as M
+    kb = M([[B("🏆 Leaderboard", callback_data="x"), B("⬅️ Back", callback_data="y")]])
+    out = await _capture_post(monkeypatch, True, text="🎓 <b>Hi</b> 1 < 2", parse_mode="HTML", reply_markup=kb)
+    assert out["text"].startswith('<tg-emoji emoji-id="')
+    b1, b2 = out["reply_markup"].inline_keyboard[0]
+    assert b1.text == "Leaderboard" and b1.icon_custom_emoji_id
+    assert b2.style == "danger"
+
+
+async def test_plain_text_message_made_safe_html(monkeypatch):
+    out = await _capture_post(monkeypatch, True, text="Score <5 ✅")
+    assert out["parse_mode"] == "HTML" and "&lt;5" in out["text"] and "tg-emoji" in out["text"]
+
+
+async def test_premium_off_leaves_text_but_back_still_red(monkeypatch):
+    from telegram import InlineKeyboardButton as B, InlineKeyboardMarkup as M
+    out = await _capture_post(monkeypatch, False, text="✅ ok", parse_mode="HTML",
+                              reply_markup=M([[B("🔙 Back", callback_data="y")]]))
+    assert out["text"] == "✅ ok"
+    assert out["reply_markup"].inline_keyboard[0][0].style == "danger"
+
+
+async def test_callback_popup_text_untouched(monkeypatch):
+    out = await _capture_post(monkeypatch, True, endpoint="answerCallbackQuery", text="✅ Saved <ok>")
+    assert out["text"] == "✅ Saved <ok>" and "parse_mode" not in out
+
+
+async def test_quiz_poll_question_and_explanation_premium(monkeypatch):
+    out = await _capture_post(monkeypatch, True, endpoint="sendPoll",
+                              question="📚 Is 2 < 3?", explanation="✅ Yes · 📚 Math", options=["A", "B"])
+    assert out["question_parse_mode"] == "HTML" and "&lt;" in out["question"] and "tg-emoji" in out["question"]
+    assert out["explanation_parse_mode"] == "HTML" and "tg-emoji" in out["explanation"]
+    assert out["options"] == ["A", "B"]
+
+
+async def test_rejected_premium_is_resent_plain(monkeypatch):
+    from src.bot.premium import make_premium_bot_class
+    from telegram.ext import ExtBot
+    from telegram.error import BadRequest
+    monkeypatch.setenv("PREMIUM_EMOJI", "1")
+    calls = []
+
+    async def fake(self, endpoint, data, *a, **k):
+        calls.append(dict(data))
+        if "tg-emoji" in str(data.get("text")):
+            raise BadRequest("Can't parse entities: custom emoji not allowed")
+        return True
+    monkeypatch.setattr(ExtBot, "_do_post", fake)
+    bot = make_premium_bot_class()("123:abc")
+    assert await bot._do_post("sendMessage", {"text": "✅ hi", "parse_mode": "HTML"}) is True
+    assert len(calls) == 2 and calls[1]["text"] == "✅ hi"
