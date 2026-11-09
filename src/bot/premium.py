@@ -55,12 +55,16 @@ EMOJI = {
     "bolt":     ("⚡️", "5445388803223091254"),
     "door":     ("🚪", "5447434637880098257"),
     "search":   ("🔎", "5445023138297447592"),
+    "book":     ("📖", "5445203741672243391"),
 }
 
 
 def e(name: str) -> str:
     """Emoji for HTML messages: premium <tg-emoji> if enabled, else the plain one."""
-    fallback, cid = EMOJI[name]
+    item = EMOJI.get(name)
+    if not item:
+        return ""
+    fallback, cid = item
     return f'<tg-emoji emoji-id="{cid}">{fallback}</tg-emoji>' if premium_on() else fallback
 
 
@@ -70,7 +74,7 @@ def btn(text: str, emoji: Optional[str] = None, style: Optional[str] = None,
     style: "danger" (red), "success" (green), "primary" (blue).
     Without premium, the plain emoji is put in front of the text instead."""
     icon = None
-    if emoji:
+    if emoji and emoji in EMOJI:
         if premium_on():
             icon = EMOJI[emoji][1]
         else:

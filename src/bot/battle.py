@@ -327,8 +327,12 @@ class BattleMixin:
             b.chat_id, b.thread_id = chat.id, get_thread_id(update)
 
         text, kb = self._bt_setup_view(b, "mode", getattr(context.bot, "username", ""))
-        sent = await self._reply(update, text, reply_markup=kb)
-        b.msg_id = getattr(sent, "message_id", None)
+        if update.callback_query:
+            sent = await self._bt_edit(update.callback_query, text, kb)
+            b.msg_id = getattr(sent, "message_id", None) or getattr(msg, "message_id", None)
+        else:
+            sent = await self._reply(update, text, reply_markup=kb)
+            b.msg_id = getattr(sent, "message_id", None)
         self._bt_state()[bid] = b
         await self._bt_save(b)
         logger.info(f"[BATTLE] {bid} setup mode={b.mode} p1={b.p1} p2={b.p2}")
@@ -336,24 +340,43 @@ class BattleMixin:
     # ── views ────────────────────────────────────────────────────────────
 
     def _bt_settings_line(self, b: "Battle") -> str:
-        own = f"📝 Quiz › {html.escape(b.set_title)}\n" if b.set_id else ""
-        return (f"<blockquote>{own}🎯 Questions › {b.n_q}\n⏱ Timer › {_tlabel(b.secs)} each\n"
-                f"⌛ Max {_tlabel(b.n_q * b.secs)}</blockquote>")
+        own = f"📝 Quiz › <b>{html.escape(b.set_title)}</b>\n" if b.set_id else ""
+        return (f"<blockquote>{own}🎯 Questions › <b>{b.n_q}</b>\n⏱ Timer › <b>{_tlabel(b.secs)}</b> each\n"
+                f"⌛ Max Duration › <b>{_tlabel(b.n_q * b.secs)}</b></blockquote>")
 
     def _bt_q_max(self) -> int:
         return max(Q_MIN, min(Q_MAX, len(self._bt_pool())))
 
     def _bt_setup_view(self, b: "Battle", page: str = "mode", bot_username: str = ""):
-        """mode: main card · bot: one-tap modes · cust: timer + questions ·
-        q: question count. Option buttons have no colour; only the main action
-        (green) and Back / Cancel (red) do."""
+        """mode: main card · set: selected custom quiz · bot: one-tap modes ·
+        cust: timer + questions · q: question count."""
         vs = UI.mention(b.p2, b.p2_name) if b.p2 else "<i>anyone</i>"
         B = lambda text, data, style="primary": InlineKeyboardButton(text, callback_data=data, style=style)
         P = lambda text, data: InlineKeyboardButton(text, callback_data=data)          # plain
         lab = lambda k: f"{MODES[k][0]} · {MODES[k][1]}Q · {_tlabel(MODES[k][2])}"
         head = f"{UI.mention(b.p1, b.p1_name)}  vs  {vs}\n"
-        back = lambda to: B("⬅️ Back", f"bt_p:{b.id}:{to}", "danger")
+        back = lambda to: B("⬅️ Back", f"bt_p:{b.id}:{to}", "primary")
         cancel = B("❌ Cancel", f"bt_dec:{b.id}", "danger")
+        if page == "set" and b.set_id:
+            text = (
+                f"⚔️ <b>CUSTOM QUIZ BATTLE</b>\n{head}"
+                f"{self._bt_settings_line(b)}\n"
+                f"<i>Launch a 1v1 battle with this quiz, customize timer/questions, or open full quiz options:</i>"
+            )
+            rows = [
+                [B("⚔️ Create 1v1 Challenge", f"bt_go:{b.id}", "success")],
+                [B("⏱ Timer & Questions", f"bt_p:{b.id}:cust", "primary")]
+                + ([B("📖 Full Quiz Menu", f"mq_open:{b.set_id}", "primary")] if b.mode == "dm" else []),
+            ]
+            if b.mode == "dm":
+                play_row = [B("▶️ Play Solo", f"mq_prac:{b.set_id}", "primary")]
+                if bot_username:
+                    play_row.append(InlineKeyboardButton(
+                        "👥 Host in Group", url=f"https://t.me/{bot_username}?startgroup=gq_{b.set_id}", style="primary"
+                    ))
+                rows.append(play_row)
+            rows.append([B("⬅️ My Quizzes", f"bt_my:{b.id}", "primary"), cancel])
+            return text, InlineKeyboardMarkup(rows)
         if page == "bot":
             text = f"🤖 <b>BOT QUIZ</b>\n{head}<i>Pick a mode — the challenge is created right away.</i>"
             rows = [[B(lab("classic"), f"bt_m:{b.id}:classic", "success")],
@@ -370,24 +393,26 @@ class BattleMixin:
             rows = [opts[k:k + 3] for k in range(0, len(opts), 3)] + [[back("cust"), cancel]]
             return text, InlineKeyboardMarkup(rows)
         if page == "cust":
-            text = (f"⚙️ <b>CUSTOMIZE</b>\n{head}{self._bt_settings_line(b)}\n"
+            text = (f"⚙️ <b>CUSTOMIZE BATTLE</b>\n{head}{self._bt_settings_line(b)}\n"
                     f"<i>Pick a timer (or type one: 45, 2m). Tap Questions to change the count.</i>")
             opts = [P(("✅ " if b.secs == t else "") + _tlabel(t), f"bt_t:{b.id}:{t}") for t in T_CHOICES]
             rows = [opts[k:k + 3] for k in range(0, len(opts), 3)]
-            rows += [[P(f"🎯 Questions: {b.n_q}", f"bt_p:{b.id}:q")],
-                     [back("mode"), cancel],
-                     [B("⚔️ Create Challenge", f"bt_go:{b.id}", "success")]]
+            back_target = "set" if b.set_id else "mode"
+            rows += [[B(f"🎯 Questions: {b.n_q}", f"bt_p:{b.id}:q", "primary")],
+                     [B("⚔️ Create Challenge", f"bt_go:{b.id}", "success")],
+                     [back(back_target), cancel]]
             return text, InlineKeyboardMarkup(rows)
-        text = f"⚔️ <b>1v1 BATTLE</b>\n{head}<i>Make your own quiz, or play with the bot's questions.</i>"
+        text = f"⚔️ <b>1v1 BATTLE</b>\n{head}<i>Make your own quiz, pick from My Quizzes, or play with the bot's questions.</i>"
         if b.mode == "group" and bot_username:      # quizzes are made in the bot's DM
-            create = InlineKeyboardButton("📝 Create Own Quiz", url=f"https://t.me/{bot_username}?start=mq_new",
+            create = InlineKeyboardButton("➕ Create Own Quiz", url=f"https://t.me/{bot_username}?start=mq_new",
                                           style="success")
         else:
-            create = B("📝 Create Own Quiz", f"bt_new:{b.id}", "success")
+            create = B("➕ Create Own Quiz", f"bt_new:{b.id}", "success")
+        foot = [B("🏠 Home", "nav_home", "primary"), cancel] if b.mode == "dm" else [cancel]
         rows = [[create],
                 [B("📚 My Quizzes", f"bt_my:{b.id}"), B("🤖 Bot Quiz", f"bt_p:{b.id}:bot")],
                 [B("⚙️ Customize", f"bt_p:{b.id}:cust")],
-                [cancel]]
+                foot]
         return text, InlineKeyboardMarkup(rows)
 
     def _bt_my_view(self, b: "Battle", sets: List[Dict], page: int = 1, pages: int = 1):
@@ -395,15 +420,15 @@ class BattleMixin:
         if not sets:
             text = ("📚 <b>MY QUIZZES</b>\n<i>No quizzes yet. Create one from your questions — "
                     "text, a file or forwarded quiz polls.</i>")
-            rows = []
+            rows = [[B("➕ Create Own Quiz", f"bt_new:{b.id}", "success")]]
         else:
             from src.bot.my_quiz import page_rows
-            text = ("📚 <b>MY QUIZZES</b>" + (f" · page {page}/{pages}" if pages > 1 else "") +
-                    "\n<i>Pick a quiz — the challenge is created right away.</i>")
+            text = ("📚 <b>MY QUIZZES · 1v1 BATTLE</b>" + (f" · page {page}/{pages}" if pages > 1 else "") +
+                    "\n<i>Select any quiz below to battle, customize, or open its options:</i>")
             rows = [[B(f"📝 {s.get('title', 'Quiz')[:28]} · {s.get('count', 0)}Q", f"bt_s:{b.id}:{s['id']}")]
                     for s in sets]
             rows += page_rows(pages, page, lambda n: f"bt_my:{b.id}:{n}")
-        rows.append([B("⬅️ Back", f"bt_p:{b.id}:mode", "danger"), B("❌ Cancel", f"bt_dec:{b.id}", "danger")])
+        rows.append([B("⬅️ Back", f"bt_p:{b.id}:mode", "primary"), B("❌ Cancel", f"bt_dec:{b.id}", "danger")])
         return text, InlineKeyboardMarkup(rows)
 
     @staticmethod
@@ -459,7 +484,6 @@ class BattleMixin:
         if not b or b.state != "setup" or b.expired():
             ud.pop("bt_await", None)
             return
-        b.set_id = b.set_title = ""
         if aw["kind"] == "q":
             val = int(msg.text.strip()) if msg.text.strip().isdigit() else None
             if val is None:
@@ -604,15 +628,13 @@ class BattleMixin:
                                        "Use Bot Quiz, or play it in DM.", show_alert=True)
                     return
                 self._bt_apply_set(b, qs)
-                err = await self._bt_create(b)
-                if err:
-                    await query.answer(err, show_alert=True)
-                    return
-                await query.answer("Challenge created! ⚔️")
-                await self._bt_edit(query, *self._bt_challenge_view(b, uname, self._bt_inline_on(context)))
+                await query.answer()
+                await self._bt_edit(query, *self._bt_setup_view(b, "set", uname))
                 return
             if action == "bt_p":
-                page = arg if arg in ("bot", "cust", "q") else "mode"
+                page = arg if arg in ("bot", "cust", "q", "set") else "mode"
+                if page == "bot":
+                    b.set_id = b.set_title = ""
                 if page in ("cust", "q"):
                     remember(page)
                 await query.answer()
@@ -636,8 +658,8 @@ class BattleMixin:
                     b.n_q, b.secs = b.last
                 else:
                     await query.answer(); return
-            b.set_id = b.set_title = ""                # bot questions
-            err = await self._bt_create(b, save_pref=(action == "bt_go"))
+                b.set_id = b.set_title = ""                # bot questions
+            err = await self._bt_create(b, save_pref=(action == "bt_go" and not b.set_id))
             if err:
                 await query.answer(err, show_alert=True)
                 return
@@ -649,7 +671,11 @@ class BattleMixin:
             if user.id == b.p1 and b.state in ("setup", "pending"):
                 b.state = "done"
                 await query.answer("Battle cancelled.")
-                await self._bt_edit(query, f"⚔️ Battle cancelled by {UI.mention(b.p1, b.p1_name)}.")
+                done_kb = InlineKeyboardMarkup([[
+                    InlineKeyboardButton("⚔️ New Battle", callback_data="start_battle", style="success"),
+                    InlineKeyboardButton("🏠 Home", callback_data="nav_home", style="primary"),
+                ]]) if b.mode == "dm" else None
+                await self._bt_edit(query, f"⚔️ Battle cancelled by {UI.mention(b.p1, b.p1_name)}.", done_kb)
             elif b.mode == "dm" and not b.p2 and b.state == "pending":
                 await query.answer("Declined.")
                 await self._bt_edit(query, "❌ You declined the battle.")

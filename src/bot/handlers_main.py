@@ -678,6 +678,11 @@ class TelegramQuizBot(
             await self.cmd_info(update, context, edit_msg=query.message)
 
         elif data == "nav_home":
+            if hasattr(self, "_mq_clear_modes"):
+                self._mq_clear_modes(context)
+            if getattr(context, "user_data", None) is not None:
+                context.user_data.pop("mq_draft", None)
+                context.user_data.pop("bt_await", None)
             if uid: self._nav_clear(uid)
             await self.cmd_start(update, context, edit_msg=query.message)
 

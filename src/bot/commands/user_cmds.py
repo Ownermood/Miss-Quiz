@@ -51,7 +51,12 @@ class UserCommandsMixin(object):
             await self.battle_join_from_link(update, context, context.args[0][3:])
             return
 
-        # Reset nav history to home
+        # Reset nav history and clear any pending input state on /start
+        if hasattr(self, "_mq_clear_modes"):
+            self._mq_clear_modes(context)
+        if getattr(context, "user_data", None) is not None:
+            context.user_data.pop("mq_draft", None)
+            context.user_data.pop("bt_await", None)
         if user:
             self._nav_clear(user.id)
 
