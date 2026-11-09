@@ -133,21 +133,38 @@ class AdminPanelMixin:
     # ── screens ──────────────────────────────────────────────────────────
 
     def _panel_kb(self, is_owner: bool) -> InlineKeyboardMarkup:
-        last = ([btn("Restart Bot", "warn", GREEN, callback_data="ap:restart")] if is_owner else []) \
-            + [btn("Close", "cross", RED, callback_data="ap:close")]
+        admin_row = [btn("Admins List", "users", GREEN, callback_data="ap:team")]
+        if is_owner:
+            admin_row.append(btn("Restart Bot", "warn", GREEN, callback_data="ap:restart"))
+
         rows = [
+            # 1. Main positive action (Green)
             [btn("Add Questions", "plus", GREEN, callback_data="ap:addq")],
+
+            # 2. Editing & Searching (Blue)
             [btn("Edit Quiz", "edit", BLUE, callback_data="ap:edit"),
-             btn("Delete Quiz", "trash", BLUE, callback_data="ap:delquiz")],
+             btn("Find Question", "search", BLUE, callback_data="ap:find")],
+
+            # 3. System stats (Blue)
             [btn("Bot Stats", "stats", BLUE, callback_data="ap:stats"),
              btn("Reload", "bolt", BLUE, callback_data="ap:reload")],
-            [btn("Find Question (ID/Words)", "search", GREEN, callback_data="ap:find")],
+
+            # 4. Messaging tools (Blue)
             [btn("Broadcast", "signal", BLUE, callback_data="ap:bc"),
              btn("Undo Broadcast", "back", BLUE, callback_data="ap:dbc")],
+
+            # 5. Media & Testing (Blue)
             [btn("Start Photo", "folder", BLUE, callback_data="ap:photo"),
              btn("Emoji Test", "star", BLUE, callback_data="ap:emoji:0")],
-            [btn("Admins", "users", GREEN, callback_data="ap:team")],
-            last,
+
+            # 6. Management & Power (Green)
+            admin_row,
+
+            # 7. Danger/Warning (Red - Akela rahega)
+            [btn("Delete Quiz", "trash", RED, callback_data="ap:delquiz")],
+
+            # 8. Normal/Default soft exit (Bina color ke)
+            [btn("Home", "cross", None, callback_data="ap:close")],
         ]
         return InlineKeyboardMarkup(rows)
 
@@ -377,9 +394,15 @@ class AdminPanelMixin:
             ud.pop("ap_await", None)
             await q.answer()
             try:
-                await q.message.delete()
+                if hasattr(self, "cmd_start"):
+                    await self.cmd_start(update, context, edit_msg=q.message)
+                else:
+                    await q.message.delete()
             except Exception:
-                pass
+                try:
+                    await q.message.delete()
+                except Exception:
+                    pass
         else:
             await q.answer("⛔ Not allowed.", show_alert=True)
 
