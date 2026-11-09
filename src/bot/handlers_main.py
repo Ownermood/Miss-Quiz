@@ -30,6 +30,7 @@ from src.bot.commands.quiz_cmds import QuizCommandsMixin
 from src.bot.commands.admin_cmds import AdminCommandsMixin
 from src.bot.battle import BattleMixin
 from src.bot.admin_panel import AdminPanelMixin
+from src.bot.my_quiz import MyQuizMixin
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +42,7 @@ class TelegramQuizBot(
     QuizCommandsMixin,
     AdminCommandsMixin,
     BattleMixin,
+    MyQuizMixin,
     AdminPanelMixin,
 ):
 
@@ -351,6 +353,7 @@ class TelegramQuizBot(
         app.add_handler(CommandHandler("ping",        self.cmd_ping))
         app.add_handler(CommandHandler("info",        self.cmd_info))
         app.add_handler(CommandHandler("battle",      self.cmd_battle))
+        app.add_handler(CommandHandler("myquiz",      self.cmd_myquiz))
 
         # Admin commands
         app.add_handler(CommandHandler("addquiz",     self.cmd_addquiz))
@@ -387,7 +390,9 @@ class TelegramQuizBot(
         app.add_handler(CallbackQueryHandler(
             self._cb_delquiz, pattern=r"^dq_"))
         app.add_handler(CallbackQueryHandler(
-            self.handle_battle_callback, pattern=r"^bt_(acc|dec|q|t|m|ch|go|rm|p):"))
+            self.handle_battle_callback, pattern=r"^bt_(acc|dec|q|t|m|ch|go|rm|p|my|s|new):"))
+        app.add_handler(CallbackQueryHandler(
+            self.handle_myquiz_callback, pattern=r"^mq_(done|name|cancel|list|new|open|del|delok|bt)(:|$)"))
         app.add_handler(CallbackQueryHandler(
             self.handle_admin_panel_callback, pattern=r"^ap:"))
         app.add_handler(CallbackQueryHandler(
@@ -422,6 +427,11 @@ class TelegramQuizBot(
         app.add_handler(MessageHandler(
             filters.ChatType.PRIVATE & filters.POLL, self.handle_forwarded_poll), group=-2)
 
+        # Create Own Quiz: questions sent while a draft is open (DM) — before everything else
+        app.add_handler(MessageHandler(
+            filters.ChatType.PRIVATE & ((filters.TEXT & ~filters.COMMAND) | filters.Document.ALL | filters.POLL),
+            self.handle_myquiz_input), group=-4)
+
         # Battle setup: challenger types a question count / time
         app.add_handler(MessageHandler(
             filters.TEXT & ~filters.COMMAND, self.handle_battle_input), group=-3)
@@ -439,6 +449,7 @@ class TelegramQuizBot(
             BotCommand("start",        "🏠 Home"),
             BotCommand("quiz",         "🎯 Get a quiz question"),
             BotCommand("battle",       "⚔️ 1v1 quiz battle"),
+            BotCommand("myquiz",       "📝 Your own quizzes"),
             BotCommand("score",        "🏆 Your score & rank"),
             BotCommand("stats",        "📈 Your detailed stats"),
             BotCommand("achievements", "🏅 Badges & milestones"),

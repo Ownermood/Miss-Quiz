@@ -14,6 +14,7 @@ State is in memory: a running battle is lost on restart (battles last ~2 min).
 """
 
 import asyncio
+import html
 import logging
 import re
 import secrets
@@ -41,13 +42,13 @@ Q_MIN, Q_MAX     = 3, 50
 T_MIN, T_MAX     = 5, 600                    # Telegram open_period limits
 # Battle fields saved in MongoDB while a challenge is open (setup/pending)
 _PERSIST = ("id", "mode", "p1", "p1_name", "p2", "p2_name", "chat_id", "thread_id",
-            "state", "n_q", "secs", "category", "msg_id")
+            "state", "n_q", "secs", "category", "msg_id", "set_id", "set_title")
 _ENDED_KB = InlineKeyboardMarkup([[InlineKeyboardButton("⚔️ New Battle", callback_data="start_battle",
                                                         style="success")]])
 # One-tap modes: key -> (label, questions, seconds). Classic is the big green one.
 MODES = {"classic": ("🎯 Classic", 10, 20), "quick": ("⚡ Quick", 5, 15),
          "marathon": ("🧠 Marathon", 20, 30)}
-T_CHOICES        = (10, 15, 20, 30, 60, 240)   # Telegram allows up to 600 s
+T_CHOICES        = (10, 15, 20, 25, 30, 60)    # presets; any time 5s–10m can be typed
 INVITE_TTL       = 86400  # open challenge stays valid (no visible limit; memory safety only)
 START_DELAY      = 3      # seconds between "battle starts" and first question
 ROUND_GAP        = 1      # pause after each question before the next one
@@ -79,6 +80,8 @@ class Battle:
     category:  str = ""                 # "" = all topics
     cat_options: List[str] = field(default_factory=list)
     last:      Optional[Tuple[int, int]] = None   # challenger's last custom (n_q, secs)
+    set_id:    str = ""                 # battle on the challenger's own quiz (quiz_sets)
+    set_title: str = ""
     created:   float = field(default_factory=time.monotonic)
     msg_id:    Optional[int] = None    # challenge message (group)
     scores:    Dict[int, int] = field(default_factory=dict)
@@ -323,7 +326,7 @@ class BattleMixin:
                 b.p2, b.p2_name = target.id, self._bt_name(target)
             b.chat_id, b.thread_id = chat.id, get_thread_id(update)
 
-        text, kb = self._bt_setup_view(b)
+        text, kb = self._bt_setup_view(b, "mode", getattr(context.bot, "username", ""))
         sent = await self._reply(update, text, reply_markup=kb)
         b.msg_id = getattr(sent, "message_id", None)
         self._bt_state()[bid] = b
@@ -333,49 +336,105 @@ class BattleMixin:
     # ── views ────────────────────────────────────────────────────────────
 
     def _bt_settings_line(self, b: "Battle") -> str:
-        return (f"<blockquote>🎯 Questions › {b.n_q}\n⏱ Timer › {_tlabel(b.secs)} each\n"
+        own = f"📝 Quiz › {html.escape(b.set_title)}\n" if b.set_id else ""
+        return (f"<blockquote>{own}🎯 Questions › {b.n_q}\n⏱ Timer › {_tlabel(b.secs)} each\n"
                 f"⌛ Max {_tlabel(b.n_q * b.secs)}</blockquote>")
 
     def _bt_q_max(self) -> int:
         return max(Q_MIN, min(Q_MAX, len(self._bt_pool())))
 
-    def _bt_setup_view(self, b: "Battle", page: str = "mode"):
-        """mode: one-tap modes (Classic big + green on top, others paired).
-        q → t: Custom steps; picking a timer creates the challenge."""
+    def _bt_setup_view(self, b: "Battle", page: str = "mode", bot_username: str = ""):
+        """mode: main card · bot: one-tap modes · cust: timer + questions ·
+        q: question count. Option buttons have no colour; only the main action
+        (green) and Back / Cancel (red) do."""
         vs = UI.mention(b.p2, b.p2_name) if b.p2 else "<i>anyone</i>"
         B = lambda text, data, style="primary": InlineKeyboardButton(text, callback_data=data, style=style)
+        P = lambda text, data: InlineKeyboardButton(text, callback_data=data)          # plain
         lab = lambda k: f"{MODES[k][0]} · {MODES[k][1]}Q · {_tlabel(MODES[k][2])}"
-        cancel = [B("❌ Cancel", f"bt_dec:{b.id}", "danger")]
-        if page in ("q", "t"):
-            if page == "q":
-                steps = "👉 Questions › ?\n⏱ Timer › —"
-                ask = f"How many questions? Tap or type a number ({Q_MIN}–{self._bt_q_max()})."
-                opts = [B(str(n), f"bt_q:{b.id}:{n}") for n in Q_CHOICES if n <= self._bt_q_max()]
-                back = f"bt_p:{b.id}:mode"
-            else:
-                steps = f"✅ Questions › {b.n_q}\n👉 Timer › ?"
-                ask = "Time for each question? Tap or type it (45, 90s, 2m)."
-                opts = [B(_tlabel(t), f"bt_t:{b.id}:{t}") for t in T_CHOICES]
-                back = f"bt_p:{b.id}:q"
-            text = (f"⚙️ <b>CUSTOM BATTLE</b>\n{UI.mention(b.p1, b.p1_name)}  vs  {vs}\n"
-                    f"<blockquote>{steps}</blockquote>\n<i>{ask}</i>")
-            rows = [opts[k:k + 3] for k in range(0, len(opts), 3)]
-            rows.append([B("⬅️ Back", back), cancel[0]])
+        head = f"{UI.mention(b.p1, b.p1_name)}  vs  {vs}\n"
+        back = lambda to: B("⬅️ Back", f"bt_p:{b.id}:{to}", "danger")
+        cancel = B("❌ Cancel", f"bt_dec:{b.id}", "danger")
+        if page == "bot":
+            text = f"🤖 <b>BOT QUIZ</b>\n{head}<i>Pick a mode — the challenge is created right away.</i>"
+            rows = [[B(lab("classic"), f"bt_m:{b.id}:classic", "success")],
+                    [B(lab("quick"), f"bt_m:{b.id}:quick"), B(lab("marathon"), f"bt_m:{b.id}:marathon")]]
+            if b.last:
+                rows.append([B(f"🔁 Last · {b.last[0]}Q · {_tlabel(b.last[1])}", f"bt_m:{b.id}:last")])
+            rows.append([back("mode"), cancel])
             return text, InlineKeyboardMarkup(rows)
-        text = (f"⚔️ <b>1v1 BATTLE</b>\n{UI.mention(b.p1, b.p1_name)}  vs  {vs}\n"
-                f"<i>Pick a mode — the challenge is created right away.</i>")
-        rows = [[B(lab("classic"), f"bt_m:{b.id}:classic", "success")],
-                [B(lab("quick"), f"bt_m:{b.id}:quick"), B(lab("marathon"), f"bt_m:{b.id}:marathon")]]
-        last = [B(f"🔁 Last · {b.last[0]}Q · {_tlabel(b.last[1])}", f"bt_m:{b.id}:last")] if b.last else []
-        rows.append(last + [B("⚙️ Custom", f"bt_p:{b.id}:q")])
-        rows.append(cancel)
+        if page == "q":
+            qmax = self._bt_q_max()
+            text = (f"🎯 <b>HOW MANY QUESTIONS?</b>\n{head}"
+                    f"<i>Tap one, or type any number ({Q_MIN}–{qmax}).</i>")
+            opts = [P(("✅ " if b.n_q == n else "") + str(n), f"bt_q:{b.id}:{n}") for n in Q_CHOICES if n <= qmax]
+            rows = [opts[k:k + 3] for k in range(0, len(opts), 3)] + [[back("cust"), cancel]]
+            return text, InlineKeyboardMarkup(rows)
+        if page == "cust":
+            text = (f"⚙️ <b>CUSTOMIZE</b>\n{head}{self._bt_settings_line(b)}\n"
+                    f"<i>Pick a timer (or type one: 45, 2m). Tap Questions to change the count.</i>")
+            opts = [P(("✅ " if b.secs == t else "") + _tlabel(t), f"bt_t:{b.id}:{t}") for t in T_CHOICES]
+            rows = [opts[k:k + 3] for k in range(0, len(opts), 3)]
+            rows += [[P(f"🎯 Questions: {b.n_q}", f"bt_p:{b.id}:q")],
+                     [back("mode"), cancel],
+                     [B("⚔️ Create Challenge", f"bt_go:{b.id}", "success")]]
+            return text, InlineKeyboardMarkup(rows)
+        text = f"⚔️ <b>1v1 BATTLE</b>\n{head}<i>Make your own quiz, or play with the bot's questions.</i>"
+        if b.mode == "group" and bot_username:      # quizzes are made in the bot's DM
+            create = InlineKeyboardButton("📝 Create Own Quiz", url=f"https://t.me/{bot_username}?start=mq_new",
+                                          style="success")
+        else:
+            create = B("📝 Create Own Quiz", f"bt_new:{b.id}", "success")
+        rows = [[create],
+                [B("📚 My Quizzes", f"bt_my:{b.id}"), B("🤖 Bot Quiz", f"bt_p:{b.id}:bot")],
+                [B("⚙️ Customize", f"bt_p:{b.id}:cust")],
+                [cancel]]
         return text, InlineKeyboardMarkup(rows)
+
+    def _bt_my_view(self, b: "Battle", sets: List[Dict]):
+        B = lambda text, data, style="primary": InlineKeyboardButton(text, callback_data=data, style=style)
+        if not sets:
+            text = ("📚 <b>MY QUIZZES</b>\n<i>No quizzes yet. Create one from your questions — "
+                    "text, a file or forwarded quiz polls.</i>")
+            rows = []
+        else:
+            text = f"📚 <b>MY QUIZZES</b> ({len(sets)})\n<i>Pick a quiz — the challenge is created right away.</i>"
+            rows = [[B(f"📝 {s.get('title', 'Quiz')[:28]} · {s.get('count', 0)}Q", f"bt_s:{b.id}:{s['id']}")]
+                    for s in sets]
+        rows.append([B("⬅️ Back", f"bt_p:{b.id}:mode", "danger"), B("❌ Cancel", f"bt_dec:{b.id}", "danger")])
+        return text, InlineKeyboardMarkup(rows)
+
+    @staticmethod
+    async def _bt_is_group_admin(context, chat_id: int, uid: int) -> bool:
+        try:
+            m = await context.bot.get_chat_member(chat_id, uid)
+            return getattr(m, "status", "") in ("administrator", "creator")
+        except Exception:
+            return False
+
+    def _bt_apply_set(self, b: "Battle", qs: Dict) -> None:
+        b.set_id, b.set_title = qs["id"], str(qs.get("title") or "Quiz")[:40]
+        b.n_q = max(1, min(int(qs.get("count") or len(qs.get("questions") or [])), Q_MAX))
+        b.secs = max(T_MIN, min(int(qs.get("secs") or BATTLE_SECONDS), T_MAX))
+
+    async def _bt_questions(self, b: "Battle") -> List[Dict]:
+        """Questions for this battle: the challenger's own quiz, or the bot's pool."""
+        import random
+        if not b.set_id:
+            return self._bt_pick_questions(b)
+        try:
+            qs = await asyncio.to_thread(self.db.get_quiz_set, b.set_id)
+        except Exception as e:
+            logger.warning(f"[BATTLE] {b.id} quiz set {b.set_id} load failed: {e}")
+            return []
+        pool = list((qs or {}).get("questions") or []) if isinstance(qs, dict) else []
+        return random.sample(pool, min(b.n_q, len(pool)))
 
     async def _bt_create(self, b: "Battle", save_pref: bool = False) -> Optional[str]:
         """setup → pending. Returns an error text, or None when created."""
-        have = len(self._bt_pool(b.category))
-        if have < b.n_q:
-            return f"Only {have} questions available — pick fewer."
+        if not b.set_id:
+            have = len(self._bt_pool(b.category))
+            if have < b.n_q:
+                return f"Only {have} questions available — pick fewer."
         b.state, b.created = "pending", time.monotonic()
         if save_pref and self.db and hasattr(self.db, "set_battle_pref"):
             try:
@@ -397,22 +456,19 @@ class BattleMixin:
         if not b or b.state != "setup" or b.expired():
             ud.pop("bt_await", None)
             return
+        b.set_id = b.set_title = ""
         if aw["kind"] == "q":
             val = int(msg.text.strip()) if msg.text.strip().isdigit() else None
             if val is None:
                 return                                   # normal chat, not for us
             b.n_q = max(Q_MIN, min(val, self._bt_q_max()))
-            aw["kind"] = "t"                             # straight to the timer step
-            text, kb = self._bt_setup_view(b, "t")
+            aw["kind"] = "cust"                          # back to Customize
         else:
             val = _parse_secs(msg.text)
             if val is None:
                 return
             b.secs = max(T_MIN, min(val, T_MAX))
-            ud.pop("bt_await", None)
-            err = await self._bt_create(b, save_pref=True)
-            text, kb = (self._bt_setup_view(b, "t") if err
-                        else self._bt_challenge_view(b, context.bot.username, self._bt_inline_on(context)))
+        text, kb = self._bt_setup_view(b, "cust")
         try:
             await context.bot.edit_message_text(text, chat_id=chat.id, message_id=b.msg_id,
                                                 parse_mode=ParseMode.HTML, reply_markup=kb)
@@ -494,10 +550,10 @@ class BattleMixin:
                 return
             b.state = "setup"
             await query.answer()
-            await self._bt_edit(query, *self._bt_setup_view(b))
+            await self._bt_edit(query, *self._bt_setup_view(b, "mode", context.bot.username))
             return
 
-        if action in ("bt_q", "bt_t", "bt_m", "bt_go", "bt_p"):
+        if action in ("bt_q", "bt_t", "bt_m", "bt_go", "bt_p", "bt_my", "bt_s", "bt_new"):
             if user.id != b.p1 or b.state != "setup":
                 await query.answer("Only the challenger can change this.", show_alert=True)
                 return
@@ -507,39 +563,76 @@ class BattleMixin:
             arg = parts[2] if len(parts) > 2 else ""
             remember = lambda kind: (ud is not None and query.message and ud.__setitem__(
                 "bt_await", {"bid": b.id, "kind": kind, "chat": query.message.chat.id}))
+            uname = context.bot.username
+            if action == "bt_new":                     # DM: start making a quiz right here
+                await query.answer()
+                if hasattr(self, "mq_start_draft"):
+                    await self.mq_start_draft(query, context, user)
+                return
+            if action == "bt_my":
+                sets = []
+                if self.db and hasattr(self.db, "list_quiz_sets"):
+                    try:
+                        sets = await asyncio.to_thread(self.db.list_quiz_sets, user.id)
+                    except Exception as e:
+                        logger.debug(f"[BATTLE] list sets failed: {e}")
+                await query.answer()
+                await self._bt_edit(query, *self._bt_my_view(b, sets if isinstance(sets, list) else []))
+                return
+            if action == "bt_s":
+                qs = None
+                if self.db and hasattr(self.db, "get_quiz_set"):
+                    try:
+                        qs = await asyncio.to_thread(self.db.get_quiz_set, arg)
+                    except Exception:
+                        qs = None
+                if not isinstance(qs, dict) or qs.get("owner") != user.id:
+                    await query.answer("That quiz is no longer available.", show_alert=True)
+                    return
+                if b.mode == "group" and not await self._bt_is_group_admin(context, b.chat_id, user.id):
+                    await query.answer("In groups only admins can start a battle with their own quiz. "
+                                       "Use Bot Quiz, or play it in DM.", show_alert=True)
+                    return
+                self._bt_apply_set(b, qs)
+                err = await self._bt_create(b)
+                if err:
+                    await query.answer(err, show_alert=True)
+                    return
+                await query.answer("Challenge created! ⚔️")
+                await self._bt_edit(query, *self._bt_challenge_view(b, uname, self._bt_inline_on(context)))
+                return
             if action == "bt_p":
-                page = arg if arg in ("q", "t") else "mode"
-                if page != "mode":
+                page = arg if arg in ("bot", "cust", "q") else "mode"
+                if page in ("cust", "q"):
                     remember(page)
                 await query.answer()
-                await self._bt_edit(query, *self._bt_setup_view(b, page))
+                await self._bt_edit(query, *self._bt_setup_view(b, page, uname))
                 return
-            if action == "bt_q":
+            if action in ("bt_q", "bt_t"):
                 if not arg.isdigit():
                     await query.answer(); return
-                b.n_q = max(Q_MIN, min(int(arg), self._bt_q_max()))
-                remember("t")
+                if action == "bt_q":
+                    b.n_q = max(Q_MIN, min(int(arg), self._bt_q_max()))
+                else:
+                    b.secs = max(T_MIN, min(int(arg), T_MAX))
+                remember("cust")
                 await query.answer()
-                await self._bt_edit(query, *self._bt_setup_view(b, "t"))
+                await self._bt_edit(query, *self._bt_setup_view(b, "cust", uname))
                 return
-            custom = action == "bt_t"
-            if custom:
-                if not arg.isdigit():
-                    await query.answer(); return
-                b.secs = max(T_MIN, min(int(arg), T_MAX))
-            elif action == "bt_m":
+            if action == "bt_m":
                 if arg in MODES:
                     _, b.n_q, b.secs = MODES[arg]
                 elif arg == "last" and b.last:
                     b.n_q, b.secs = b.last
                 else:
                     await query.answer(); return
-            err = await self._bt_create(b, save_pref=custom)
+            b.set_id = b.set_title = ""                # bot questions
+            err = await self._bt_create(b, save_pref=(action == "bt_go"))
             if err:
                 await query.answer(err, show_alert=True)
                 return
             await query.answer("Challenge created! ⚔️")
-            await self._bt_edit(query, *self._bt_challenge_view(b, context.bot.username, self._bt_inline_on(context)))
+            await self._bt_edit(query, *self._bt_challenge_view(b, uname, self._bt_inline_on(context)))
             return
 
         if action == "bt_dec":
@@ -609,7 +702,8 @@ class BattleMixin:
         bid = secrets.token_urlsafe(6).replace("-", "x").replace("_", "y")
         b = Battle(id=bid, mode=old.mode, p1=user.id, p1_name=self._bt_name(user),
                    p2=other, p2_name=other_name, chat_id=old.chat_id, thread_id=old.thread_id,
-                   n_q=old.n_q, secs=old.secs, category=old.category)
+                   n_q=old.n_q, secs=old.secs, category=old.category,
+                   set_id=old.set_id, set_title=old.set_title)
         self._bt_state()[bid] = b
         await self._bt_save(b)
         await query.answer("Rematch sent! ⚔️")
@@ -735,7 +829,7 @@ class BattleMixin:
 
     async def _bt_run(self, b: Battle, context: ContextTypes.DEFAULT_TYPE) -> None:
         try:
-            questions = self._bt_pick_questions(b)
+            questions = await self._bt_questions(b)
             if len(questions) < b.n_q:
                 b.state = "done"
                 await self._bt_notify(b, context, "⚠️ Battle cancelled: not enough questions.")

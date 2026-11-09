@@ -156,7 +156,7 @@ async def test_group_battle_full_flow():
     ctx, polls = fake_context()
     a, b = user(1, "Amit"), user(2, "Bina")
     await app.cmd_battle(group_update(a), ctx)
-    assert "Pick a mode" in app.replies[0][0]
+    assert "Make your own quiz" in app.replies[0][0]
     bid = await setup_and_create(app, ctx, a, n_q=5)
     await press(app, ctx, b, f"bt_acc:{bid}")
 
@@ -339,41 +339,6 @@ async def test_battle_button_from_bot_message_is_open_challenge():
 
 # ── setup card ─────────────────────────────────────────────────────────────
 
-async def test_custom_two_taps_creates_and_saves_last():
-    app = FakeBotApp()
-    ctx, polls = fake_context()
-    a, b = user(1, "Amit"), user(2, "Bina")
-    await app.cmd_battle(group_update(a), ctx)
-    bid = next(iter(app._bt_state()))
-    bt_ = app._bt_state()[bid]
-    q = await press(app, ctx, b, f"bt_q:{bid}:15")                     # not the challenger
-    assert q.answer.await_args.kwargs.get("show_alert") is True
-    await press(app, ctx, a, f"bt_q:{bid}:15")                         # tap 1 → timer step
-    assert bt_.state == "setup" and "✅ Questions › 15" in app._last_edit
-    q = await press(app, ctx, b, f"bt_acc:{bid}")                      # can't accept during setup
-    assert bt_.state == "setup"
-    await press(app, ctx, a, f"bt_t:{bid}:30")                         # tap 2 → challenge created
-    assert (bt_.n_q, bt_.secs, bt_.state) == (15, 30, "pending")
-    assert "Questions › 15" in app._last_edit and "30s each" in app._last_edit
-    app.db.set_battle_pref.assert_called_once_with(1, 15, 30)
-
-
-async def test_timer_choices_and_labels():
-    from src.bot.battle import _tlabel, T_CHOICES
-    assert [_tlabel(t) for t in T_CHOICES] == ["10s", "15s", "20s", "30s", "1m", "4m"]
-    assert _tlabel(90) == "1m 30s"
-    app = FakeBotApp()
-    ctx, _ = fake_context()
-    a = user(1, "Amit")
-    await app.cmd_battle(group_update(a), ctx)
-    b = next(iter(app._bt_state().values()))
-    _, kb = app._bt_setup_view(b, "t")
-    rows = [[x.text for x in r] for r in kb.inline_keyboard]
-    assert ["10s", "15s", "20s"] in rows and ["30s", "1m", "4m"] in rows
-    await press(app, ctx, a, f"bt_t:{b.id}:240")
-    assert b.secs == 240 and "4m each" in app._last_edit and b.state == "pending"
-
-
 async def test_too_few_questions_is_refused():
     app = FakeBotApp()
     for i, q in enumerate(app.quiz_manager.questions):
@@ -417,65 +382,6 @@ def test_parse_secs():
     from src.bot.battle import _parse_secs
     assert [_parse_secs(x) for x in ("45", "45s", "2m", "1:30", "1m 30s", "hello", "")] == \
         [45, 45, 120, 90, 90, None, None]
-
-
-async def test_mode_card_layout_one_tap_change_and_typing():
-    from telegram.ext import ApplicationHandlerStop
-    app = FakeBotApp()
-    app.db.get_battle_pref.return_value = (12, 45)
-    ctx, _ = fake_context()
-    a = user(1, "Amit")
-    await app.cmd_battle(group_update(a), ctx)
-    b = next(iter(app._bt_state().values()))
-    _, kb = app._bt_setup_view(b)
-    rows = [[(x.text, x.style) for x in r] for r in kb.inline_keyboard]
-    assert rows == [[("🎯 Classic · 10Q · 20s", "success")],                  # big green on top
-                    [("⚡ Quick · 5Q · 15s", "primary"), ("🧠 Marathon · 20Q · 30s", "primary")],
-                    [("🔁 Last · 12Q · 45s", "primary"), ("⚙️ Custom", "primary")],
-                    [("❌ Cancel", "danger")]]
-
-    await press(app, ctx, a, f"bt_m:{b.id}:last")                       # one tap
-    assert b.state == "pending" and (b.n_q, b.secs) == (12, 45)
-    assert "Accept Battle" in str(app._bt_challenge_view(b, "x")[1])
-    q = await press(app, ctx, user(2, "B"), f"bt_ch:{b.id}")            # only challenger
-    assert q.answer.await_args.kwargs.get("show_alert") is True and b.state == "pending"
-    await press(app, ctx, a, f"bt_ch:{b.id}")                           # ✏️ Change → mode card
-    assert b.state == "setup" and "Pick a mode" in app._last_edit
-    q = await press(app, ctx, user(2, "B"), f"bt_acc:{b.id}")           # can't accept while changing
-    assert b.state == "setup"
-
-    await press(app, ctx, a, f"bt_p:{b.id}:q")                          # ⚙️ Custom
-    upd, m = text_update(a, "hi everyone")                              # normal chat ignored
-    await app.handle_battle_input(upd, ctx)
-    assert not m.delete.await_count
-    upd, m = text_update(a, "999")                                      # typed count, clamped
-    with pytest.raises(ApplicationHandlerStop):
-        await app.handle_battle_input(upd, ctx)
-    assert b.n_q == app._bt_q_max() and m.delete.await_count == 1
-    assert "👉 Timer" in ctx.bot.edit_message_text.await_args.args[0]   # auto next step
-    upd, _ = text_update(a, "1:30")                                     # typed time → created
-    with pytest.raises(ApplicationHandlerStop):
-        await app.handle_battle_input(upd, ctx)
-    assert b.secs == 90 and b.state == "pending"
-    assert "Accept Battle" in str(ctx.bot.edit_message_text.await_args.kwargs["reply_markup"])
-    upd, m = text_update(a, "20")                                       # typing no longer applies
-    await app.handle_battle_input(upd, ctx)
-    assert b.secs == 90 and not m.delete.await_count
-
-
-async def test_no_last_button_without_pref_and_time_minimum():
-    app = FakeBotApp()
-    app.db.get_battle_pref.return_value = None
-    ctx, _ = fake_context()
-    a = user(1, "Amit")
-    await app.cmd_battle(group_update(a), ctx)
-    b = next(iter(app._bt_state().values()))
-    _, kb = app._bt_setup_view(b)
-    assert [x.text for x in kb.inline_keyboard[2]] == ["⚙️ Custom"]
-    await press(app, ctx, a, f"bt_q:{b.id}:5")
-    await press(app, ctx, a, f"bt_t:{b.id}:2")                          # forged too-small value
-    assert b.secs == 5
-
 
 
 def _mongo_db(app):
@@ -613,3 +519,262 @@ async def test_accept_button_on_shared_card_starts_battle_directly():
     await app.battle_join_from_link(dm(user(3, "C")), ctx, f"{bid}_go")      # too late
     assert "no longer open" in app.replies[-1][0]
     bt_.state = "done"
+
+
+
+async def test_main_card_layout_and_bot_quiz_one_tap():
+    app = FakeBotApp()
+    app.db.get_battle_pref.return_value = (12, 45)
+    ctx, _ = fake_context()
+    a = user(1, "Amit")
+    await app.cmd_battle(group_update(a), ctx)
+    b = next(iter(app._bt_state().values()))
+    _, kb = app._bt_setup_view(b, "mode", "MissQuizBot")
+    rows = [[(x.text, x.style) for x in r] for r in kb.inline_keyboard]
+    assert rows == [[("📝 Create Own Quiz", "success")],
+                    [("📚 My Quizzes", "primary"), ("🤖 Bot Quiz", "primary")],
+                    [("⚙️ Customize", "primary")],
+                    [("❌ Cancel", "danger")]]
+    assert kb.inline_keyboard[0][0].url.endswith("start=mq_new")         # group → made in DM
+    await press(app, ctx, a, f"bt_p:{b.id}:bot")
+    assert "BOT QUIZ" in app._last_edit and "Last · 12Q · 45s" in str(app._bt_setup_view(b, "bot")[1])
+    await press(app, ctx, a, f"bt_m:{b.id}:last")                       # one tap
+    assert b.state == "pending" and (b.n_q, b.secs) == (12, 45)
+    q = await press(app, ctx, user(2, "B"), f"bt_ch:{b.id}")            # only challenger
+    assert q.answer.await_args.kwargs.get("show_alert") is True
+    await press(app, ctx, a, f"bt_ch:{b.id}")                           # ✏️ Change → main card
+    assert b.state == "setup" and "Make your own quiz" in app._last_edit
+
+
+async def test_customize_plain_options_typing_and_create():
+    from telegram.ext import ApplicationHandlerStop
+    from src.bot.battle import _tlabel, T_CHOICES
+    assert [_tlabel(t) for t in T_CHOICES] == ["10s", "15s", "20s", "25s", "30s", "1m"]
+    assert _tlabel(90) == "1m 30s"
+    app = FakeBotApp()
+    ctx, _ = fake_context()
+    a = user(1, "Amit")
+    await app.cmd_battle(group_update(a), ctx)
+    b = next(iter(app._bt_state().values()))
+    await press(app, ctx, a, f"bt_p:{b.id}:cust")
+    _, kb = app._bt_setup_view(b, "cust")
+    rows = [[(x.text, x.style) for x in r] for r in kb.inline_keyboard]
+    assert rows[0] == [("10s", None), ("15s", None), ("✅ 20s", None)]      # no colour on options
+    assert rows[1] == [("25s", None), ("30s", None), ("1m", None)]
+    assert rows[2] == [("🎯 Questions: 10", None)]
+    assert rows[3] == [("⬅️ Back", "danger"), ("❌ Cancel", "danger")]
+    assert rows[4] == [("⚔️ Create Challenge", "success")]
+    await press(app, ctx, a, f"bt_t:{b.id}:25")                         # stays on Customize
+    assert b.secs == 25 and b.state == "setup" and "CUSTOMIZE" in app._last_edit
+    upd, m = text_update(a, "hi everyone")                              # normal chat ignored
+    await app.handle_battle_input(upd, ctx)
+    assert not m.delete.await_count
+    upd, _ = text_update(a, "1:30")                                     # typed timer
+    with pytest.raises(ApplicationHandlerStop):
+        await app.handle_battle_input(upd, ctx)
+    assert b.secs == 90
+    await press(app, ctx, a, f"bt_p:{b.id}:q")                          # Questions page
+    assert "HOW MANY QUESTIONS" in app._last_edit
+    upd, _ = text_update(a, "999")                                      # typed, clamped → back to Customize
+    with pytest.raises(ApplicationHandlerStop):
+        await app.handle_battle_input(upd, ctx)
+    assert b.n_q == app._bt_q_max() and "CUSTOMIZE" in ctx.bot.edit_message_text.await_args.args[0]
+    await press(app, ctx, a, f"bt_q:{b.id}:15")
+    await press(app, ctx, a, f"bt_t:{b.id}:2")                          # forged too-small value
+    assert b.secs == 5
+    q = await press(app, ctx, user(2, "B"), f"bt_go:{b.id}")            # not challenger
+    assert q.answer.await_args.kwargs.get("show_alert") is True
+    await press(app, ctx, a, f"bt_go:{b.id}")
+    assert b.state == "pending" and (b.n_q, b.secs) == (15, 5)
+    app.db.set_battle_pref.assert_called_once_with(1, 15, 5)
+
+
+# ── own quizzes ────────────────────────────────────────────────────────────
+
+def _quiz_app():
+    import mongomock
+    from src.core.database import DatabaseManager
+    from src.bot.my_quiz import MyQuizMixin
+    app = type("A", (MyQuizMixin, FakeBotApp), {})()
+    real = DatabaseManager.__new__(DatabaseManager)
+    real.quiz_sets_col = mongomock.MongoClient().db.quiz_sets
+    real.battles_col = mongomock.MongoClient().db.battles
+    for name in ("create_quiz_set", "get_quiz_set", "list_quiz_sets", "count_quiz_sets",
+                 "delete_quiz_set", "save_battle", "get_battle", "delete_battle", "open_battles_of"):
+        setattr(app.db, name, getattr(real, name))
+    return app, real
+
+
+QTEXT = """1. Capital of India?
+A) Mumbai
+B) Delhi
+C) Pune
+Answer: B
+
+2. 2+2?
+A) 3
+B) 4
+Answer: B
+
+3. Largest planet?
+A) Earth
+B) Jupiter
+Answer: Jupiter
+
+4. Broken question without answer
+A) x
+B) y
+"""
+
+
+def dm_update(u, **msg):
+    m = SimpleNamespace(text=None, poll=None, document=None, reply_to_message=None, delete=AsyncMock())
+    for k, v in msg.items():
+        setattr(m, k, v)
+    return SimpleNamespace(effective_user=u, effective_chat=SimpleNamespace(id=u.id, type="private"),
+                           effective_message=m, message=m)
+
+
+async def test_create_own_quiz_text_poll_dedupe_name_and_save():
+    from telegram.ext import ApplicationHandlerStop
+    app, real = _quiz_app()
+    ctx, _ = fake_context()
+    ctx.bot.send_message = AsyncMock(return_value=SimpleNamespace(message_id=900))
+    ctx.bot.delete_message = AsyncMock()
+    a = user(1, "Amit")
+    await app.mq_start_draft(None, ctx, a, dm_update(a))
+    assert "CREATE YOUR QUIZ" in app.replies[-1][0]
+
+    with pytest.raises(ApplicationHandlerStop):
+        await app.handle_myquiz_input(dm_update(a, text=QTEXT), ctx)
+    d = ctx.user_data["mq_draft"]
+    assert len(d["qs"]) == 3
+    panel = ctx.bot.send_message.await_args.args[1]
+    assert "Questions added › 3" in panel and "Skipped 1" in panel
+
+    with pytest.raises(ApplicationHandlerStop):                         # same text again: no duplicates
+        await app.handle_myquiz_input(dm_update(a, text=QTEXT), ctx)
+    assert len(d["qs"]) == 3
+    poll = SimpleNamespace(type="quiz", question="Fastest land animal?", correct_option_id=0,
+                           options=[SimpleNamespace(text="Cheetah"), SimpleNamespace(text="Horse")],
+                           explanation="")
+    with pytest.raises(ApplicationHandlerStop):                         # forwarded quiz poll
+        await app.handle_myquiz_input(dm_update(a, poll=poll), ctx)
+    assert len(d["qs"]) == 4
+
+    q = await press_mq(app, ctx, a, "mq_done")
+    assert d["stage"] == "name" and "NAME YOUR QUIZ" in q.edit_message_text.await_args.args[0]
+    with pytest.raises(ApplicationHandlerStop):
+        await app.handle_myquiz_input(dm_update(a, text="  Polity   Set 1 "), ctx)
+    assert "mq_draft" not in ctx.user_data
+    sets = real.list_quiz_sets(1)
+    assert len(sets) == 1 and sets[0]["title"] == "Polity Set 1" and sets[0]["count"] == 4
+    assert "Saved!" in ctx.bot.send_message.await_args.args[1]
+    assert app.quiz_manager.questions[0]["question"] == "Q0?"           # bot pool untouched
+
+
+async def press_mq(app, ctx, u, data):
+    q = SimpleNamespace(data=data, answer=AsyncMock(), edit_message_text=AsyncMock(),
+                        message=SimpleNamespace(chat=SimpleNamespace(id=u.id, type="private"), message_id=77))
+    await app.handle_myquiz_callback(SimpleNamespace(callback_query=q, effective_user=u), ctx)
+    return q
+
+
+async def test_create_needs_min_questions_cancel_and_limit():
+    from telegram.ext import ApplicationHandlerStop
+    from src.bot import my_quiz
+    app, real = _quiz_app()
+    ctx, _ = fake_context()
+    ctx.bot.send_message = AsyncMock(return_value=SimpleNamespace(message_id=900))
+    ctx.bot.delete_message = AsyncMock()
+    a = user(1, "Amit")
+    await app.handle_myquiz_input(dm_update(a, text="hello"), ctx)      # no draft → ignored
+    await app.mq_start_draft(None, ctx, a, dm_update(a))
+    with pytest.raises(ApplicationHandlerStop):
+        await app.handle_myquiz_input(dm_update(a, text="just chatting"), ctx)
+    assert "No questions found" in ctx.bot.send_message.await_args.args[1]
+    q = await press_mq(app, ctx, a, "mq_done")
+    assert q.answer.await_args.kwargs.get("show_alert") is True        # < 3 questions
+    await press_mq(app, ctx, a, "mq_cancel")
+    assert "mq_draft" not in ctx.user_data
+    for i in range(my_quiz.MAX_SETS):
+        real.create_quiz_set(1, f"S{i}", [], 20)
+    await app.mq_start_draft(None, ctx, a, dm_update(a))
+    assert "already have" in app.replies[-1][0] and "mq_draft" not in ctx.user_data
+
+
+async def test_my_quiz_open_delete_owner_only_and_battle():
+    app, real = _quiz_app()
+    ctx, polls = fake_context()
+    qs = [{"question": f"Own {i}?", "options": ["x", "y"], "correct_answer": 1} for i in range(4)]
+    sid = real.create_quiz_set(1, "Mine", qs, 15)
+    a, other = user(1, "Amit"), user(2, "Bina")
+    q = await press_mq(app, ctx, other, f"mq_open:{sid}")               # not the owner
+    assert q.answer.await_args.kwargs.get("show_alert") is True
+    q = await press_mq(app, ctx, a, f"mq_open:{sid}")
+    assert "Mine" in q.edit_message_text.await_args.args[0]
+    q = await press_mq(app, ctx, a, f"mq_bt:{sid}")                     # battle with it
+    b = [x for x in app._bt_state().values() if x.set_id == sid][0]
+    assert b.state == "pending" and (b.n_q, b.secs) == (4, 15)
+    assert "📝 Quiz › Mine" in q.edit_message_text.await_args.args[0]
+    picked = await app._bt_questions(b)
+    assert sorted(x["question"] for x in picked) == sorted(x["question"] for x in qs)
+    b.state = "done"
+    await press_mq(app, ctx, other, f"mq_delok:{sid}")                  # forged delete
+    assert real.get_quiz_set(sid) is not None
+    await press_mq(app, ctx, a, f"mq_delok:{sid}")
+    assert real.get_quiz_set(sid) is None
+
+
+async def test_group_own_quiz_needs_admin_and_dm_battle_uses_own_questions():
+    app, real = _quiz_app()
+    ctx, polls = fake_context()
+    qs = [{"question": f"Own {i}?", "options": ["x", "y"], "correct_answer": 1} for i in range(3)]
+    sid = real.create_quiz_set(1, "Mine", qs, 20)
+    a, b = user(1, "Amit"), user(2, "Bina")
+    await app.cmd_battle(group_update(a), ctx)
+    bt_ = next(iter(app._bt_state().values()))
+    await press(app, ctx, a, f"bt_my:{bt_.id}")
+    assert "Mine · 3Q" in str(app._bt_my_view(bt_, real.list_quiz_sets(1))[1])
+    ctx.bot.get_chat_member = AsyncMock(return_value=SimpleNamespace(status="member"))
+    q = await press(app, ctx, a, f"bt_s:{bt_.id}:{sid}")
+    assert "only admins" in q.answer.await_args.args[0] and bt_.state == "setup"
+    q = await press(app, ctx, b, f"bt_s:{bt_.id}:{sid}")                # someone else's button press
+    assert q.answer.await_args.kwargs.get("show_alert") is True
+    ctx.bot.get_chat_member = AsyncMock(return_value=SimpleNamespace(status="administrator"))
+    await press(app, ctx, a, f"bt_s:{bt_.id}:{sid}")
+    assert bt_.state == "pending" and bt_.set_id == sid
+    bt_.secs = 0.2
+    await press(app, ctx, b, f"bt_acc:{bt_.id}")
+    await _answer_all(app, polls, 0, {1: 1, 2: 0})
+    for _ in range(200):
+        if bt_.state == "done":
+            break
+        await asyncio.sleep(0.01)
+    assert len(polls) == 3 and all("Own" in p[2]["question"] for p in polls)
+    assert bt_.scores == {1: 3, 2: 0}
+
+
+
+async def test_create_own_quiz_from_file_and_too_big_file():
+    from telegram.ext import ApplicationHandlerStop
+    app, real = _quiz_app()
+    ctx, _ = fake_context()
+    ctx.bot.send_message = AsyncMock(return_value=SimpleNamespace(message_id=900))
+    ctx.bot.delete_message = AsyncMock()
+    f = SimpleNamespace(download_as_bytearray=AsyncMock(return_value=bytearray(QTEXT.encode())))
+    ctx.bot.get_file = AsyncMock(return_value=f)
+    a = user(1, "Amit")
+    await app.mq_start_draft(None, ctx, a, dm_update(a))
+    big = SimpleNamespace(file_id="x", file_name="huge.pdf", file_size=50 * 1024 * 1024)
+    with pytest.raises(ApplicationHandlerStop):
+        await app.handle_myquiz_input(dm_update(a, document=big), ctx)
+    assert "too big" in ctx.bot.send_message.await_args.args[1] and not ctx.bot.get_file.await_count
+    doc = SimpleNamespace(file_id="x", file_name="Polity_Set.txt", file_size=300)
+    with pytest.raises(ApplicationHandlerStop):
+        await app.handle_myquiz_input(dm_update(a, document=doc), ctx)
+    d = ctx.user_data["mq_draft"]
+    assert len(d["qs"]) == 3 and d["fname"] == "Polity Set"
+    await press_mq(app, ctx, a, "mq_done")
+    await press_mq(app, ctx, a, "mq_name")                              # use the file name
+    assert real.list_quiz_sets(1)[0]["title"] == "Polity Set"

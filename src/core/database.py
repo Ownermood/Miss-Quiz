@@ -55,6 +55,7 @@ class DatabaseManager:
         self.auto_quiz_state_col = self.db["auto_quiz_state"]
         self.settings_col        = self.db["settings"]
         self.battles_col         = self.db["battles"]      # open battle challenges (survive restart)
+        self.quiz_sets_col       = self.db["quiz_sets"]    # users' own quizzes (private, not in the bot pool)
 
         self._ensure_indexes()
         logger.info(f"✅ MongoDB connected: {redact_url(url)} / db={db_name}")
@@ -96,6 +97,8 @@ class DatabaseManager:
             self.battles_col.create_index("id", unique=True)
             self.battles_col.create_index("p1")
             self.battles_col.create_index("expires_at", expireAfterSeconds=0)   # Mongo auto-deletes
+            self.quiz_sets_col.create_index("id", unique=True)
+            self.quiz_sets_col.create_index([("owner", ASCENDING), ("created_at", DESCENDING)])
         except Exception as e:
             logger.warning(f"Index creation warning: {e}")
 
@@ -298,6 +301,31 @@ class DatabaseManager:
             updates = {winner: "battle_wins", loser: "battle_losses"}
         for uid, fld in updates.items():
             self.users_col.update_one({"user_id": uid}, {"$inc": {fld: 1, "battles_played": 1}})
+
+    # ── Users' own quizzes ──
+    def create_quiz_set(self, owner: int, title: str, questions: List[Dict], secs: int = 20) -> str:
+        import secrets
+        sid = secrets.token_hex(4)
+        self.quiz_sets_col.insert_one({
+            "id": sid, "owner": int(owner), "title": str(title)[:40], "questions": questions,
+            "count": len(questions), "secs": int(secs), "plays": 0,
+            "created_at": datetime.utcnow().isoformat(),
+        })
+        return sid
+
+    def get_quiz_set(self, sid: str) -> Optional[Dict]:
+        return self.quiz_sets_col.find_one({"id": str(sid)}, {"_id": 0})
+
+    def list_quiz_sets(self, owner: int, limit: int = 20) -> List[Dict]:
+        return list(self.quiz_sets_col.find(
+            {"owner": int(owner)}, {"_id": 0, "id": 1, "title": 1, "count": 1, "secs": 1, "created_at": 1}
+        ).sort("created_at", DESCENDING).limit(limit))
+
+    def count_quiz_sets(self, owner: int) -> int:
+        return self.quiz_sets_col.count_documents({"owner": int(owner)})
+
+    def delete_quiz_set(self, sid: str, owner: int) -> bool:
+        return self.quiz_sets_col.delete_one({"id": str(sid), "owner": int(owner)}).deleted_count == 1
 
     # ── Open battle challenges (setup/pending) ──
     def save_battle(self, doc: Dict) -> None:

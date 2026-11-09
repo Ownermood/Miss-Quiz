@@ -27,6 +27,14 @@ class UserCommandsMixin(object):
         chat    = update.effective_chat
         is_pm   = chat.type == "private"
 
+        # Deep link: /start mq / mq_new → own quizzes
+        if is_pm and context.args and context.args[0] in ("mq", "mq_new") and hasattr(self, "mq_start_draft"):
+            if context.args[0] == "mq_new":
+                await self.mq_start_draft(None, context, user, update)
+            else:
+                await self.mq_open_list(update, context)
+            return
+
         # Deep link: /start bt_<id> joins a DM battle
         if is_pm and context.args and context.args[0].startswith("bt_") \
                 and hasattr(self, "battle_join_from_link"):

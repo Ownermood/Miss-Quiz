@@ -175,6 +175,9 @@ class AdminPanelMixin:
                           reply_markup=self._panel_kb(self._is_owner(user.id)))
 
     async def cmd_cancel(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if context.user_data is not None and context.user_data.pop("mq_draft", None):
+            await self._reply(update, f"{e('cross')} <b>Quiz not saved.</b>")
+            return
         if context.user_data is not None and context.user_data.pop("ap_await", None):
             await self._reply(update, f"{e('cross')} <b>Cancelled.</b>")
 
