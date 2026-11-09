@@ -339,7 +339,8 @@ async def test_topic_with_too_few_questions_is_refused():
     await app.cmd_battle(group_update(a), ctx)
     bid = next(iter(app._bt_state()))
     bt_ = app._bt_state()[bid]
-    idx = bt_.cat_options.index("Polity")
+    bt_.cat_options = ["Polity"]          # topic UI removed; backend filter still works
+    idx = 0
     await press(app, ctx, a, f"bt_c:{bid}:{idx}")
     await press(app, ctx, a, f"bt_q:{bid}:10")
     q = await press(app, ctx, a, f"bt_go:{bid}")
@@ -374,7 +375,8 @@ async def test_setup_main_card_is_three_clear_buttons_and_navigates():
     b = next(iter(app._bt_state().values()))
     _, kb = app._bt_setup_view(b)
     labels = [r[0].text for r in kb.inline_keyboard]
-    assert labels[:3] == ["🎯 Questions: 10", "⏱ Time: 20s each", "📚 Topic: All topics"]
+    assert labels == ["🎯 Questions: 10", "⏱ Time: 20s each", "⚔️ Create Challenge", "❌ Cancel"]
+    assert "Topic" not in app._bt_setup_view(b)[0]
     assert all(r[0].style for r in kb.inline_keyboard)                     # every button coloured
     await press(app, ctx, a, f"bt_p:{b.id}:q")
     assert "How many questions" in app._last_edit

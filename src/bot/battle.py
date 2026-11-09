@@ -195,7 +195,7 @@ class BattleMixin:
     # ── /battle ──────────────────────────────────────────────────────────
 
     async def cmd_battle(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Step 1: the challenger picks questions / time / topic (setup card)."""
+        """Step 1: the challenger picks questions / time (setup card)."""
         user, chat, msg = update.effective_user, update.effective_chat, update.effective_message
         if not user or not chat or not msg:
             return
@@ -211,7 +211,6 @@ class BattleMixin:
         b = Battle(id=bid, mode="dm" if chat.type == "private" else "group",
                    p1=user.id, p1_name=self._bt_name(user), state="setup")
         b.n_q = min(BATTLE_QUESTIONS, max(q for q in Q_CHOICES if q <= len(self._bt_pool())))
-        b.cat_options = self._bt_top_categories()
 
         if b.mode == "group":
             # From a button the message is the bot's own; its reply_to is the
@@ -240,15 +239,12 @@ class BattleMixin:
     # ── views ────────────────────────────────────────────────────────────
 
     def _bt_settings_line(self, b: "Battle") -> str:
-        topic = html.escape(b.category) if b.category else "All topics"
-        return (f"<blockquote>🎯 Questions › {b.n_q}\n⏱ Time › {_tlabel(b.secs)} each\n"
-                f"📚 Topic › {topic}</blockquote>")
+        return f"<blockquote>🎯 Questions › {b.n_q}\n⏱ Time › {_tlabel(b.secs)} each</blockquote>"
 
     def _bt_setup_view(self, b: "Battle", page: str = "main"):
         """Main card: 3 clear setting buttons. Tapping one opens only that
         choice (current = green, others = blue); picking returns here."""
         vs = UI.mention(b.p2, b.p2_name) if b.p2 else "<i>anyone</i>"
-        topic = b.category or "All topics"
         B = lambda text, data, style="primary": InlineKeyboardButton(text, callback_data=data, style=style)
         if page == "q":
             title, opts = "🎯 How many questions?", [B(f"{n} questions", f"bt_q:{b.id}:{n}",
@@ -258,12 +254,6 @@ class BattleMixin:
             title, opts = "⏱ Time for each question?", [B(_tlabel(t), f"bt_t:{b.id}:{t}",
                                                          "success" if b.secs == t else "primary") for t in T_CHOICES]
             per_row = 3
-        elif page == "c":
-            title = "📚 Which topic?"
-            opts = [B("🎲 All topics", f"bt_c:{b.id}:-1", "success" if not b.category else "primary")]
-            opts += [B(c[:24], f"bt_c:{b.id}:{i}", "success" if b.category == c else "primary")
-                     for i, c in enumerate(b.cat_options)]
-            per_row = 2
         else:
             text = (f"⚔️ <b>BATTLE SETUP</b>\n{UI.mention(b.p1, b.p1_name)}  vs  {vs}\n"
                     f"{self._bt_settings_line(b)}\n"
@@ -271,7 +261,6 @@ class BattleMixin:
             kb = InlineKeyboardMarkup([
                 [B(f"🎯 Questions: {b.n_q}", f"bt_p:{b.id}:q")],
                 [B(f"⏱ Time: {_tlabel(b.secs)} each", f"bt_p:{b.id}:t")],
-                [B(f"📚 Topic: {topic[:24]}", f"bt_p:{b.id}:c")],
                 [B("⚔️ Create Challenge", f"bt_go:{b.id}", "success")],
                 [B("❌ Cancel", f"bt_dec:{b.id}", "danger")],
             ])
@@ -328,7 +317,7 @@ class BattleMixin:
                 return
             if action == "bt_p":
                 await query.answer()
-                page = parts[2] if len(parts) > 2 and parts[2] in ("q", "t", "c") else "main"
+                page = parts[2] if len(parts) > 2 and parts[2] in ("q", "t") else "main"
                 await self._bt_edit(query, *self._bt_setup_view(b, page))
                 return
             try:
@@ -344,7 +333,7 @@ class BattleMixin:
             elif action == "bt_go":
                 have = len(self._bt_pool(b.category))
                 if have < b.n_q:
-                    await query.answer(f"Only {have} questions in this topic — pick fewer or another topic.",
+                    await query.answer(f"Only {have} questions available — pick fewer.",
                                        show_alert=True)
                     return
                 b.state, b.created = "pending", time.monotonic()
