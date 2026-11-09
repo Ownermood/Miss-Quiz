@@ -370,9 +370,12 @@ class SmartQuizParser:
 # ── Helpers ────────────────────────────────────────────────────────────────
 
 def _make(question: str, options: List[str], correct: int) -> Dict:
+    from src.utils.cleaner import clean_text
+    c_q = clean_text(question, is_option=False) or question.strip()
+    c_opts = [clean_text(str(o), is_option=True) or str(o).strip() for o in options]
     return {
-        "question":       question,
-        "options":        [str(o).strip() for o in options],
+        "question":       c_q,
+        "options":        c_opts,
         "correct_answer": correct,
         "category":       "General Knowledge",
     }
@@ -632,12 +635,35 @@ def _u_strip_symbols(line: str) -> str:
     return line[i:] if i and i < len(line) else line
 
 
+_U_PDF_NOISE_RE = re.compile(
+    r"(?:https?://\S+|www\.\S+|\b[a-zA-Z0-9\-]{3,}\.(?:com|in|org|edu|net|co\.in|ac\.in|gov\.in|info|io)\b(?:/\S*)?"
+    r"|\b[A-Za-z]{2,25}\s*[-:]+\s*(?:\+?91[\s\-]?)?(?:\d{10,12}|\d{3,5}\-\d{5,8})\b"
+    r"|(?:(?<=\s)|^)(?:\+?91[\s\-]?)?[6-9]\d{9}\b"
+    r"|\bPage\s*(?:No\.?\s*)?[\-:]?\s*\d{1,4}(?:\s*(?:of|/)\s*\d{1,4})?\b)",
+    re.IGNORECASE
+)
+_U_TRAIL_QNUM_SPLIT = re.compile(
+    r"^(.*\b([A-Za-z]{2,})[\)\]'\"”’]?)\s+((?:Q(?:uestion|ues)?\.?\s*)?\d{1,4}\s*[\.\)])\s*$",
+    re.IGNORECASE
+)
+
+
 def _u_clean_line(line: str) -> str:
     line = line.replace("​", "").replace(" ", " ").strip()
     line = _u_strip_symbols(line)
     line = re.sub(r"^[>\-•●▪◦·*]+\s+(?=\S)", "", line)            # quote / bullet marks (incl. '* ')
     line = re.sub(r"(\*\*|__|`)", "", line)                         # markdown bold/code
+    line = _U_PDF_NOISE_RE.sub(" ", line)                             # coaching PDF headers/domains/phones
+    line = re.sub(r"\s+", " ", line)
     return line.strip()
+
+
+def _u_split_trailing_qnum(part: str) -> List[str]:
+    from src.utils.cleaner import _SAFE_PRE_WORDS
+    m = _U_TRAIL_QNUM_SPLIT.match(part.strip())
+    if m and m.group(2).lower() not in _SAFE_PRE_WORDS:
+        return [m.group(1).strip(), m.group(3).strip()]
+    return [part]
 
 
 def _u_split_inline(line: str) -> List[str]:
@@ -650,18 +676,23 @@ def _u_split_inline(line: str) -> List[str]:
         letters = [m.group(1).lower() for m in ms]
         seq_start = next((i for i, l in enumerate(letters) if l == "a"), None)
         if seq_start is None:
-            out.append(part); continue
+            out.extend(_u_split_trailing_qnum(part)); continue
         seq = [ms[seq_start]]
         for m in ms[seq_start + 1:]:
             if ord(m.group(1).lower()) == ord(seq[-1].group(1).lower()) + 1:
                 seq.append(m)
         if len(seq) < 2:
-            out.append(part); continue
+            out.extend(_u_split_trailing_qnum(part)); continue
         cuts = [m.start() for m in seq] + [len(part)]
         head = part[:cuts[0]].strip()
         if head:
             out.append(head)
-        out += [part[cuts[i]:cuts[i + 1]].strip() for i in range(len(seq))]
+        for i in range(len(seq)):
+            seg = part[cuts[i]:cuts[i + 1]].strip()
+            if i == len(seq) - 1:
+                out.extend(_u_split_trailing_qnum(seg))
+            else:
+                out.append(seg)
     return [p for p in out if p.strip()]
 
 
@@ -826,6 +857,11 @@ def universal_parse(text: str) -> Tuple[List[Dict], List[Dict]]:
             num = m_q.group(1) or m_q.group(2) or m_q.group(3)
             new_q(int(num) if num else None, m_q.group(4).strip())
             blank_before = False; continue
+        if m_q and not (m_q.group(4) or "").strip():
+            num = m_q.group(1) or m_q.group(2) or m_q.group(3)
+            if num and (cur is None or len(cur["opts"]) >= 2):
+                new_q(int(num), "")
+                blank_before = False; continue
 
         # plain text line
         if cur and cur["in_exp"]:
@@ -843,6 +879,8 @@ def universal_parse(text: str) -> Tuple[List[Dict], List[Dict]]:
         where = f"Q{b['num']}" if b["num"] else f"#{n} “{' '.join(b['q'])[:30]}”"
         qtext = re.sub(r"\s+", " ", " ".join(b["q"])).strip()
         opts = [re.sub(r"\s+", " ", o).strip() for o in b["opts"] if o.strip()]
+        if not qtext and not opts:
+            continue
         if not qtext:
             problems.append({"where": where, "reason": "question text missing"}); continue
         if len(opts) < 2:

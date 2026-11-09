@@ -990,12 +990,21 @@ class AdminCommandsMixin(object):
                 if self.db and hasattr(self.db, "delete_quiz_session"):
                     await asyncio.to_thread(self.db.delete_quiz_session, cid)
 
+        sanitized = {"questions_fixed": 0, "quiz_sets_fixed": 0}
+        if hasattr(self, "quiz_manager") and hasattr(self.quiz_manager, "sanitize_existing_questions"):
+            sanitized = await asyncio.to_thread(self.quiz_manager.sanitize_existing_questions)
+            await asyncio.to_thread(self.quiz_manager.reload_data)
+
+        q_fixed = sanitized.get("questions_fixed", 0)
+        s_fixed = sanitized.get("quiz_sets_fixed", 0)
         text = (
-            "🧹 <b>EMERGENCY CLEANUP COMPLETED</b>\n"
+            "🧹 <b>CLEANUP & DB SANITIZATION COMPLETED</b>\n"
             "━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            f"• Cleaned group sessions: <b>{stale_count}</b>\n"
-            f"• Active memory freed ✅\n\n"
-            "<i>All stale loops have been safely cleared.</i>"
+            f"• Cleaned polluted questions: <b>{q_fixed}</b>\n"
+            f"• Cleaned custom quiz sets: <b>{s_fixed}</b>\n"
+            f"• Cleaned stale group sessions: <b>{stale_count}</b>\n"
+            f"• Active memory & cache refreshed ✅\n\n"
+            "<i>All PDF headers, phone numbers, domains, and stale loops have been cleared.</i>"
         )
         await self._reply(update, text)
 

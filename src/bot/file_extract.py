@@ -368,18 +368,48 @@ def _extract(filename: str, data: bytes, _depth: int = 0) -> Tuple[List[Dict], s
         return [], "\n\n".join(_xml_text(z.read(n).decode("utf-8", "replace"), "a:p", "a:t") for n in slides), ""
 
     if ext == "pdf":
+        def _clean_pdf_pages(page_texts: List[str]) -> str:
+            if not page_texts:
+                return ""
+            from collections import Counter
+            edge_counts: Counter = Counter()
+            split_pages = [[ln.strip() for ln in (pt or "").splitlines() if ln.strip()] for pt in page_texts]
+            if len(split_pages) >= 2:
+                for lines in split_pages:
+                    edges = set(lines[:3] + lines[-3:])
+                    for ln in edges:
+                        norm = re.sub(r"\d+", "#", ln.lower()).strip()
+                        if len(norm) >= 4:
+                            edge_counts[norm] += 1
+            min_rep = 2 if len(split_pages) <= 4 else max(2, len(split_pages) // 3)
+            repeated_norms = {k for k, v in edge_counts.items() if v >= min_rep}
+            cleaned_pages = []
+            for lines in split_pages:
+                kept = []
+                for idx, ln in enumerate(lines):
+                    is_edge = idx < 3 or idx >= len(lines) - 3
+                    norm = re.sub(r"\d+", "#", ln.lower()).strip()
+                    if is_edge and norm in repeated_norms and not re.match(r"^[\(\[]?[a-d1-4][\)\]\.]\s+", ln, re.I):
+                        qm = re.search(r"\b(\d{1,4}\s*[\.\)]\s+['\"\u2018\u201cA-Z].*)$", ln)
+                        if qm:
+                            kept.append(qm.group(1))
+                        continue
+                    kept.append(ln)
+                cleaned_pages.append("\n".join(kept))
+            return "\n".join(cleaned_pages)
+
         # two text engines: keep whichever reads more questions (layouts differ a lot)
         candidates = []
         try:
             from pypdf import PdfReader
             reader = PdfReader(io.BytesIO(data))
-            candidates.append("\n".join((p.extract_text() or "") for p in reader.pages))
+            candidates.append(_clean_pdf_pages([(p.extract_text() or "") for p in reader.pages]))
         except Exception:
             pass
         try:
             import pdfplumber
             with pdfplumber.open(io.BytesIO(data)) as pdf:
-                candidates.append("\n".join((p.extract_text() or "") for p in pdf.pages))
+                candidates.append(_clean_pdf_pages([(p.extract_text() or "") for p in pdf.pages]))
         except Exception:
             pass
         candidates = [c for c in candidates if len(c.strip()) >= 20]

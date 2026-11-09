@@ -30,20 +30,26 @@ def _sanitize_option(opt: str) -> str:
 
 
 def _fmt_question(q: Dict) -> Dict:
-    """Normalize a raw DB question dict into a consistent format with all fields."""
+    """Normalize a raw DB question dict into a consistent format with all fields and clean PDF/header noise."""
+    from src.utils.cleaner import clean_text
     options = q.get("options", [])
     if isinstance(options, str):
         try:
             options = json.loads(options)
         except Exception:
             options = []
+    raw_q = str(q.get("question", ""))
+    clean_q = clean_text(raw_q, is_option=False) or raw_q.strip()
+    clean_opts = [_sanitize_option(clean_text(str(o), is_option=True) or str(o).strip()) for o in options]
+    raw_exp = str(q.get("explanation", "") or "")
+    clean_exp = clean_text(raw_exp, is_option=True) if raw_exp else ""
     return {
         "id":             q.get("id"),
-        "question":       q.get("question", ""),
-        "options":        [_sanitize_option(o) for o in options],
+        "question":       clean_q,
+        "options":        clean_opts,
         "correct_answer": q.get("correct_answer", 0),
         "category":       q.get("category", "General"),  # ← BUG FIX: was missing
-        "explanation":    q.get("explanation", ""),
+        "explanation":    clean_exp,
     }
 
 
@@ -71,6 +77,7 @@ class QuizManager:
 
         raw = self._load_questions()
         self._migrate_option_lengths(raw)   # reuse the same fetch — no 2nd full scan
+        self.sanitize_existing_questions(raw)
 
     # ─── Internal helpers ────────────────────────────────────────────────────
 
@@ -137,6 +144,82 @@ class QuizManager:
             )
         except Exception as e:
             logger.error(f"[MIGRATION] _migrate_option_lengths error: {e}")
+
+    def sanitize_existing_questions(self, all_q: Optional[List[Dict]] = None) -> Dict[str, int]:
+        """Scan all existing questions in MongoDB (questions + quiz_sets) and permanently
+        remove PDF watermarks, coaching branch/phone headers, domains, and leaked option numbers.
+        Returns {'questions_fixed': int, 'quiz_sets_fixed': int}."""
+        stats = {"questions_fixed": 0, "quiz_sets_fixed": 0}
+        if not self.db:
+            return stats
+        try:
+            from src.utils.cleaner import clean_text
+            if all_q is None:
+                all_q = self.db.get_all_questions()
+
+            for q in all_q:
+                q_id = q.get("id")
+                orig_q = str(q.get("question", "")).strip()
+                opts = q.get("options", [])
+                if isinstance(opts, str):
+                    try:
+                        opts = json.loads(opts)
+                    except Exception:
+                        continue
+                orig_opts = [str(o).strip() for o in opts]
+                orig_exp = str(q.get("explanation", "") or "").strip()
+
+                new_q = clean_text(orig_q, is_option=False) or orig_q
+                new_opts = [_sanitize_option(clean_text(o, is_option=True) or o) for o in orig_opts]
+                new_exp = clean_text(orig_exp, is_option=True) if orig_exp else ""
+
+                if new_q != orig_q or new_opts != orig_opts or new_exp != orig_exp:
+                    try:
+                        fields = {
+                            "question": new_q,
+                            "options": new_opts,
+                            "correct_answer": q.get("correct_answer", 0),
+                        }
+                        if q.get("category") is not None:
+                            fields["category"] = q.get("category")
+                        if new_exp != orig_exp:
+                            fields["explanation"] = new_exp
+                        self.db.questions_col.update_one({"id": q_id}, {"$set": fields})
+                        stats["questions_fixed"] += 1
+                    except Exception as e:
+                        logger.error(f"[SANITIZE] Failed to update Q#{q_id}: {e}")
+
+            # Also sanitize user-created quiz_sets in MongoDB
+            if hasattr(self.db, "quiz_sets_col"):
+                for qs in self.db.quiz_sets_col.find({}, {"_id": 0, "id": 1, "questions": 1}):
+                    sid = qs.get("id")
+                    qs_list = qs.get("questions") or []
+                    changed = False
+                    new_qs_list = []
+                    for item in qs_list:
+                        if not isinstance(item, dict):
+                            new_qs_list.append(item)
+                            continue
+                        oq = str(item.get("question", "")).strip()
+                        oopts = [str(o).strip() for o in (item.get("options") or [])]
+                        nq = clean_text(oq, is_option=False) or oq
+                        nopts = [_sanitize_option(clean_text(o, is_option=True) or o) for o in oopts]
+                        if nq != oq or nopts != oopts:
+                            changed = True
+                            item = dict(item, question=nq, options=nopts)
+                        new_qs_list.append(item)
+                    if changed and sid:
+                        self.db.quiz_sets_col.update_one({"id": sid}, {"$set": {"questions": new_qs_list}})
+                        stats["quiz_sets_fixed"] += 1
+
+            if stats["questions_fixed"] or stats["quiz_sets_fixed"]:
+                logger.info(
+                    f"[SANITIZE] Cleaned {stats['questions_fixed']} question(s) in bank "
+                    f"and {stats['quiz_sets_fixed']} custom quiz set(s) in MongoDB."
+                )
+        except Exception as e:
+            logger.error(f"[SANITIZE] sanitize_existing_questions error: {e}")
+        return stats
 
     def _load_questions(self) -> List[Dict]:
         """Load all questions from DB into memory, with up to 3 retries.
@@ -339,6 +422,7 @@ class QuizManager:
             self.last_question_time.clear()
 
             raw           = self.db.get_all_questions()         # outside lock (I/O)
+            self.sanitize_existing_questions(raw)               # permanently clean DB records on reload
             new_questions = [_fmt_question(q) for q in raw]    # outside lock (CPU)
 
             with self._questions_lock:
