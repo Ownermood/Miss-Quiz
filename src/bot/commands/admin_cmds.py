@@ -998,3 +998,84 @@ class AdminCommandsMixin(object):
             "<i>All stale loops have been safely cleared.</i>"
         )
         await self._reply(update, text)
+
+
+    # ─── /addadmin (Quick 1-Line Admin Grant) ─────────────────
+
+    async def cmd_addadmin(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """/addadmin <user_id> [title] [emoji] - one-line admin promotion (owner only)."""
+        user = update.effective_user
+        if not user or user.id != OWNER_ID:
+            await self._reply(update, "⛔ <b>Only the bot owner can add admins.</b>")
+            return
+
+        args = context.args or []
+        if not args or not args[0].isdigit():
+            await self._reply(
+                update,
+                "👉 <b>Usage:</b> <code>/addadmin &lt;user_id&gt; [title] [emoji/emoji_id]</code>\n\n"
+                "<b>Examples:</b>\n"
+                "• <code>/addadmin 1234567890 Quiz Master 👑</code>\n"
+                "• <code>/addadmin 1234567890 Co-Owner ⚡</code>\n"
+                "• <code>/addadmin 1234567890 Devil 5445388803223091254</code>"
+            )
+            return
+
+        target_id = int(args[0])
+        rem = args[1:]
+        emoji = "⭐️"
+        emoji_id = ""
+
+        # Check Telegram Custom Emoji Entity
+        msg = update.effective_message
+        for ent in (msg.entities or []):
+            if ent.type == "custom_emoji":
+                emoji_id = ent.custom_emoji_id
+                emoji = msg.text[ent.offset: ent.offset + ent.length] if msg.text else ""
+                break
+
+        if rem:
+            last = rem[-1]
+            if not emoji_id and last.isdigit() and len(last) > 10:
+                emoji_id = last
+                rem = rem[:-1]
+            elif not emoji_id and (len(last) <= 4 and not last.isalnum()):
+                emoji = last
+                rem = rem[:-1]
+
+        title = " ".join(rem)[:32] if rem else "Admin"
+
+        try:
+            chat = await context.bot.get_chat(target_id)
+            name = chat.full_name or chat.first_name
+        except Exception:
+            name = title or f"User {target_id}"
+
+        if self.db:
+            await asyncio.to_thread(self.db.add_developer, target_id, "", name, added_by=user.id)
+            if hasattr(self.db, "set_admin_profile"):
+                await asyncio.to_thread(self.db.set_admin_profile, target_id, title, emoji, emoji_id)
+
+        # Notify
+        try:
+            from src.bot.premium import e
+            await context.bot.send_message(
+                target_id,
+                f"{e('party')} <b>You've been promoted to Admin of Miss Quiz Bot!</b>\n\n"
+                f"<blockquote><b>Title:</b> {emoji} <b>{html.escape(title)}</b></blockquote>\n"
+                f"Open /start → Admin Panel to manage the bot.",
+                parse_mode="HTML"
+            )
+        except Exception:
+            pass
+
+        await self._reply(
+            update,
+            f"✅ <b>Admin Added Successfully!</b>\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"👤 <b>User:</b> {UI.mention(target_id, name)}\n"
+            f"🆔 <b>ID:</b> <code>{target_id}</code>\n"
+            f"🏷 <b>Title:</b> {emoji} <b>{html.escape(title)}</b>\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"<i>Full admin permissions granted.</i>"
+        )

@@ -293,10 +293,15 @@ class AdminPanelMixin:
             if not self._can_manage_admins(user.id):
                 await q.answer("⛔ Only the owner can add admins.", show_alert=True); return
             ud["adm_draft"] = {}
-            await ask("adm_id",
-                      f"{e('plus')} <b>ADD ADMIN · step 1/3</b>\n{UI.THIN}\n"
-                      "<b>Send their numeric Telegram ID</b>, or forward any message from them.\n"
-                      "<i>/cancel to stop</i>")
+            await ask("adm_quick",
+                      f"{e('plus')} <b>ADD ADMIN (1-Step Quick Add)</b>\n{UI.THIN}\n"
+                      "Send in <b>ONE</b> single message:\n"
+                      "<code>&lt;User_ID&gt; &lt;Custom Name&gt; &lt;Emoji / Premium Emoji&gt;</code>\n\n"
+                      "<b>Examples:</b>\n"
+                      "• <code>1234567890 Quiz Master 👑</code>\n"
+                      "• <code>1234567890 Co-Owner ⚡</code>\n"
+                      "• <i>Or forward a message from the user</i>\n\n"
+                      "<i>Send /cancel to abort.</i>")
         elif data == "ap:adm_skip":
             if not self._can_manage_admins(user.id):
                 await q.answer("⛔", show_alert=True); return
@@ -476,58 +481,89 @@ class AdminPanelMixin:
 
     async def _admin_input_step(self, update, context, ud, key, msg):
         draft = ud.setdefault("adm_draft", {})
-        if key == "adm_id":
-            uid, name = None, None
-            origin = getattr(msg, "forward_origin", None)
-            sender = getattr(origin, "sender_user", None) if origin else None
-            if sender:
-                uid, name = sender.id, sender.full_name
-            elif (msg.text or "").strip().isdigit():
-                uid = int(msg.text.strip())
-            if not uid:
-                await self._reply(update, f"{e('warn')} <b>Send a numeric ID or forward their message.</b>\n"
-                                          "<i>If forwarding shows a hidden name, use the ID instead.</i>")
-                return
-            if self._can_manage_admins(uid):
-                await self._reply(update, f"{e('warn')} <b>That's the owner — already has full access.</b>")
-                return
-            if not name:
-                try:
-                    chat = await context.bot.get_chat(uid)
-                    name = chat.full_name or chat.first_name
-                except Exception:
-                    name = f"User {uid}"
-            draft.update({"user_id": uid, "name": name})
-            ud["ap_await"] = "adm_title"
-            await msg.reply_text(
-                f"{e('edit')} <b>ADD ADMIN · step 2/3</b>\n{UI.THIN}\n"
-                f"<b>Admin:</b> {UI.mention(uid, name)}\n\n"
-                "<b>Send the name/title to show for them</b> (max 32 characters), e.g. <i>Quiz Master</i>.",
-                parse_mode="HTML",
-                reply_markup=InlineKeyboardMarkup([[btn("Skip", "play", BLUE, callback_data="ap:adm_skip")],
-                                                   [btn("Back", "back", RED, callback_data="ap:team")]]))
-        elif key == "adm_title":
-            title = (msg.text or "").strip()
-            if not title or len(title) > 32:
-                await self._reply(update, f"{e('warn')} <b>Send a title of 1–32 characters.</b>")
-                return
-            draft["title"] = title
-            await self._admin_step_emoji(msg, ud)
-        elif key == "adm_emoji":
-            emoji, emoji_id = "", ""
-            for ent in (msg.entities or []):
-                if ent.type == "custom_emoji":
-                    emoji_id = ent.custom_emoji_id
-                    emoji = msg.text[ent.offset: ent.offset + ent.length] if msg.text else ""
+        origin = getattr(msg, "forward_origin", None)
+        sender = getattr(origin, "sender_user", None) if origin else None
+
+        raw_text = (msg.text or "").strip()
+        tokens = raw_text.split()
+
+        uid = None
+        name = None
+        title = ""
+        emoji = "⭐️"
+        emoji_id = ""
+
+        # Check Telegram Custom Emoji Entity
+        for ent in (msg.entities or []):
+            if ent.type == "custom_emoji":
+                emoji_id = ent.custom_emoji_id
+                emoji = msg.text[ent.offset: ent.offset + ent.length] if msg.text else ""
+                break
+
+        if sender:
+            uid = sender.id
+            name = sender.full_name
+            if tokens:
+                if not emoji_id and tokens[-1].isdigit() and len(tokens[-1]) > 10:
+                    emoji_id = tokens[-1]
+                    tokens = tokens[:-1]
+                elif not emoji_id and (len(tokens[-1]) <= 4 and not tokens[-1].isalnum()):
+                    emoji = tokens[-1]
+                    tokens = tokens[:-1]
+                title = " ".join(tokens)[:32]
+        else:
+            id_idx = -1
+            for i, tok in enumerate(tokens):
+                if tok.isdigit() and len(tok) >= 5:
+                    uid = int(tok)
+                    id_idx = i
                     break
-            if not emoji:
-                emoji = (msg.text or "").strip()
-            if not emoji or len(emoji) > 8 or emoji.isalnum():
-                await self._reply(update, f"{e('warn')} <b>Send just one emoji.</b>")
-                return
-            draft.update({"emoji": emoji, "emoji_id": emoji_id})
+
+            if uid is not None:
+                rem_tokens = [tok for i, tok in enumerate(tokens) if i != id_idx]
+                if rem_tokens:
+                    last = rem_tokens[-1]
+                    if not emoji_id and last.isdigit() and len(last) > 10:
+                        emoji_id = last
+                        rem_tokens = rem_tokens[:-1]
+                    elif not emoji_id and (len(last) <= 4 and not last.isalnum()):
+                        emoji = last
+                        rem_tokens = rem_tokens[:-1]
+                    title = " ".join(rem_tokens)[:32]
+
+        if not uid:
+            await self._reply(
+                update,
+                f"{e('warn')} <b>Could not find a valid User ID!</b>\n"
+                "Please send: <code>&lt;User_ID&gt; &lt;Custom Name&gt; &lt;Emoji&gt;</code>\n"
+                "<i>Example:</i> <code>1234567890 Quiz Master 👑</code>"
+            )
+            return
+
+        if self._can_manage_admins(uid):
+            await self._reply(update, f"{e('warn')} <b>That user is already the owner.</b>")
             ud.pop("ap_await", None)
-            await self._admin_finish(update, context, ud, None)
+            return
+
+        if not name:
+            try:
+                chat = await context.bot.get_chat(uid)
+                name = chat.full_name or chat.first_name
+            except Exception:
+                name = title or f"User {uid}"
+
+        if not title:
+            title = "Admin"
+
+        draft.update({
+            "user_id": uid,
+            "name": name,
+            "title": title,
+            "emoji": emoji,
+            "emoji_id": emoji_id
+        })
+        ud.pop("ap_await", None)
+        await self._admin_finish(update, context, ud, None)
 
     async def _admin_finish(self, update, context, ud, edit_msg):
         draft = ud.pop("adm_draft", {}) or {}

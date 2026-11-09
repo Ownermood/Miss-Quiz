@@ -384,6 +384,7 @@ class TelegramQuizBot(
         app.add_handler(CommandHandler("cancel",      self.cmd_cancel))
         app.add_handler(CommandHandler("check",       self.cmd_check))
         app.add_handler(CommandHandler("cleanup",     self.cmd_cleanup))
+        app.add_handler(CommandHandler("addadmin",    self.cmd_addadmin))
 
         # ── Group tracking — three complementary mechanisms ──────────
         # 1. my_chat_member: bot add/remove/promote/demote/restrict
