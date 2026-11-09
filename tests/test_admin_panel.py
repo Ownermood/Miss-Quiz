@@ -466,7 +466,8 @@ async def test_panel_command_edits_panel_message_with_back():
     from src.bot.admin_panel import _MsgProxy
     panel = MagicMock(); panel.edit_text = AsyncMock(return_value="edited"); panel.reply_text = AsyncMock()
     proxy = _MsgProxy(panel, edit=True)
-    assert await proxy.reply_text("Reloaded", parse_mode="HTML") == "edited"
+    from src.bot.admin_panel import _KeepBack
+    assert isinstance(await proxy.reply_text("Reloaded", parse_mode="HTML"), _KeepBack)
     panel.reply_text.assert_not_awaited()                     # no new message in chat
     kb = panel.edit_text.await_args.kwargs["reply_markup"]
     assert kb.inline_keyboard[-1][0].callback_data == "ap:home"
@@ -591,3 +592,16 @@ async def test_quiz_editor_is_html_and_escapes_question(monkeypatch):
     assert kw["parse_mode"] == "HTML" and "2 &lt; 3 &amp; *x*" in text and "A &amp; B" in text
     text2 = dev._format_quiz_editor({"id": 1, "question": "a<b", "options": ["x&y", "z"], "correct_answer": 0})
     assert "a&lt;b" in text2 and "x&amp;y" in text2 and "**" not in text2
+
+
+async def test_panel_reload_result_keeps_back_button():
+    from src.bot.admin_panel import _MsgProxy
+    base = MagicMock()
+    edited = MagicMock()
+    edited.edit_text = AsyncMock()
+    base.edit_text = AsyncMock(return_value=edited)
+    proxy = _MsgProxy(base, edit=True)
+    msg = await proxy.reply_text("Syncing…", parse_mode="HTML")
+    await msg.edit_text("Reloaded 10 questions", parse_mode="HTML")       # like cmd_reload's _edit
+    kb = edited.edit_text.await_args.kwargs["reply_markup"]
+    assert buttons(kb) == ["ap:home"]

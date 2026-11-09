@@ -82,16 +82,37 @@ class _MsgProxy:
         if not any(b.callback_data == "ap:home" for r in rows for b in r):
             rows.append(back)
         try:
-            return await self._base.edit_text(
+            res = await self._base.edit_text(
                 text, parse_mode=kw.get("parse_mode"), reply_markup=InlineKeyboardMarkup(rows),
                 link_preview_options=kw.get("link_preview_options"))
+            # later edits of this message (e.g. "Syncing…" → result) keep the Back button
+            return _KeepBack(res if hasattr(res, "edit_text") else self._base)
         except Exception as ex:
             if "not modified" in str(ex).lower():
-                return self._base
+                return _KeepBack(self._base)
             # photo message or too old to edit: fall back to a new message
             kw["reply_markup"] = InlineKeyboardMarkup(rows)
             kw.pop("message_thread_id", None)
             return await self._base.reply_text(text, **kw)
+
+
+class _KeepBack:
+    """Panel message whose edit_text always keeps a Back-to-panel button
+    (a plain edit without reply_markup would remove all buttons)."""
+
+    def __init__(self, base):
+        self._base = base
+
+    def __getattr__(self, name):
+        return getattr(self._base, name)
+
+    async def edit_text(self, text, **kw):
+        kb = kw.get("reply_markup")
+        rows = list(kb.inline_keyboard) if isinstance(kb, InlineKeyboardMarkup) else []
+        if not any(b.callback_data == "ap:home" for r in rows for b in r):
+            rows.append([btn("Back", "back", RED, callback_data="ap:home")])
+        kw["reply_markup"] = InlineKeyboardMarkup(rows)
+        return await self._base.edit_text(text, **kw)
 
 
 class _UpdProxy:
