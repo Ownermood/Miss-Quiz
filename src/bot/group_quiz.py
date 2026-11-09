@@ -16,7 +16,9 @@ import asyncio
 import html
 import logging
 import random
+import re
 import time
+from urllib.parse import quote
 from dataclasses import dataclass, field
 from types import SimpleNamespace
 from typing import Dict, List, Optional, Tuple
@@ -113,6 +115,12 @@ def _kb(s: Session) -> InlineKeyboardMarkup:
 
 def _medal(i: int) -> str:
     return ("🥇", "🥈", "🥉")[i] if i < 3 else f"{i + 1}."
+
+
+PER_RESULT_MSG = 60      # players per final-result message (Telegram: 4096 chars)
+_PRAISE = ("👑 <b>CHAMPION!</b> Outstanding performance — the crown is yours!",
+           "🔥 <b>Brilliant runner-up!</b> So close to the top — superb!",
+           "⭐ <b>Great job, 3rd place!</b> A podium finish — well played!")
 
 
 class GroupQuizMixin:
@@ -221,6 +229,16 @@ class GroupQuizMixin:
         await self._gq_start_set(update, context, set_id)
 
     async def _gq_start_set(self, update, context, set_id: str) -> None:
+        m = re.fullmatch(r"bot(\d{1,3})", set_id or "")
+        if m:                                             # shared bot quiz: gq_bot20
+            pool = list(self.quiz_manager.questions or [])
+            n = max(1, min(int(m.group(1)), 50, len(pool)))
+            if len(pool) < 3:
+                await self._reply(update, "⚠️ <b>Not enough questions yet.</b>")
+                return
+            await self._gq_begin(context, update.effective_chat.id, get_thread_id(update), update.effective_user,
+                                 f"Bot Quiz · {n} questions", random.sample(pool, n), BOT_SECS, "")
+            return
         qs = await self._gq_db("get_quiz_set", set_id)
         if not isinstance(qs, dict) or not qs.get("questions"):
             await self._reply(update, "⚠️ <b>Quiz not found.</b> Check the quiz ID in /myquiz.")
@@ -325,6 +343,46 @@ class GroupQuizMixin:
             return chat_id is not None
         return s.record(poll_id, user.id, self._bt_name(user), list(option_ids or []))
 
+    def _gq_share_kb(self, context, s: Session) -> InlineKeyboardMarkup:
+        """Play again (admins) + Share Quiz: a link anyone can open to run this
+        same quiz in their own group (t.me/<bot>?startgroup=gq_<id>)."""
+        key = s.set_id or f"bot{len(s.questions)}"
+        link = f"https://t.me/{getattr(context.bot, 'username', '')}?startgroup=gq_{key}"
+        msg = (f"🏆 Play “{s.title}” in your group with Miss Quiz! "
+               f"{len(s.questions)} questions · {s.secs}s each. Tap the link and pick your group 👇")
+        share = "https://t.me/share/url?url=" + quote(link, safe="") + "&text=" + quote(msg)
+        return InlineKeyboardMarkup([[
+            InlineKeyboardButton("🔁 Play again", callback_data=f"gq|again|{s.chat_id}", style="success"),
+            InlineKeyboardButton("📤 Share Quiz", url=share, style="primary")]])
+
+    def _gq_result_texts(self, s: Session, stopped: bool) -> List[str]:
+        """Podium with greetings for the top 3, then EVERY player (in a quote,
+        split over several messages when the group is big)."""
+        rank = s.ranking()
+        total = max(1, min(s.idx, len(s.questions)))
+        head = (f"🏆 <b>FINAL RESULT</b> — {html.escape(s.title)}\n"
+                + (f"<i>Stopped after {s.idx} of {len(s.questions)} questions.</i>\n" if stopped else ""))
+        if not rank:
+            return [head + "<i>Nobody answered this time. Play again? 🙂</i>"]
+        podium = ["🎉 <b>Congratulations to our winners!</b>"]
+        for i, (uid, sc) in enumerate(rank[:3]):
+            podium.append(f"{_medal(i)} {UI.mention(uid, sc.get('name') or 'Player')} › "
+                          f"<b>{sc['correct']}</b>/{total}\n{_PRAISE[i]}")
+        line = lambda i, uid, sc: (f"{_medal(i)} {UI.mention(uid, sc.get('name') or 'Player')} › "
+                                   f"<b>{sc['correct']}</b>/{total} · {round(100 * sc['correct'] / total)}% · "
+                                   f"✅ {sc['correct']} ❌ {sc.get('wrong', 0)}")
+        lines = [line(i, uid, sc) for i, (uid, sc) in enumerate(rank)]
+        foot = f"\n👥 Players › {len(rank)} · ❓ Questions › {total}"
+        texts = []
+        for k in range(0, len(lines), PER_RESULT_MSG):
+            chunk = "<blockquote expandable>" + "\n".join(lines[k:k + PER_RESULT_MSG]) + "</blockquote>"
+            if k == 0:
+                texts.append(head + "\n\n".join(podium) + "\n\n📋 <b>All players</b>\n" + chunk)
+            else:
+                texts.append(f"📋 <b>All players</b> ({k + 1}–{min(k + PER_RESULT_MSG, len(lines))})\n" + chunk)
+        texts[-1] += foot
+        return texts
+
     async def _gq_finish(self, context, s: Session) -> None:
         if ACTIVE.get(s.chat_id) is s:
             ACTIVE.pop(s.chat_id, None)
@@ -336,15 +394,11 @@ class GroupQuizMixin:
         if not hasattr(self, "_gq_last"):
             self._gq_last: Dict[int, Session] = {}
         self._gq_last[s.chat_id] = s
-        players = len(s.scores)
-        text = (f"🏆 <b>FINAL RESULT</b> — {html.escape(s.title)}\n"
-                + (f"<i>Stopped after {s.idx} of {len(s.questions)} questions.</i>\n" if stopped else "")
-                + f"{self._gq_board(s, 10)}\n👥 Players › {players}")
-        kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔁 Play again", callback_data=f"gq|again|{s.chat_id}",
-                                                         style="success")]])
-        await self._gq_send(context, s, text, kb)
+        texts = self._gq_result_texts(s, stopped)
+        for k, text in enumerate(texts):
+            await self._gq_send(context, s, text, self._gq_share_kb(context, s) if k == len(texts) - 1 else None)
         await self._gq_edit_ctrl(context, s, "🏁 <b>Finished.</b>" if not stopped else "⏹ <b>Stopped.</b>")
-        logger.info(f"[GQUIZ] {s.chat_id} ended ({'stopped' if stopped else 'done'}) players={players}")
+        logger.info(f"[GQUIZ] {s.chat_id} ended ({'stopped' if stopped else 'done'}) players={len(s.scores)}")
 
     # ── buttons ──────────────────────────────────────────────────────────
 

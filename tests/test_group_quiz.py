@@ -155,7 +155,11 @@ async def test_full_bot_quiz_with_leaderboard_scoring_and_auto_quiz_pause():
     final = sent[-1]
     assert "FINAL RESULT" in final and "Players › 3" in final
     assert final.index("P7") < final.index("P8")                        # 20/20 ranked above 0/20
-    assert "<b>20</b>/20" in final
+    assert "<b>20</b>/20" in final and "CHAMPION" in final and "Congratulations" in final
+    assert "<blockquote expandable>" in final and "✅ 0 ❌ 20" in final  # every player listed
+    kb = c.bot.send_message.await_args.kwargs["reply_markup"]
+    btns = {b.text: b for r in kb.inline_keyboard for b in r}
+    assert "🔁 Play again" in btns and "startgroup%3Dgq_bot20" in btns["📤 Share Quiz"].url
     assert app.real.list_quiz_sessions() == []                          # cleaned from DB
 
 
@@ -235,3 +239,25 @@ def test_quiz_card_has_start_in_group_link():
                                       bot_username="MissQuiz_Bot")
     urls = [b.url for r in kb.inline_keyboard for b in r if b.url]
     assert urls == ["https://t.me/MissQuiz_Bot?startgroup=gq_ab12"]
+
+
+
+def test_big_group_result_lists_everyone_over_several_messages():
+    app = App()
+    s = Session(chat_id=1, title="Big", questions=questions(10), secs=10, started_by=1, idx=10)
+    for uid in range(1, 151):
+        s.scores[str(uid)] = {"name": f"N{uid}", "correct": uid % 11, "wrong": 10 - uid % 11, "time": uid}
+    texts = app._gq_result_texts(s, stopped=False)
+    assert len(texts) == 3 and "(61–120)" in texts[1] and "Players › 150" in texts[-1]
+    assert sum(t.count("tg://user?id=") for t in texts) == 150 + 3      # everyone + the podium
+    assert all(len(t) < 9000 for t in texts)
+    assert "Nobody answered" in app._gq_result_texts(Session(chat_id=1, title="x", questions=questions(2),
+                                                             secs=5, started_by=1), False)[0]
+
+
+async def test_shared_bot_quiz_link_starts_in_another_group():
+    app = App()
+    c, polls, sent = ctx(admins=(4,))
+    await app.gq_start_from_link(group_upd(user(4), chat_id=-777), c, "bot15")
+    s = gq.ACTIVE[-777]
+    assert len(s.questions) == 15 and s.title == "Bot Quiz · 15 questions"
