@@ -6,6 +6,7 @@ AdminCommandsMixin — /addquiz /delquiz /editquiz /importquiz /dev /broadcast
 import asyncio
 import logging
 import os
+import html
 import re
 import time
 
@@ -193,6 +194,13 @@ class AdminCommandsMixin(object):
                 f"📭 <b>No Questions</b>\n{UI.LINE}\n\nDatabase is empty.")
             return
 
+        # /delquiz 123 → straight to the confirm screen for #123
+        args = getattr(context, "args", None) or []
+        if args and str(args[0]).lstrip("#").isdigit():
+            text, kb = self._delquiz_confirm_view(int(str(args[0]).lstrip("#")), user.id)
+            await self._reply(update, text, reply_markup=kb)
+            return
+
         page = 0
         self._del_page[user.id] = page
         await self._reply(
@@ -200,6 +208,29 @@ class AdminCommandsMixin(object):
             self._delquiz_text(questions, page),
             reply_markup=self._delquiz_kb(questions, page, user.id)
         )
+
+    def _delquiz_confirm_view(self, qid: int, user_id: int):
+        """'Are you sure?' screen: full question, options and the right answer."""
+        q = next((x for x in self.quiz_manager.questions if x.get("id") == qid), None)
+        page = self._del_page.get(user_id, 0)
+        back = InlineKeyboardButton("⬅️ Back", callback_data=f"dq_page_{page}_{user_id}")
+        if not q:
+            return (f"❌ <b>Question #{qid} not found.</b>", InlineKeyboardMarkup([[back]]))
+        opts = "\n".join(
+            f"{'✅' if i == q.get('correct_answer') else '▫️'} {html.escape(str(o))}"
+            for i, o in enumerate(q.get("options", [])))
+        text = (
+            f"🗑 <b>DELETE THIS QUESTION?</b>\n"
+            f"<blockquote><b>#{qid} · {html.escape(q.get('category', 'General'))}\n"
+            f"{html.escape(q.get('question', ''))}</b></blockquote>"
+            f"{opts}\n\n"
+            f"⚠️ <b>This can't be undone.</b>"
+        )
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🗑 Yes, delete", callback_data=f"dq_del_{qid}_{user_id}", style="danger")],
+            [back],
+        ])
+        return text, kb
 
     def _delquiz_text(self, questions: list, page: int) -> str:
         total = len(questions)
@@ -239,19 +270,20 @@ class AdminCommandsMixin(object):
                 qtext = q.get("question", "")[:18]
                 row.append(InlineKeyboardButton(
                     f"🗑 #{qid} {qtext}…",
-                    callback_data=f"dq_del_{qid}_{user_id}"
+                    callback_data=f"dq_ask_{qid}_{user_id}"
                 ))
             rows.append(row)
 
         nav = []
         if page > 0:
-            nav.append(InlineKeyboardButton("🎓 ◀ Prev", callback_data=f"dq_page_{page-1}_{user_id}"))
+            nav.append(InlineKeyboardButton("◀️ Prev", callback_data=f"dq_page_{page-1}_{user_id}"))
         if page < pages - 1:
-            nav.append(InlineKeyboardButton("Next ▶ 🎓", callback_data=f"dq_page_{page+1}_{user_id}"))
+            nav.append(InlineKeyboardButton("Next ▶️", callback_data=f"dq_page_{page+1}_{user_id}"))
         if nav:
             rows.append(nav)
 
-        rows.append([InlineKeyboardButton("🎓 Cancel", callback_data=f"dq_cancel_{user_id}")])
+        rows.append([InlineKeyboardButton("🔎 Find by ID / word", callback_data="ap:find"),
+                     InlineKeyboardButton("⬅️ Back", callback_data=f"dq_cancel_{user_id}")])
         return InlineKeyboardMarkup(rows)
 
     async def _cb_delquiz(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -275,10 +307,36 @@ class AdminCommandsMixin(object):
             if actor.id != owner_uid:
                 await query.answer("❌ Not your menu!", show_alert=True)
                 return
+            # owner_uid comes from callback data, which a client can forge:
+            # always re-check that the person tapping is an admin.
+            if not await self._is_authorized(actor.id):
+                await query.answer("⛔ Admins only.", show_alert=True)
+                return
 
             questions = self.quiz_manager.questions
 
+            if action == "ask":
+                try:
+                    qid = int(parts[2])
+                except (ValueError, IndexError):
+                    return
+                text, kb = self._delquiz_confirm_view(qid, actor.id)
+                try:
+                    await query.message.edit_text(text, parse_mode=ParseMode.HTML, reply_markup=kb)
+                except Exception as e:
+                    logger.debug(f"[DELQUIZ] confirm edit failed: {e}")
+                return
+
             if action == "cancel":
+                # Back: to the Admin Panel in DM, just remove the list elsewhere
+                if query.message.chat.type == "private" and hasattr(self, "_panel_text"):
+                    try:
+                        await query.message.edit_text(
+                            await self._panel_text(), parse_mode=ParseMode.HTML,
+                            reply_markup=self._panel_kb(self._is_owner(actor.id)))
+                        return
+                    except Exception as e:
+                        logger.debug(f"[DELQUIZ] back to panel failed: {e}")
                 try:
                     await query.message.delete()
                 except Exception as e:
@@ -328,8 +386,15 @@ class AdminCommandsMixin(object):
                         f"❌ <b>Not Found</b>\n{UI.LINE}\n\n"
                         f"Question #{qid} not found."
                     )
+                page = self._del_page.get(actor.id, 0)
+                if page * 8 >= len(self.quiz_manager.questions):
+                    page = max(0, (len(self.quiz_manager.questions) - 1) // 8)
+                kb = InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🗑 Delete another", callback_data=f"dq_page_{page}_{actor.id}")],
+                    [InlineKeyboardButton("⬅️ Back", callback_data=f"dq_cancel_{actor.id}")],
+                ])
                 try:
-                    await query.message.edit_text(text, parse_mode=ParseMode.HTML)
+                    await query.message.edit_text(text, parse_mode=ParseMode.HTML, reply_markup=kb)
                 except Exception as e:
                     logger.debug(f"[DELQUIZ] result edit failed: {e}")
 

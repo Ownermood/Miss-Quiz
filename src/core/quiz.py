@@ -321,8 +321,9 @@ class QuizManager:
                     if q.get("id") == db_id:
                         q.update({
                             "question":       data.get("question", q["question"]),
-                            "options":        data.get("options", q["options"]),
+                            "options":        [_sanitize_option(o) for o in data.get("options", q["options"])],
                             "correct_answer": data.get("correct_answer", q["correct_answer"]),
+                            "category":       data.get("category") or q.get("category", "General"),
                         })
                         break
             return ok

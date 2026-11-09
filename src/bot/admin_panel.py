@@ -111,6 +111,7 @@ class AdminPanelMixin:
              btn("Import .txt", "folder", BLUE, callback_data="ap:import")],
             [btn("Edit Quiz", "edit", BLUE, callback_data="ap:edit"),
              btn("Delete Quiz", "trash", BLUE, callback_data="ap:delquiz")],
+            [btn("Find Question (ID / word)", "bolt", BLUE, callback_data="ap:find")],
             [btn("Broadcast", "signal", BLUE, callback_data="ap:bc"),
              btn("Undo Broadcast", "back", BLUE, callback_data="ap:dbc")],
             [btn("Start Photo", "folder", BLUE, callback_data="ap:photo"),
@@ -219,6 +220,11 @@ class AdminPanelMixin:
             await self.cmd_editquiz(self._proxy(update, "/editquiz"), context)
 
         # commands that need the admin's next message
+        elif data == "ap:find":
+            await ask("find",
+                      f"🔎 <b>FIND QUESTION</b>\n{UI.THIN}\n"
+                      "<b>Send a question ID (like 125) or any word from the question.</b>\n"
+                      "You'll get Edit / Delete buttons for each match.\n<i>/cancel to stop</i>")
         elif data == "ap:addquiz":
             await ask("addquiz", ADDQUIZ_HELP.format(line=UI.THIN))
         elif data == "ap:bc":
@@ -339,6 +345,9 @@ class AdminPanelMixin:
                                   reply_markup=InlineKeyboardMarkup([
                                       [btn("Send now", "check", GREEN, callback_data="ap:bc_yes"),
                                        btn("Cancel", "cross", RED, callback_data="ap:bc_no")]]))
+        elif key == "find":
+            ud.pop("ap_await", None)
+            await self._reply(update, *self._find_results((msg.text or "").strip(), user.id))
         elif key in ("dev_add", "dev_remove"):
             uid = (msg.text or "").strip()
             if not uid.isdigit():
@@ -350,6 +359,32 @@ class AdminPanelMixin:
                     context.args = [key[4:], uid]
                     await dev.dev(update, context)
         raise ApplicationHandlerStop
+
+    # ── find question ────────────────────────────────────────────────────
+
+    def _find_results(self, query: str, user_id: int, limit: int = 8):
+        """Questions matching an ID or words → (text, keyboard with Edit/Delete per hit)."""
+        import html as _h
+        qs = list(getattr(self.quiz_manager, "questions", []) or [])
+        q = query.lstrip("#").strip()
+        if q.isdigit():
+            hits = [x for x in qs if x.get("id") == int(q)]
+        else:
+            words = [w for w in q.lower().split() if w]
+            hits = [x for x in qs if words and all(w in (x.get("question") or "").lower() for w in words)]
+        again = [btn("Search again", "bolt", BLUE, callback_data="ap:find")]
+        back = [btn("Back", "back", RED, callback_data="ap:home")]
+        if not hits:
+            return (f"🔎 <b>No question matches “{_h.escape(query[:40])}”.</b>",
+                    InlineKeyboardMarkup([again, back]))
+        lines, rows = [f"🔎 <b>{len(hits)} match{'es' if len(hits) != 1 else ''}"
+                       f"{f' (showing {limit})' if len(hits) > limit else ''}</b>"], []
+        for x in hits[:limit]:
+            qid = x.get("id")
+            lines.append(f"<b>#{qid}</b> {_h.escape((x.get('question') or '')[:70])}")
+            rows.append([btn(f"Edit #{qid}", "edit", BLUE, callback_data=f"edit_quiz_select_{qid}"),
+                         btn(f"Delete #{qid}", "trash", RED, callback_data=f"dq_ask_{qid}_{user_id}")])
+        return "\n".join(lines), InlineKeyboardMarkup(rows + [again, back])
 
     # ── start photo (stored in settings, cached in memory) ───────────────
 

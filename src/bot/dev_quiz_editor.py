@@ -107,7 +107,11 @@ class QuizEditorMixin:
     async def _show_quiz_list(self, update: Update, context: ContextTypes.DEFAULT_TYPE, page: int = 1) -> None:
         """Show paginated quiz list with selection buttons."""
         import asyncio as _asyncio
-        questions = await _asyncio.to_thread(self.db.get_all_questions)
+        # In-memory cache (same data the bot serves) — no full DB download per page
+        if self.quiz_manager is not None and self.quiz_manager.questions:
+            questions = list(self.quiz_manager.questions)
+        else:
+            questions = await _asyncio.to_thread(self.db.get_all_questions)
 
         if not questions:
             if update.effective_message:
@@ -148,6 +152,7 @@ class QuizEditorMixin:
             nav_buttons.append(InlineKeyboardButton("◀️ Prev", callback_data=f"edit_quiz_list_{page-1}"))
         if page < total_pages:
             nav_buttons.append(InlineKeyboardButton("Next ▶️", callback_data=f"edit_quiz_list_{page+1}"))
+        nav_buttons.append(InlineKeyboardButton("🔎 Find", callback_data="ap:find"))
         nav_buttons.append(InlineKeyboardButton("❌ Cancel", callback_data="edit_quiz_cancel"))
 
         if nav_buttons:
@@ -446,14 +451,22 @@ Example:
 
         try:
             import asyncio as _asyncio
-            success = await _asyncio.to_thread(
-                self.db.update_question,
-                qid=quiz_id,
-                question=quiz_data['question'],
-                options=quiz_data['options'],
-                correct_answer=quiz_data['correct_answer'],
-                category=quiz_data.get('category'),
-            )
+            new_data = {
+                "question":       quiz_data['question'],
+                "options":        quiz_data['options'],
+                "correct_answer": quiz_data['correct_answer'],
+                "category":       quiz_data.get('category'),
+            }
+            if self.quiz_manager is not None:
+                # Updates MongoDB AND the in-memory cache, so the very next
+                # /quiz or auto quiz already uses the corrected question.
+                success = await _asyncio.to_thread(
+                    self.quiz_manager.edit_question_by_db_id, quiz_id, new_data)
+            else:
+                success = await _asyncio.to_thread(
+                    self.db.update_question, qid=quiz_id, question=new_data["question"],
+                    options=new_data["options"], correct_answer=new_data["correct_answer"],
+                    category=new_data["category"])
 
             if success:
                 changes = []
