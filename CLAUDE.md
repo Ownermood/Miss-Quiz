@@ -28,7 +28,7 @@ src/bot/dev_broadcast.py    Broadcast / delbroadcast
 src/bot/dev_quiz_editor.py  Inline-button quiz editor (/editquiz, edit_quiz_* callbacks)
 src/bot/quiz_parser.py      .txt bulk import parser (/importquiz)
 src/bot/poll_manager.py     Poll answers, poll_id mapping (battle polls pehle battle_on_poll_answer ko jaate hain)
-src/bot/admin_panel.py      /admin: red-button panel (style=danger), DM only, admins only, har callback pe auth
+src/bot/admin_panel.py      /admin panel (blue buttons; entry button on /start red, sirf admin DM). Start photo set (photo ya link → file_id, `settings` collection). Har callback pe auth
 src/bot/premium.py          Premium emoji: e(name) for HTML, btn(text, emoji, style). PREMIUM_EMOJI=1 pe on
 src/bot/battle.py           1v1 battle (BattleMixin + Battle). Group + DM. In-memory state
 src/bot/tracking.py         User/group tracking
@@ -42,7 +42,9 @@ tests/                      test_config.py, test_quiz_manager.py, test_ui.py
 
 **Battle:** `/battle` (group: open ya reply-target; DM: invite link `start=bt_<id>`). 5 questions × 20s, +1 sahi, tie → kam time. Battle answers regular stats mein nahi jaate. `users` pe `$inc`: `battle_wins`, `battle_losses`, `battle_draws`, `battles_played`. DM mein har poll ka owner hai (forwarded poll se cheating band). Restart pe chalti battle khatam.
 
-**MongoDB collections:** `questions`, `users`, `groups`, `broadcasts`, `activities`, `developers`, `poll_map`, `auto_quiz_state`, `_counters` (auto-increment quiz id).
+**Branding:** naam "Miss Quiz Bot", community `t.me/VillanCommunity` (`ui.COMMUNITY_URL`). `/start` = photo (agar set) + blockquote caption + rangeen buttons (`_start_kb`).
+
+**MongoDB collections:** `settings` (key/value), `questions`, `users`, `groups`, `broadcasts`, `activities`, `developers`, `poll_map`, `auto_quiz_state`, `_counters` (auto-increment quiz id).
 
 **Auth layers:**
 - Bot: `_is_owner()` / `_is_authorized()` (`handlers_main.py`), `check_access()` (`dev_commands.py`). Owner + WIFU + `developers` collection.

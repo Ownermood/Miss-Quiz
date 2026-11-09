@@ -234,12 +234,7 @@ class TelegramQuizBot(
             return
         bot_inline = "Miss Quiz 🎓"
 
-        kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🎓 Start Quiz",      callback_data="play_quiz"),
-             InlineKeyboardButton("🎓 My Profile",        callback_data="my_profile")],
-            [InlineKeyboardButton("❓ Help",             callback_data="help")],
-            [InlineKeyboardButton("🎓 Join CLAT Vision", url="https://t.me/CLAT_Vision")],
-        ])
+        kb = self._start_kb()
 
         logger.info(f"[STARTUP] Broadcasting to {len(users)} users")
         sent = []
@@ -267,29 +262,44 @@ class TelegramQuizBot(
     # ─── Greeting builder (shared by /start and broadcast) ───
 
     def _build_greeting(self, user_mention: str, bot_inline: str = "Miss Quiz 🎓") -> str:
-        q_count   = self._q_count()
-        q_display = UI.fmt_num(q_count)
+        from src.bot.premium import e
+        q_display = UI.fmt_num(self._q_count())
         return (
-            f"╔══════════════════════════════════════╗\n"
-            f"║       🎓  <b>𝐂𝐋𝐀𝐓  𝐕𝐈𝐒𝐈𝐎𝐍</b>  🎓        ║\n"
-            f"║          🌸 {user_mention} 🌸          ║\n"
-            f"╚══════════════════════════════════════╝\n\n"
-            f"🌷  ᴏʜ ᴍʏ, ʟᴏᴏᴋ ᴡʜᴏ'ꜱ ʜᴇʀᴇ!  🌷\n\n"
-            f"ʜɪɪɪɪ ᴅᴀʀʟɪɴɢ! 💕\n\n"
-            f"💞 ᴡᴇʟᴄᴏᴍᴇ ᴛᴏ {bot_inline}\n"
-            f"ʏᴏᴜʀ ꜱᴜᴘᴇʀ ᴀᴅᴏʀᴀʙʟᴇ ᴘʀᴇᴍɪᴜᴍ ᴄʟᴀᴛ ᴄᴏᴍᴘᴀɴɪᴏɴ! 💞\n\n"
-            f"☘️ ɪ'ᴍ ꜱᴏ ᴛʜʀɪʟʟᴇᴅ ʏᴏᴜ'ʀᴇ ʜᴇʀᴇ!\n\n"
-            f"🍁 ʟᴇᴛ'ꜱ ᴍᴀᴋᴇ ᴇᴠᴇʀʏ ꜱᴇꜱꜱɪᴏɴ ᴍᴀɢɪᴄᴀʟ —\n"
-            f"🍁 ᴇᴠᴇʀʏ Qᴜᴇꜱᴛɪᴏɴ ᴀ ꜱᴘᴀʀᴋʟᴇ,\n"
-            f"🍁 ᴇᴠᴇʀʏ ᴀɴꜱᴡᴇʀ ᴀ ꜱᴡᴇᴇᴛ ᴠɪᴄᴛᴏʀʏ!\n\n"
-            f"🎓 ʀᴇᴀᴅʏ ᴛᴏ ɢʟᴏᴡ? 🎓\n\n"
-            f"🎓 ᴊᴜꜱᴛ ᴛʏᴘᴇ /quiz ᴀɴᴅ ʟᴇᴛ'ꜱ ᴄʀᴇᴀᴛᴇ ꜱᴏᴍᴇ ʙʀɪʟʟɪᴀɴᴄᴇ ᴛᴏɢᴇᴛʜᴇʀ! ❤️\n\n"
-            f"🥰 ʏᴏᴜʀ ʟᴏᴠɪɴɢ Qᴜɪᴢ ʙᴜᴅᴅʏ ɪꜱ ᴀʟʟ ʏᴏᴜʀꜱ ~ 🥰\n\n"
-            f"🎓 ꜰᴏʀ ᴍᴏʀᴇ ᴄᴏᴍᴍᴀɴᴅꜱ: /help\n\n"
-            f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            f"📚 {q_display} Qᴜᴇꜱᴛɪᴏɴꜱ • ⚡ ᴏɴʟɪɴᴇ\n"
-            f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            f"<b>WELCOME TO MISS QUIZ BOT</b> {e('flower')}\n\n"
+            f"╭──── ❨ 🎓 <b>MISS QUIZ</b> ❩ ────╮\n\n"
+            f"{e('hi')} Hey <b>{user_mention}</b>!\n"
+            f"<blockquote>{e('cool')} Quiz in groups &amp; DM, 1v1 battles with friends "
+            f"and a live leaderboard.</blockquote>\n"
+            f"<blockquote>{e('bolt')} {q_display} questions · new quiz every hour</blockquote>\n"
+            f"╰──────────────────────╯\n\n"
+            f"{e('play')} <b>QUIZ • BATTLE • WIN!</b>"
         )
+
+    async def _cb_start_battle(self, update: Update, context):
+        """'Battle' button on /start → same as typing /battle."""
+        await update.callback_query.answer()
+        await self.cmd_battle(update, context)
+
+    def _start_kb(self, show_admin: bool = False) -> InlineKeyboardMarkup:
+        """Start-screen buttons. Admin Panel (red) only for admins in their DM —
+        inline keyboards in groups are visible to everyone."""
+        from src.bot.premium import btn
+        from src.bot.ui import COMMUNITY_URL
+        blue, green = "primary", "success"
+        username = getattr(getattr(self.application, "bot", None), "username", "") or ""
+        rows = [
+            [btn("Start Quiz", "play", blue, callback_data="play_quiz"),
+             btn("Battle", "fight", blue, callback_data="start_battle")],
+            [btn("My Profile", "medal", blue, callback_data="my_profile"),
+             btn("Help", "question", blue, callback_data="help")],
+            [btn("Community", "users", green, url=COMMUNITY_URL)]
+            + ([btn("Add to Group", "plus", green,
+                    url=f"https://t.me/{username}?startgroup&admin=delete_messages+pin_messages")]
+               if username else []),
+        ]
+        if show_admin:
+            rows.append([btn("Admin Panel", "key", "danger", callback_data="ap:open")])
+        return InlineKeyboardMarkup(rows)
 
     def _register_handlers(self):
         app = self.application
@@ -343,6 +353,8 @@ class TelegramQuizBot(
             self.handle_battle_callback, pattern=r"^bt_(acc|dec):"))
         app.add_handler(CallbackQueryHandler(
             self.handle_admin_panel_callback, pattern=r"^ap:"))
+        app.add_handler(CallbackQueryHandler(
+            self._cb_start_battle, pattern=r"^start_battle$"))
         app.add_handler(CallbackQueryHandler(self.handle_callback))
 
         # Bulk import: .txt file
@@ -368,6 +380,11 @@ class TelegramQuizBot(
                 f"and text-input handlers are DISABLED. Error: {e}",
                 exc_info=True,
             )
+
+        # Admin input (start photo) runs before every other handler group
+        app.add_handler(MessageHandler(
+            filters.ChatType.PRIVATE & (filters.PHOTO | (filters.TEXT & ~filters.COMMAND)),
+            self.handle_admin_input), group=-1)
 
         # Global error handler — catches any unhandled exception in any handler
         app.add_error_handler(self._global_error_handler)

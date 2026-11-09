@@ -260,3 +260,16 @@ async def test_start_deep_link_joins_battle():
     await bot.cmd_start(upd, SimpleNamespace(args=["bt_abc123"]))
     bot.battle_join_from_link.assert_awaited_once()
     assert bot.battle_join_from_link.call_args.args[2] == "abc123"
+
+
+async def test_battle_button_from_bot_message_is_open_challenge():
+    app = FakeBotApp()
+    ctx, _ = fake_context()
+    a = user(1, "Amit")
+    bot_msg = SimpleNamespace(from_user=SimpleNamespace(is_bot=True),
+                              reply_to_message=SimpleNamespace(from_user=a))   # bot's reply to /start
+    upd = SimpleNamespace(effective_user=a, effective_chat=SimpleNamespace(id=-100, type="supergroup"),
+                          effective_message=bot_msg, message=None)
+    await app.cmd_battle(upd, ctx)
+    b = next(iter(app._bt_state().values()))
+    assert b.p2 is None and "anyone" in app.replies[-1][0]

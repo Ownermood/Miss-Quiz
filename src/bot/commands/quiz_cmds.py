@@ -427,7 +427,7 @@ class QuizCommandsMixin(object):
 
         LINE = "━" * 38
         text = (
-            f"📊  <b>𝐂𝐋𝐀𝐓 𝐕𝐈𝐒𝐈𝐎𝐍  •  𝐁𝐎𝐓 𝐀𝐍𝐀𝐋𝐘𝐓𝐈𝐂𝐒</b>\n"
+            f"📊  <b>𝐌𝐈𝐒𝐒 𝐐𝐔𝐈𝐙  •  𝐁𝐎𝐓 𝐀𝐍𝐀𝐋𝐘𝐓𝐈𝐂𝐒</b>\n"
             f"{LINE}\n\n"
 
             f"👥  <b>𝐔𝐒𝐄𝐑  𝐒𝐓𝐀𝐓𝐈𝐒𝐓𝐈𝐂𝐒</b>\n"

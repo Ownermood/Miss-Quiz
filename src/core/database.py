@@ -47,6 +47,7 @@ class DatabaseManager:
         self.developers_col      = self.db["developers"]
         self.poll_map_col        = self.db["poll_map"]
         self.auto_quiz_state_col = self.db["auto_quiz_state"]
+        self.settings_col        = self.db["settings"]
 
         self._ensure_indexes()
         logger.info(f"✅ MongoDB connected: {url} / db={db_name}")
@@ -891,6 +892,17 @@ class DatabaseManager:
             # promoted: reset reminders so a future demotion starts fresh
             update["$unset"] = {"admin_reminder_count": "", "admin_reminder_at": ""}
         self.groups_col.update_one({"chat_id": chat_id}, update)
+
+    def get_setting(self, key: str, default=None):
+        doc = self.settings_col.find_one({"key": key}, {"_id": 0, "value": 1})
+        return doc["value"] if doc else default
+
+    def set_setting(self, key: str, value) -> None:
+        """value=None deletes the setting."""
+        if value is None:
+            self.settings_col.delete_one({"key": key})
+        else:
+            self.settings_col.update_one({"key": key}, {"$set": {"value": value}}, upsert=True)
 
     def count_groups_by_admin(self) -> Dict[str, int]:
         """Active groups total and how many have the bot as admin."""

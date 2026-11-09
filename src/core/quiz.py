@@ -1,5 +1,5 @@
 """
-Quiz Manager — CLAT Vision Quiz Bot
+Quiz Manager — Miss Quiz Bot
 Fixed: category field in all question loads, reload_data, get_random_question formatting.
 Clean in-memory caching + full MongoDB persistence.
 """

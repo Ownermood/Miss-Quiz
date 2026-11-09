@@ -1,4 +1,4 @@
-"""Flask web app for CLAT Vision Quiz Bot."""
+"""Flask web app for Miss Quiz Bot."""
 
 import os
 import hmac
@@ -159,7 +159,7 @@ def init_bot_webhook(webhook_url: str):
 
 @app.route('/')
 def index():
-    return jsonify({'status': 'ok', 'bot': 'CLAT Vision Quiz Bot'})
+    return jsonify({'status': 'ok', 'bot': 'Miss Quiz Bot'})
 
 
 @app.route('/health')

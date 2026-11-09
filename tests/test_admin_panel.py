@@ -52,7 +52,8 @@ async def test_owner_panel_red_buttons_with_restart(bot):
     text, kb = bot._reply.await_args.args[1], bot._reply.await_args.kwargs["reply_markup"]
     assert "ADMIN PANEL" in text and "Paused (not admin)  ›  <b>1</b>" in text
     assert "ap:restart" in buttons(kb)
-    assert all(b.style == "danger" for row in kb.inline_keyboard for b in row)
+    styles = {b.callback_data: b.style for row in kb.inline_keyboard for b in row}
+    assert styles["ap:stats"] == "primary" and styles["ap:restart"] == "danger"
 
 
 async def test_dev_has_no_restart(bot):
@@ -107,3 +108,74 @@ def test_registered_and_routed_before_generic():
     assert any(isinstance(h, CommandHandler) and "admin" in h.commands for h in hs)
     cbs = [h.callback for h in hs if isinstance(h, CallbackQueryHandler)]
     assert cbs.index(b.handle_admin_panel_callback) < cbs.index(b.handle_callback)
+
+
+# ── start screen + start photo ─────────────────────────────────────────────
+
+def test_start_kb_admin_button_only_when_allowed(bot):
+    bot.application = MagicMock(); bot.application.bot.username = "MissQuizBot"
+    plain = buttons(bot._start_kb())
+    assert "ap:open" not in plain and "start_battle" in plain
+    kb = bot._start_kb(show_admin=True)
+    last = kb.inline_keyboard[-1][0]
+    assert last.callback_data == "ap:open" and last.style == "danger"
+    urls = [b.url for row in kb.inline_keyboard for b in row if b.url]
+    assert "https://t.me/VillanCommunity" in urls
+
+
+def test_greeting_rebranded(bot):
+    t = bot._build_greeting("Amit")
+    assert "MISS QUIZ" in t and "CLAT" not in t and "<blockquote>" in t
+    assert len(t) < 1024          # fits a photo caption
+
+
+def _input_update(uid, text=None, photo=None):
+    sent = MagicMock(); sent.photo = [MagicMock(file_id="FILE_SAVED")]
+    msg = MagicMock(text=text, photo=photo)
+    msg.reply_photo = AsyncMock(return_value=sent)
+    return SimpleNamespace(effective_user=SimpleNamespace(id=uid), effective_message=msg), msg
+
+
+async def test_photo_link_saved_as_file_id(bot):
+    from telegram.ext import ApplicationHandlerStop
+    u, msg = _input_update(OWNER, text="https://i.ibb.co/x/pic.jpg")
+    ctx = SimpleNamespace(user_data={"ap_await": "start_photo"})
+    with pytest.raises(ApplicationHandlerStop):
+        await bot.handle_admin_input(u, ctx)
+    assert msg.reply_photo.await_args.args[0] == "https://i.ibb.co/x/pic.jpg"
+    bot.db.set_setting.assert_called_once_with("start_photo", "FILE_SAVED")
+    assert await bot._get_start_photo() == "FILE_SAVED" and "ap_await" not in ctx.user_data
+
+
+async def test_input_ignored_without_flag_or_for_non_admin(bot):
+    u, msg = _input_update(OWNER, text="hello")
+    await bot.handle_admin_input(u, SimpleNamespace(user_data={}))       # no flag: passes through
+    u, msg = _input_update(RANDOM, text="https://x/y.jpg")
+    ctx = SimpleNamespace(user_data={"ap_await": "start_photo"})
+    await bot.handle_admin_input(u, ctx)
+    msg.reply_photo.assert_not_awaited()
+    bot.db.set_setting.assert_not_called()
+
+
+async def test_bad_image_not_saved(bot):
+    from telegram.ext import ApplicationHandlerStop
+    u, msg = _input_update(OWNER, text="https://example.com/notimage")
+    msg.reply_photo = AsyncMock(side_effect=Exception("wrong type of web page content"))
+    ctx = SimpleNamespace(user_data={"ap_await": "start_photo"})
+    with pytest.raises(ApplicationHandlerStop):
+        await bot.handle_admin_input(u, ctx)
+    bot.db.set_setting.assert_not_called()
+    assert ctx.user_data["ap_await"] == "start_photo"   # can retry
+
+
+async def test_start_sends_photo_with_caption(bot):
+    bot._start_photo_cache = "FILE_SAVED"
+    bot.application = MagicMock(); bot.application.bot.username = "MissQuizBot"
+    msg = MagicMock(); msg.reply_photo = AsyncMock(return_value=MagicMock())
+    u = SimpleNamespace(effective_user=SimpleNamespace(id=OWNER, first_name="Amit", last_name=None, username=None),
+                        effective_chat=SimpleNamespace(id=OWNER, type="private"),
+                        effective_message=msg, message=msg)
+    await bot.cmd_start(u, SimpleNamespace(args=None))
+    kw = msg.reply_photo.await_args.kwargs
+    assert msg.reply_photo.await_args.args[0] == "FILE_SAVED" and "MISS QUIZ" in kw["caption"]
+    assert "ap:open" in buttons(kw["reply_markup"])          # owner in DM sees admin button

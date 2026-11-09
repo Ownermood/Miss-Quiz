@@ -12,10 +12,11 @@ from telegram import Update, LinkPreviewOptions
 
 # ── Module-level constants ─────────────────────────────────────────────────────
 OWNER_ID   = int(os.environ.get("OWNER_ID", "0"))
-OWNER_NAME = "🌷 𝐂𝐋𝐀𝐓 𝐎𝐖𝐍𝐄𝐑 🌷"
+OWNER_NAME = "🌷 𝐌𝐈𝐒𝐒 𝐐𝐔𝐈𝐙 𝐎𝐖𝐍𝐄𝐑 🌷"
 OWNER_LINK = (f'<a href="tg://user?id={OWNER_ID}">{OWNER_NAME}</a>'
               if OWNER_ID else OWNER_NAME)
-COMMUNITY  = "@CLAT_Vision"
+COMMUNITY  = "@VillanCommunity"
+COMMUNITY_URL = "https://t.me/VillanCommunity"
 _NO_PREVIEW = LinkPreviewOptions(is_disabled=True)
 
 

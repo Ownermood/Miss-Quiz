@@ -196,7 +196,7 @@ UNAUTHORIZED_MESSAGE = (
     "  This command requires elevated privileges.\n"
     "  Owner or Developer access only.\n\n"
     "──────────────────────────\n"
-    "  Contact @CLAT_Vision for access."
+    "  Contact @VillanCommunity for access."
 )
 
 

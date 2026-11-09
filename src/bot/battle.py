@@ -193,7 +193,10 @@ class BattleMixin:
                    p1=user.id, p1_name=self._bt_name(user))
 
         if b.mode == "group":
-            target = msg.reply_to_message.from_user if msg.reply_to_message else None
+            # From a button the message is the bot's own; its reply_to is the
+            # user's /start, so only a real user reply picks a target.
+            from_bot = bool(getattr(msg, "from_user", None) and msg.from_user.is_bot)
+            target = msg.reply_to_message.from_user if (msg.reply_to_message and not from_bot) else None
             if target:
                 if target.is_bot:
                     await self._reply(update, "🤖 You can't challenge a bot.")

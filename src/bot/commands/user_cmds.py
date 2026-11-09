@@ -9,7 +9,7 @@ import time
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 
-from src.bot.ui import UI, COMMUNITY
+from src.bot.ui import UI, COMMUNITY, get_thread_id
 
 logger = logging.getLogger(__name__)
 
@@ -42,23 +42,29 @@ class UserCommandsMixin(object):
 
         bot_inline = "Miss Quiz 🎓"
 
-        kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🎓 Start Quiz",       callback_data="play_quiz"),
-             InlineKeyboardButton("🎓 My Profile",         callback_data="my_profile")],
-            [InlineKeyboardButton("❓ Help",              callback_data="help")],
-            [InlineKeyboardButton("🎓 Join CLAT Vision",  url="https://t.me/CLAT_Vision")],
-        ])
+        # Admin Panel button only in an admin's own DM
+        show_admin = bool(is_pm and user and await self._is_authorized(user.id))
+        kb = self._start_kb(show_admin=show_admin)
 
         text = self._build_greeting(mention, bot_inline)
+        photo = await self._get_start_photo() if hasattr(self, "_get_start_photo") else None
 
-        if edit_msg:
+        if photo and not edit_msg:
+            try:
+                result = await update.effective_message.reply_photo(
+                    photo, caption=text, parse_mode="HTML", reply_markup=kb,
+                    message_thread_id=get_thread_id(update))
+            except Exception as ex:   # bad/expired photo: fall back to text
+                logger.warning(f"start photo failed: {ex}")
+                result = await self._reply(update, text, reply_markup=kb)
+        elif edit_msg:
             # Navigating back to home — edit existing message
             result = await self._smart_edit(update, text, kb, edit_msg=edit_msg)
         elif is_pm:
             # Reveal animation for fresh /start in PM
             result = await self._reply(update, "🌸")
             await asyncio.sleep(0.3)
-            await self._edit(result, "🎓  <b>𝐂𝐋𝐀𝐓 𝐕𝐈𝐒𝐈𝐎𝐍</b>  🎓")
+            await self._edit(result, "🎓  <b>𝐌𝐈𝐒𝐒 𝐐𝐔𝐈𝐙</b>  🎓")
             await asyncio.sleep(0.35)
             await self._edit(result, text, kb)
         else:
@@ -83,7 +89,7 @@ class UserCommandsMixin(object):
 
         text = (
             f"╔══════════════════════════════════════════╗\n"
-            f"║   🎓  <b>𝐂𝐋𝐀𝐓 𝐕𝐈𝐒𝐈𝐎𝐍</b>  ·  Command Guide   ║\n"
+            f"║   🎓  <b>𝐌𝐈𝐒𝐒 𝐐𝐔𝐈𝐙</b>  ·  Command Guide   ║\n"
             f"╚══════════════════════════════════════════╝\n\n"
 
             f"🎯  <b>𝐐𝐔𝐈𝐙  𝐂𝐄𝐍𝐓𝐄𝐑</b>\n"
@@ -187,7 +193,7 @@ class UserCommandsMixin(object):
             f"  Questions ›  <b>{q_count}</b> loaded\n"
             f"  Bot       ›  🟢 Online\n\n"
             f"{UI.LINE}\n"
-            f"  <i>CLAT Vision Quiz Bot</i>"
+            f"  <i>Miss Quiz Bot</i>"
         )
         await self._edit(msg, text)
 
@@ -212,7 +218,7 @@ class UserCommandsMixin(object):
             f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
             f"🤖  <b>𝐁𝐎𝐓</b>\n"
             f"╭──────────────────────────────────────╮\n"
-            f"│  📛  Name        ›  CLAT Vision Quiz Bot\n"
+            f"│  📛  Name        ›  Miss Quiz Bot\n"
             f"│  📚  Questions   ›  <b>{q_count}</b>\n"
             f"│  🗄  Database    ›  MongoDB Atlas ✅\n"
             f"│  👑  Owner       ›  {OWNER_LINK}\n"
