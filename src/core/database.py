@@ -295,6 +295,17 @@ class DatabaseManager:
         for uid, fld in updates.items():
             self.users_col.update_one({"user_id": uid}, {"$inc": {fld: 1, "battles_played": 1}})
 
+    def get_battle_pref(self, user_id: int) -> Optional[tuple]:
+        """Last custom battle settings (n_q, secs) or None."""
+        doc = self.users_col.find_one({"user_id": user_id}, {"battle_pref": 1}) or {}
+        pref = doc.get("battle_pref") or {}
+        n, s = pref.get("n_q"), pref.get("secs")
+        return (int(n), int(s)) if isinstance(n, int) and isinstance(s, int) else None
+
+    def set_battle_pref(self, user_id: int, n_q: int, secs: int) -> None:
+        self.users_col.update_one({"user_id": user_id},
+                                  {"$set": {"battle_pref": {"n_q": int(n_q), "secs": int(secs)}}})
+
     def upsert_user(self, user_id: int, data: Dict):
         try:
             defaults = {

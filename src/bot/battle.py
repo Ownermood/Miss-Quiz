@@ -38,6 +38,9 @@ BATTLE_SECONDS   = 20     # Telegram open_period per question
 Q_CHOICES        = (5, 10, 15, 20, 25, 30)   # presets; any number can be typed
 Q_MIN, Q_MAX     = 3, 50
 T_MIN, T_MAX     = 5, 600                    # Telegram open_period limits
+# One-tap modes: key -> (label, questions, seconds). Classic is the big green one.
+MODES = {"classic": ("🎯 Classic", 10, 20), "quick": ("⚡ Quick", 5, 15),
+         "marathon": ("🧠 Marathon", 20, 30)}
 T_CHOICES        = (10, 15, 20, 30, 60, 240)   # Telegram allows up to 600 s
 INVITE_TTL       = 300    # seconds a setup/challenge stays open
 START_DELAY      = 3      # seconds between "battle starts" and first question
@@ -69,6 +72,7 @@ class Battle:
     secs:      int = BATTLE_SECONDS
     category:  str = ""                 # "" = all topics
     cat_options: List[str] = field(default_factory=list)
+    last:      Optional[Tuple[int, int]] = None   # challenger's last custom (n_q, secs)
     created:   float = field(default_factory=time.monotonic)
     msg_id:    Optional[int] = None    # challenge message (group)
     scores:    Dict[int, int] = field(default_factory=dict)
@@ -212,7 +216,7 @@ class BattleMixin:
     # ── /battle ──────────────────────────────────────────────────────────
 
     async def cmd_battle(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Step 1: the challenger picks questions / time (setup card)."""
+        """Step 1: the challenger picks a mode (or Custom) on the setup card."""
         user, chat, msg = update.effective_user, update.effective_chat, update.effective_message
         if not user or not chat or not msg:
             return
@@ -228,6 +232,14 @@ class BattleMixin:
         b = Battle(id=bid, mode="dm" if chat.type == "private" else "group",
                    p1=user.id, p1_name=self._bt_name(user), state="setup")
         b.n_q = min(BATTLE_QUESTIONS, max(q for q in Q_CHOICES if q <= len(self._bt_pool())))
+        if self.db and hasattr(self.db, "get_battle_pref"):
+            try:
+                pref = await asyncio.to_thread(self.db.get_battle_pref, user.id)
+                if (isinstance(pref, tuple) and len(pref) == 2
+                        and pref not in [(m[1], m[2]) for m in MODES.values()]):
+                    b.last = pref
+            except Exception as e:
+                logger.debug(f"[BATTLE] load pref failed: {e}")
 
         if b.mode == "group":
             # From a button the message is the bot's own; its reply_to is the
@@ -256,47 +268,57 @@ class BattleMixin:
     # ── views ────────────────────────────────────────────────────────────
 
     def _bt_settings_line(self, b: "Battle") -> str:
-        return f"<blockquote>🎯 Questions › {b.n_q}\n⏱ Time › {_tlabel(b.secs)} each</blockquote>"
+        return (f"<blockquote>🎯 Questions › {b.n_q}\n⏱ Timer › {_tlabel(b.secs)} each\n"
+                f"⌛ Max {_tlabel(b.n_q * b.secs)}</blockquote>")
 
     def _bt_q_max(self) -> int:
         return max(Q_MIN, min(Q_MAX, len(self._bt_pool())))
 
-    def _bt_setup_view(self, b: "Battle", page: str = "main"):
-        """Steps on top (👉 = current). main: Questions / Timer buttons.
-        q / t: presets + type any value. sum: summary with Edit buttons.
-        Next is green, everything else blue."""
+    def _bt_setup_view(self, b: "Battle", page: str = "mode"):
+        """mode: one-tap modes (Classic big + green on top, others paired).
+        q → t: Custom steps; picking a timer creates the challenge."""
         vs = UI.mention(b.p2, b.p2_name) if b.p2 else "<i>anyone</i>"
         B = lambda text, data, style="primary": InlineKeyboardButton(text, callback_data=data, style=style)
-        mark = lambda key, num: "👉" if page == key else num
-        steps = (f"<blockquote>{mark('q', '1️⃣')} Questions › {b.n_q}\n"
-                 f"{mark('t', '2️⃣')} Timer › {_tlabel(b.secs)} each\n"
-                 f"{mark('sum', '3️⃣')} Summary → Create</blockquote>")
-        head = f"⚔️ <b>BATTLE SETUP</b>\n{UI.mention(b.p1, b.p1_name)}  vs  {vs}\n{steps}\n"
-        nxt = lambda to: B("➡️ Next", f"bt_p:{b.id}:{to}", "success")
-        back = B("⬅️ Back", f"bt_p:{b.id}:main")
-        if page == "q":
-            text = head + f"<b>🎯 How many questions?</b>\n<i>Tap one, or type any number ({Q_MIN}–{self._bt_q_max()}).</i>"
-            opts = [B(("✅ " if b.n_q == n else "") + str(n), f"bt_q:{b.id}:{n}")
-                    for n in Q_CHOICES if n <= self._bt_q_max()]
-            rows = [opts[k:k + 3] for k in range(0, len(opts), 3)] + [[back, nxt("t")]]
-        elif page == "t":
-            text = head + ("<b>⏱ Time for each question?</b>\n"
-                           "<i>Tap one, or type any time (e.g. 45, 90s, 2m) — 5s to 10m.</i>")
-            opts = [B(("✅ " if b.secs == t else "") + _tlabel(t), f"bt_t:{b.id}:{t}") for t in T_CHOICES]
-            rows = [opts[k:k + 3] for k in range(0, len(opts), 3)] + [[back, nxt("sum")]]
-        elif page == "sum":
-            total = b.n_q * b.secs
-            text = (f"⚔️ <b>BATTLE SUMMARY</b>\n{UI.mention(b.p1, b.p1_name)}  vs  {vs}\n"
-                    f"{self._bt_settings_line(b)}\n⌛ <i>Up to {_tlabel(total)} in total</i>")
-            rows = [[B("✏️ Questions", f"bt_p:{b.id}:q"), B("✏️ Timer", f"bt_p:{b.id}:t")],
-                    [B("⚔️ Create Challenge", f"bt_go:{b.id}", "success")]]
-        else:
-            text = head + "<i>Tap a step to change it, or Next to see the summary.</i>"
-            rows = [[B(f"🎯 Questions: {b.n_q}", f"bt_p:{b.id}:q")],
-                    [B(f"⏱ Timer: {_tlabel(b.secs)} each", f"bt_p:{b.id}:t")],
-                    [nxt("sum")]]
-        rows.append([B("❌ Cancel", f"bt_dec:{b.id}", "danger")])
+        lab = lambda k: f"{MODES[k][0]} · {MODES[k][1]}Q · {_tlabel(MODES[k][2])}"
+        cancel = [B("❌ Cancel", f"bt_dec:{b.id}", "danger")]
+        if page in ("q", "t"):
+            if page == "q":
+                steps = "👉 Questions › ?\n⏱ Timer › —"
+                ask = f"How many questions? Tap or type a number ({Q_MIN}–{self._bt_q_max()})."
+                opts = [B(str(n), f"bt_q:{b.id}:{n}") for n in Q_CHOICES if n <= self._bt_q_max()]
+                back = f"bt_p:{b.id}:mode"
+            else:
+                steps = f"✅ Questions › {b.n_q}\n👉 Timer › ?"
+                ask = "Time for each question? Tap or type it (45, 90s, 2m)."
+                opts = [B(_tlabel(t), f"bt_t:{b.id}:{t}") for t in T_CHOICES]
+                back = f"bt_p:{b.id}:q"
+            text = (f"⚙️ <b>CUSTOM BATTLE</b>\n{UI.mention(b.p1, b.p1_name)}  vs  {vs}\n"
+                    f"<blockquote>{steps}</blockquote>\n<i>{ask}</i>")
+            rows = [opts[k:k + 3] for k in range(0, len(opts), 3)]
+            rows.append([B("⬅️ Back", back), cancel[0]])
+            return text, InlineKeyboardMarkup(rows)
+        text = (f"⚔️ <b>1v1 BATTLE</b>\n{UI.mention(b.p1, b.p1_name)}  vs  {vs}\n"
+                f"<i>Pick a mode — the challenge is created right away.</i>")
+        rows = [[B(lab("classic"), f"bt_m:{b.id}:classic", "success")],
+                [B(lab("quick"), f"bt_m:{b.id}:quick"), B(lab("marathon"), f"bt_m:{b.id}:marathon")]]
+        last = [B(f"🔁 Last · {b.last[0]}Q · {_tlabel(b.last[1])}", f"bt_m:{b.id}:last")] if b.last else []
+        rows.append(last + [B("⚙️ Custom", f"bt_p:{b.id}:q")])
+        rows.append(cancel)
         return text, InlineKeyboardMarkup(rows)
+
+    async def _bt_create(self, b: "Battle", save_pref: bool = False) -> Optional[str]:
+        """setup → pending. Returns an error text, or None when created."""
+        have = len(self._bt_pool(b.category))
+        if have < b.n_q:
+            return f"Only {have} questions available — pick fewer."
+        b.state, b.created = "pending", time.monotonic()
+        if save_pref and self.db and hasattr(self.db, "set_battle_pref"):
+            try:
+                await asyncio.to_thread(self.db.set_battle_pref, b.p1, b.n_q, b.secs)
+            except Exception as e:
+                logger.debug(f"[BATTLE] save pref failed: {e}")
+        logger.info(f"[BATTLE] {b.id} created n_q={b.n_q} secs={b.secs}")
+        return None
 
     async def handle_battle_input(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Group -3: the challenger typed a number while on the Questions or
@@ -315,12 +337,17 @@ class BattleMixin:
             if val is None:
                 return                                   # normal chat, not for us
             b.n_q = max(Q_MIN, min(val, self._bt_q_max()))
+            aw["kind"] = "t"                             # straight to the timer step
+            text, kb = self._bt_setup_view(b, "t")
         else:
             val = _parse_secs(msg.text)
             if val is None:
                 return
             b.secs = max(T_MIN, min(val, T_MAX))
-        text, kb = self._bt_setup_view(b, aw["kind"])
+            ud.pop("bt_await", None)
+            err = await self._bt_create(b, save_pref=True)
+            text, kb = (self._bt_setup_view(b, "t") if err
+                        else self._bt_challenge_view(b, context.bot.username))
         try:
             await context.bot.edit_message_text(text, chat_id=chat.id, message_id=b.msg_id,
                                                 parse_mode=ParseMode.HTML, reply_markup=kb)
@@ -339,10 +366,12 @@ class BattleMixin:
             text = (f"⚔️ <b>1v1 BATTLE</b>\n{UI.mention(b.p1, b.p1_name)}  vs  {vs}\n"
                     f"{self._bt_settings_line(b)}\n"
                     f"⌛ <i>Open for {INVITE_TTL // 60} min</i>")
-            kb = InlineKeyboardMarkup([[
-                InlineKeyboardButton("✅ Accept", callback_data=f"bt_acc:{b.id}", style="success"),
-                InlineKeyboardButton("❌ Decline", callback_data=f"bt_dec:{b.id}", style="danger"),
-            ]])
+            kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("⚔️ Accept Battle", callback_data=f"bt_acc:{b.id}", style="success")],
+                [InlineKeyboardButton("✏️ Change", callback_data=f"bt_ch:{b.id}", style="primary"),
+                 InlineKeyboardButton("❌ Decline" if b.p2 else "❌ Cancel",
+                                      callback_data=f"bt_dec:{b.id}", style="danger")],
+            ])
             return text, kb
         link = f"https://t.me/{bot_username}?start=bt_{b.id}"
         text = (f"⚔️ <b>1v1 BATTLE</b>\n"
@@ -352,8 +381,9 @@ class BattleMixin:
         share = ("https://t.me/share/url?url=" + quote(link, safe="") +
                  "&text=" + quote("Battle me on Miss Quiz ⚔️"))
         kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("📤 Share invite", url=share)],
-            [InlineKeyboardButton("❌ Cancel", callback_data=f"bt_dec:{b.id}", style="danger")],
+            [InlineKeyboardButton("📤 Share invite", url=share, style="success")],
+            [InlineKeyboardButton("✏️ Change", callback_data=f"bt_ch:{b.id}", style="primary"),
+             InlineKeyboardButton("❌ Cancel", callback_data=f"bt_dec:{b.id}", style="danger")],
         ])
         return text, kb
 
@@ -374,45 +404,59 @@ class BattleMixin:
             await query.answer("This battle is no longer available.", show_alert=True)
             return
 
-        if action in ("bt_q", "bt_t", "bt_c", "bt_go", "bt_p"):
+        if action == "bt_ch":                      # ✏️ Change on the challenge card
+            if user.id != b.p1 or b.state != "pending":
+                await query.answer("Only the challenger can change this (before it's accepted).",
+                                   show_alert=True)
+                return
+            b.state = "setup"
+            await query.answer()
+            await self._bt_edit(query, *self._bt_setup_view(b))
+            return
+
+        if action in ("bt_q", "bt_t", "bt_m", "bt_go", "bt_p"):
             if user.id != b.p1 or b.state != "setup":
                 await query.answer("Only the challenger can change this.", show_alert=True)
                 return
             ud = getattr(context, "user_data", None)
             if ud is not None:
                 ud.pop("bt_await", None)
+            arg = parts[2] if len(parts) > 2 else ""
+            remember = lambda kind: (ud is not None and query.message and ud.__setitem__(
+                "bt_await", {"bid": b.id, "kind": kind, "chat": query.message.chat.id}))
             if action == "bt_p":
+                page = arg if arg in ("q", "t") else "mode"
+                if page != "mode":
+                    remember(page)
                 await query.answer()
-                page = parts[2] if len(parts) > 2 and parts[2] in ("q", "t", "sum") else "main"
-                if page in ("q", "t") and ud is not None and query.message:
-                    ud["bt_await"] = {"bid": b.id, "kind": page, "chat": query.message.chat.id}
                 await self._bt_edit(query, *self._bt_setup_view(b, page))
                 return
-            try:
-                val = int(parts[2]) if action != "bt_go" else 0
-            except (IndexError, ValueError):
-                await query.answer(); return
             if action == "bt_q":
-                b.n_q = max(Q_MIN, min(val, self._bt_q_max()))
-            elif action == "bt_t":
-                b.secs = max(T_MIN, min(val, T_MAX))
-            elif action == "bt_c":
-                b.category = b.cat_options[val] if 0 <= val < len(b.cat_options) else ""
-            elif action == "bt_go":
-                have = len(self._bt_pool(b.category))
-                if have < b.n_q:
-                    await query.answer(f"Only {have} questions available — pick fewer.",
-                                       show_alert=True)
-                    return
-                b.state, b.created = "pending", time.monotonic()
-                await query.answer("Challenge created! ⚔️")
-                await self._bt_edit(query, *self._bt_challenge_view(b, context.bot.username))
+                if not arg.isdigit():
+                    await query.answer(); return
+                b.n_q = max(Q_MIN, min(int(arg), self._bt_q_max()))
+                remember("t")
+                await query.answer()
+                await self._bt_edit(query, *self._bt_setup_view(b, "t"))
                 return
-            await query.answer()
-            page = {"bt_q": "q", "bt_t": "t"}.get(action, "main")
-            if page != "main" and ud is not None and query.message:
-                ud["bt_await"] = {"bid": b.id, "kind": page, "chat": query.message.chat.id}
-            await self._bt_edit(query, *self._bt_setup_view(b, page))
+            custom = action == "bt_t"
+            if custom:
+                if not arg.isdigit():
+                    await query.answer(); return
+                b.secs = max(T_MIN, min(int(arg), T_MAX))
+            elif action == "bt_m":
+                if arg in MODES:
+                    _, b.n_q, b.secs = MODES[arg]
+                elif arg == "last" and b.last:
+                    b.n_q, b.secs = b.last
+                else:
+                    await query.answer(); return
+            err = await self._bt_create(b, save_pref=custom)
+            if err:
+                await query.answer(err, show_alert=True)
+                return
+            await query.answer("Challenge created! ⚔️")
+            await self._bt_edit(query, *self._bt_challenge_view(b, context.bot.username))
             return
 
         if action == "bt_dec":

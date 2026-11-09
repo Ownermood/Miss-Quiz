@@ -48,3 +48,13 @@ def test_upsert_user_never_puts_a_field_in_set_and_setoninsert():
     assert update["$set"]["active_status"] == "active"           # caller's value kept
     assert update["$setOnInsert"]["xp"] == 0                      # other defaults still seeded
     assert db.users_col.update_one.call_args.kwargs["upsert"] is True
+
+
+def test_battle_pref_roundtrip():
+    import mongomock
+    db = _db()
+    db.users_col = mongomock.MongoClient().db.users
+    db.users_col.insert_one({"user_id": 7})
+    assert db.get_battle_pref(7) is None and db.get_battle_pref(999) is None
+    db.set_battle_pref(7, 12, 45)
+    assert db.get_battle_pref(7) == (12, 45)
