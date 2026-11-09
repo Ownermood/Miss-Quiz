@@ -116,6 +116,7 @@ class AdminPanelMixin:
              btn("Undo Broadcast", "back", BLUE, callback_data="ap:dbc")],
             [btn("Start Photo", "folder", BLUE, callback_data="ap:photo"),
              btn("Team", "users", BLUE, callback_data="ap:team")],
+            [btn("Emoji Test", "star", BLUE, callback_data="ap:emoji:0")],
         ]
         if is_owner:
             rows.append([btn("Restart Bot", "warn", GREEN, callback_data="ap:restart")])
@@ -220,6 +221,13 @@ class AdminPanelMixin:
             await self.cmd_editquiz(self._proxy(update, "/editquiz"), context)
 
         # commands that need the admin's next message
+        elif data.startswith("ap:emoji:"):
+            await q.answer()
+            try:
+                page = int(data.split(":")[2])
+            except (ValueError, IndexError):
+                page = 0
+            await self._edit(q.message, *self._emoji_test_page(page))
         elif data == "ap:find":
             await ask("find",
                       f"🔎 <b>FIND QUESTION</b>\n{UI.THIN}\n"
@@ -359,6 +367,34 @@ class AdminPanelMixin:
                     context.args = [key[4:], uid]
                     await dev.dev(update, context)
         raise ApplicationHandlerStop
+
+    # ── emoji test (see every premium emoji the bot can send) ────────────
+
+    EMOJI_PER_PAGE = 40   # stay well under Telegram's custom-emoji-per-message limit
+
+    def _emoji_test_page(self, page: int):
+        from src.bot.premium import EXACT, EMOJI_ID, premium_on
+        lookalike = sorted(k for k in EMOJI_ID if k not in EXACT)
+        exact = sorted(EXACT)
+        items = [("≈", k) for k in lookalike] + [("", k) for k in exact]
+        pages = max(1, (len(items) + self.EMOJI_PER_PAGE - 1) // self.EMOJI_PER_PAGE)
+        page = max(0, min(page, pages - 1))
+        start = page * self.EMOJI_PER_PAGE
+        chunk = items[start:start + self.EMOJI_PER_PAGE]
+        rows = []
+        for i in range(0, len(chunk), 5):
+            rows.append("   ".join(f"{start + i + j + 1}.{mark}{k}" for j, (mark, k) in enumerate(chunk[i:i + 5])))
+        head = (f"🧪 <b>EMOJI TEST</b> · page {page + 1}/{pages}\n"
+                f"<b>{len(EXACT)} exact · {len(lookalike)} look-alike (≈)</b>\n"
+                + ("" if premium_on() else "<b>⚠️ PREMIUM_EMOJI is OFF — showing normal emoji</b>\n")
+                + "<i>Wrong-looking one? Send its number to the developer.</i>\n\n")
+        nav = []
+        if page > 0:
+            nav.append(btn("Prev", "back", BLUE, callback_data=f"ap:emoji:{page - 1}"))
+        if page < pages - 1:
+            nav.append(btn("Next", "play", BLUE, callback_data=f"ap:emoji:{page + 1}"))
+        kb = InlineKeyboardMarkup(([nav] if nav else []) + [[btn("Back", "back", RED, callback_data="ap:home")]])
+        return head + "\n".join(rows), kb
 
     # ── find question ────────────────────────────────────────────────────
 

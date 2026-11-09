@@ -430,3 +430,26 @@ def test_refresh_button_is_routed():
     h = next(h for h in cbs if h.callback == b._cb_botstats_refresh)
     assert h.pattern.match("bs_refresh")
     assert cbs.index(h) < [x.callback for x in cbs].index(b.handle_callback)
+
+
+def test_emoji_test_pages_cover_every_mapped_emoji(bot, monkeypatch):
+    monkeypatch.setenv("PREMIUM_EMOJI", "1")
+    from src.bot.premium import EMOJI_ID, premiumize_html
+    seen, page = [], 0
+    while True:
+        text, kb = bot._emoji_test_page(page)
+        assert premiumize_html(text).count("<tg-emoji") <= 60       # per-message custom emoji budget
+        seen += [tok.split(".", 1)[1].lstrip("≈") for tok in text.split("\n", 4)[-1].split() if "." in tok]
+        datas = [b.callback_data for r in kb.inline_keyboard for b in r]
+        if f"ap:emoji:{page + 1}" not in datas:
+            break
+        page += 1
+    assert set(seen) == set(EMOJI_ID)
+
+
+def test_keycap_and_new_pack_emojis_premium(monkeypatch):
+    monkeypatch.setenv("PREMIUM_EMOJI", "1")
+    from src.bot.premium import premiumize_html, EXACT
+    out = premiumize_html("1️⃣ 🔥 10")
+    assert out.count("<tg-emoji") == 2 and out.endswith(" 10")      # plain digits untouched
+    assert "🔥" in EXACT and "💪" in EXACT
