@@ -14,16 +14,17 @@ State is in memory: a running battle is lost on restart (battles last ~2 min).
 """
 
 import asyncio
-import html
 import logging
 import re
 import secrets
 import time
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Dict, List, Optional, Tuple
 from urllib.parse import quote
 
 from telegram import (
+    CopyTextButton,
     InlineKeyboardButton, InlineKeyboardMarkup, Poll, Update,
 )
 from telegram.constants import ParseMode
@@ -38,6 +39,11 @@ BATTLE_SECONDS   = 20     # Telegram open_period per question
 Q_CHOICES        = (5, 10, 15, 20, 25, 30)   # presets; any number can be typed
 Q_MIN, Q_MAX     = 3, 50
 T_MIN, T_MAX     = 5, 600                    # Telegram open_period limits
+# Battle fields saved in MongoDB while a challenge is open (setup/pending)
+_PERSIST = ("id", "mode", "p1", "p1_name", "p2", "p2_name", "chat_id", "thread_id",
+            "state", "n_q", "secs", "category", "msg_id")
+_ENDED_KB = InlineKeyboardMarkup([[InlineKeyboardButton("⚔️ New Battle", callback_data="start_battle",
+                                                        style="success")]])
 # One-tap modes: key -> (label, questions, seconds). Classic is the big green one.
 MODES = {"classic": ("🎯 Classic", 10, 20), "quick": ("⚡ Quick", 5, 15),
          "marathon": ("🧠 Marathon", 20, 30)}
@@ -183,13 +189,57 @@ class BattleMixin:
         """Only a battle being played blocks a user; open challenges don't."""
         return any(b.state == "running" and uid in b.players for b in self._bt_state().values())
 
+    async def _bt_save(self, b: "Battle") -> None:
+        """Open challenge → MongoDB (so buttons/links survive a restart);
+        anything else → removed from MongoDB."""
+        if not self.db or not hasattr(self.db, "save_battle"):
+            return
+        try:
+            if b.state in ("setup", "pending"):
+                doc = {k: getattr(b, k) for k in _PERSIST}
+                doc["created_at"] = time.time() - (time.monotonic() - b.created)
+                doc["expires_at"] = datetime.fromtimestamp(doc["created_at"] + INVITE_TTL,
+                                                           timezone.utc).replace(tzinfo=None)
+                await asyncio.to_thread(self.db.save_battle, doc)
+            else:
+                await asyncio.to_thread(self.db.delete_battle, b.id)
+        except Exception as e:
+            logger.debug(f"[BATTLE] save {b.id} failed: {e}")
+
+    async def _bt_get(self, bid: str) -> Optional["Battle"]:
+        """Battle from memory, or an open one from MongoDB (after a restart)."""
+        b = self._bt_state().get(bid)
+        if b or not bid or not self.db or not hasattr(self.db, "get_battle"):
+            return b
+        try:
+            doc = await asyncio.to_thread(self.db.get_battle, bid)
+            if not isinstance(doc, dict) or doc.get("state") not in ("setup", "pending"):
+                return None
+            b = Battle(**{k: doc[k] for k in _PERSIST if k in doc})
+            b.created = time.monotonic() - max(0.0, time.time() - float(doc.get("created_at") or time.time()))
+        except Exception as e:
+            logger.debug(f"[BATTLE] load {bid} failed: {e}")
+            return None
+        if b.expired():
+            return None
+        self._bt_state()[bid] = b
+        return b
+
     async def _bt_drop_open(self, uid: int, context) -> None:
         """Close this user's own open challenges (setup/pending) — a new
         /battle or accepting someone else replaces them."""
+        if self.db and hasattr(self.db, "open_battles_of"):
+            try:
+                docs = await asyncio.to_thread(self.db.open_battles_of, uid)
+                for d in docs if isinstance(docs, list) else []:
+                    await self._bt_get(d.get("id", ""))
+            except Exception as e:
+                logger.debug(f"[BATTLE] open_battles_of failed: {e}")
         for b in list(self._bt_state().values()):
             if b.p1 != uid or b.state not in ("setup", "pending"):
                 continue
             b.state = "done"
+            await self._bt_save(b)
             if b.msg_id:
                 try:
                     await context.bot.edit_message_text(
@@ -277,6 +327,7 @@ class BattleMixin:
         sent = await self._reply(update, text, reply_markup=kb)
         b.msg_id = getattr(sent, "message_id", None)
         self._bt_state()[bid] = b
+        await self._bt_save(b)
         logger.info(f"[BATTLE] {bid} setup mode={b.mode} p1={b.p1} p2={b.p2}")
 
     # ── views ────────────────────────────────────────────────────────────
@@ -342,7 +393,7 @@ class BattleMixin:
         msg, chat = update.effective_message, update.effective_chat
         if not aw or not msg or not chat or chat.id != aw["chat"] or not getattr(msg, "text", None):
             return
-        b = self._bt_state().get(aw["bid"])
+        b = await self._bt_get(aw["bid"])
         if not b or b.state != "setup" or b.expired():
             ud.pop("bt_await", None)
             return
@@ -368,6 +419,7 @@ class BattleMixin:
         except Exception as e:
             if "not modified" not in str(e).lower():
                 logger.debug(f"[BATTLE] input edit failed: {e}")
+        await self._bt_save(b)
         try:
             await msg.delete()                           # keep the chat clean (needs admin in groups)
         except Exception:
@@ -387,14 +439,14 @@ class BattleMixin:
             ])
             return text, kb
         link = f"https://t.me/{bot_username}?start=bt_{b.id}"
-        text = (f"⚔️ <b>1v1 BATTLE</b>\n"
-                f"Send this link to a friend — when they open it, the battle starts in both your DMs.\n"
-                f"{self._bt_settings_line(b)}\n"
-                f"🔗 {html.escape(link)}")
-        share = ("https://t.me/share/url?url=" + quote(link, safe="") +
-                 "&text=" + quote("Battle me on Miss Quiz ⚔️"))
+        text = (f"⚔️ <b>INVITE READY</b>\n{self._bt_settings_line(b)}\n"
+                f"📤 <i>Send it to a friend. When they tap Accept, the battle starts in both your DMs.</i>")
+        msg = (f"⚔️ {b.p1_name} challenged you to a 1v1 quiz battle! "
+               f"{b.n_q} questions · {_tlabel(b.secs)} each. Tap to accept 👇")
+        share = "https://t.me/share/url?url=" + quote(link, safe="") + "&text=" + quote(msg)
         kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("📤 Share invite", url=share, style="success")],
+            [InlineKeyboardButton("📤 Send to a friend", url=share, style="success")],
+            [InlineKeyboardButton("📋 Copy link", copy_text=CopyTextButton(link), style="primary")],
             [InlineKeyboardButton("✏️ Change", callback_data=f"bt_ch:{b.id}", style="primary"),
              InlineKeyboardButton("❌ Cancel", callback_data=f"bt_dec:{b.id}", style="danger")],
         ])
@@ -403,6 +455,18 @@ class BattleMixin:
     # ── buttons: setup / accept / decline / rematch ──────────────────────
 
     async def handle_battle_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Loads the battle (memory or MongoDB), handles the button, saves it."""
+        data = getattr(update.callback_query, "data", "") or ""
+        parts = data.split(":")
+        bid = parts[1] if len(parts) > 1 else ""
+        if parts[0] != "bt_rm":
+            await self._bt_get(bid)
+        await self._bt_callback(update, context)
+        b = self._bt_state().get(bid)
+        if b:
+            await self._bt_save(b)
+
+    async def _bt_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         query = update.callback_query
         user  = update.effective_user
         if not query or not user or not query.data:
@@ -414,7 +478,8 @@ class BattleMixin:
             return
         b = self._bt_state().get(bid)
         if not b or b.expired():
-            await query.answer("This battle is no longer available.", show_alert=True)
+            await query.answer("This battle has ended — start a new one.")
+            await self._bt_edit(query, "⚔️ <i>This battle has ended.</i>", _ENDED_KB)
             return
 
         if action == "bt_ch":                      # ✏️ Change on the challenge card
@@ -477,6 +542,15 @@ class BattleMixin:
                 b.state = "done"
                 await query.answer("Battle cancelled.")
                 await self._bt_edit(query, f"⚔️ Battle cancelled by {UI.mention(b.p1, b.p1_name)}.")
+            elif b.mode == "dm" and not b.p2 and b.state == "pending":
+                await query.answer("Declined.")
+                await self._bt_edit(query, "❌ You declined the battle.")
+                try:
+                    await context.bot.send_message(
+                        b.p1, f"❌ {UI.mention(user.id, self._bt_name(user))} declined your battle invite. "
+                              f"It's still open for others.", parse_mode=ParseMode.HTML)
+                except Exception:
+                    pass
             elif b.p2 and user.id == b.p2 and b.state == "pending":
                 b.state = "done"
                 await query.answer("Declined.")
@@ -493,6 +567,10 @@ class BattleMixin:
                 await query.answer(why, show_alert=True)
                 return
             await self._bt_drop_open(user.id, context)
+            ok, why = b.can_accept(user.id)            # re-check: someone may have accepted meanwhile
+            if not ok or self._bt_busy(user.id):
+                await query.answer(why or "You're already in a battle.", show_alert=True)
+                return
             b.start(user.id, self._bt_name(user))
             await query.answer("Battle accepted! ⚔️")
             await self._bt_edit(
@@ -507,12 +585,19 @@ class BattleMixin:
                     await asyncio.to_thread(self.ensure_user_registered, user, None, "battle")
                 except Exception:
                     pass
-            if b.mode == "dm":   # rematch accepted in DM: tell the challenger too
+            if b.mode == "dm":   # tell the challenger: edit their invite card, else a new message
+                note = (f"✅ {UI.mention(b.p2, b.p2_name)} accepted your battle!\n"
+                        f"{self._bt_settings_line(b)}\nFirst question in {START_DELAY}s…")
                 try:
-                    await context.bot.send_message(b.p1, f"⚔️ <b>{html.escape(b.p2_name)} accepted — starting!</b>",
-                                                   parse_mode=ParseMode.HTML)
+                    if not b.msg_id:
+                        raise ValueError("no invite card")
+                    await context.bot.edit_message_text(note, chat_id=b.p1, message_id=b.msg_id,
+                                                        parse_mode=ParseMode.HTML)
                 except Exception:
-                    pass
+                    try:
+                        await context.bot.send_message(b.p1, note, parse_mode=ParseMode.HTML)
+                    except Exception:
+                        pass
             asyncio.create_task(self._bt_run(b, context))
 
     async def _bt_rematch(self, query, user, old_bid: str, context) -> None:
@@ -532,6 +617,7 @@ class BattleMixin:
                    p2=other, p2_name=other_name, chat_id=old.chat_id, thread_id=old.thread_id,
                    n_q=old.n_q, secs=old.secs, category=old.category)
         self._bt_state()[bid] = b
+        await self._bt_save(b)
         await query.answer("Rematch sent! ⚔️")
         text, _ = self._bt_challenge_view(dataclass_replace_mode(b, "group"), context.bot.username)
         kb = InlineKeyboardMarkup([[
@@ -546,6 +632,7 @@ class BattleMixin:
             await context.bot.send_message(target, "🔁 <b>REMATCH</b>\n" + text, **kw)
         except Exception as e:
             b.state = "done"
+            await self._bt_save(b)
             logger.warning(f"[BATTLE] rematch {bid} could not be sent: {e}")
 
     async def battle_join_from_link(self, update: Update, context: ContextTypes.DEFAULT_TYPE,
@@ -553,33 +640,25 @@ class BattleMixin:
         """Called from /start bt_<id> in a DM."""
         user = update.effective_user
         self._bt_cleanup()
-        b = self._bt_state().get(bid)
-        if not b or b.mode != "dm":
-            await self._reply(update, "⚔️ This battle link is invalid or has expired.")
+        b = await self._bt_get(bid)
+        if not b or b.mode != "dm" or b.expired() or b.state not in ("pending", "running"):
+            await self._reply(update, "⚔️ This battle invite has ended.", reply_markup=_ENDED_KB)
+            return
+        if user.id == b.p1:
+            await self._reply(update, "⚔️ This is your own invite — send it to a friend 📤")
             return
         ok, why = b.can_accept(user.id)
-        if ok and self._bt_busy(user.id):
-            ok, why = False, "You're already in a battle — finish it first."
         if not ok:
-            await self._reply(update, f"⚔️ {why}")
+            await self._reply(update, f"⚔️ {why}", reply_markup=_ENDED_KB)
             return
-        await self._bt_drop_open(user.id, context)
-        b.start(user.id, self._bt_name(user))
-        intro = (
-            f"⚔️  <b>BATTLE STARTED</b>\n{UI.LINE}\n\n"
-            f"{UI.mention(b.p1, b.p1_name)}  vs  {UI.mention(b.p2, b.p2_name)}\n\n"
-            f"🎯 {b.n_q} questions · ⏱ {_tlabel(b.secs)} each\n"
-            f"First question in {START_DELAY}s…"
-        )
-        for uid in b.players:
-            try:
-                await context.bot.send_message(uid, intro, parse_mode=ParseMode.HTML)
-            except Exception as e:
-                logger.warning(f"[BATTLE] {bid} intro to {uid} failed: {e}")
-                b.state = "done"
-                await self._bt_notify(b, context, "⚠️ Battle cancelled: could not message both players.")
-                return
-        asyncio.create_task(self._bt_run(b, context))
+        text = (f"⚔️ <b>BATTLE INVITE</b>\n{UI.mention(b.p1, b.p1_name)} challenged you!\n"
+                f"{self._bt_settings_line(b)}\n"
+                f"<i>Tap Accept — the battle starts in both your DMs.</i>")
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("⚔️ Accept Battle", callback_data=f"bt_acc:{b.id}", style="success")],
+            [InlineKeyboardButton("❌ Decline", callback_data=f"bt_dec:{b.id}", style="danger")],
+        ])
+        await self._reply(update, text, reply_markup=kb)
 
     # ── game loop ────────────────────────────────────────────────────────
 

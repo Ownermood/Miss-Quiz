@@ -189,10 +189,17 @@ async def test_dm_battle_via_link():
                                    effective_message=SimpleNamespace(reply_to_message=None))
     await app.cmd_battle(dm(a), ctx)
     bid = await setup_and_create(app, ctx, a, n_q=5)
-    text = app._last_edit
-    assert f"start=bt_{bid}" in text
+    assert "INVITE READY" in app._last_edit
+    _, kb = app._bt_challenge_view(app._bt_state()[bid], "MissQuizBot")
+    btns = [x for r in kb.inline_keyboard for x in r]
+    assert any(f"start%3Dbt_{bid}" in (x.url or "") for x in btns)          # Send to a friend
+    assert any(x.copy_text and f"start=bt_{bid}" in x.copy_text.text for x in btns)   # Copy link
 
-    await app.battle_join_from_link(dm(b), ctx, bid)
+    await app.battle_join_from_link(dm(a), ctx, bid)                       # own link
+    assert "your own invite" in app.replies[-1][0]
+    await app.battle_join_from_link(dm(b), ctx, bid)                       # friend: accept card
+    assert "BATTLE INVITE" in app.replies[-1][0] and app._bt_state()[bid].state == "pending"
+    await press(app, ctx, b, f"bt_acc:{bid}")
     await _answer_all(app, polls, 0, {1: 0, 2: 1})   # Bina correct, Amit wrong
     for _ in range(200):
         if app._bt_state()[bid].state == "done":
@@ -468,3 +475,73 @@ async def test_no_last_button_without_pref_and_time_minimum():
     await press(app, ctx, a, f"bt_q:{b.id}:5")
     await press(app, ctx, a, f"bt_t:{b.id}:2")                          # forged too-small value
     assert b.secs == 5
+
+
+
+def _mongo_db(app):
+    import mongomock
+    from src.core.database import DatabaseManager
+    real = DatabaseManager.__new__(DatabaseManager)
+    real.battles_col = mongomock.MongoClient().db.battles
+    for name in ("save_battle", "get_battle", "delete_battle", "open_battles_of"):
+        setattr(app.db, name, getattr(real, name))
+    return real
+
+
+async def test_open_challenge_survives_restart():
+    app = FakeBotApp()
+    real = _mongo_db(app)
+    ctx, _ = fake_context()
+    a, b = user(1, "Amit"), user(2, "Bina")
+    await app.cmd_battle(group_update(a), ctx)
+    bid = next(iter(app._bt_state()))
+    await press(app, ctx, a, f"bt_m:{bid}:quick")
+    assert real.get_battle(bid)["state"] == "pending"
+
+    app2 = FakeBotApp()                         # "restart": empty memory, same DB
+    app2.db = app.db
+    await press(app2, ctx, b, f"bt_acc:{bid}")
+    bt2 = app2._bt_state()[bid]
+    assert bt2.state == "running" and (bt2.n_q, bt2.secs) == (5, 15)
+    assert real.get_battle(bid) is None          # running/done battles leave the DB
+    bt2.state = "done"
+
+
+async def test_ended_battle_shows_new_battle_button():
+    app = FakeBotApp()
+    ctx, _ = fake_context()
+    q = await press(app, ctx, user(1, "A"), "bt_acc:gone")
+    assert "has ended" in app._last_edit
+    kb = q.edit_message_text.await_args.kwargs["reply_markup"]
+    assert kb.inline_keyboard[0][0].callback_data == "start_battle"
+
+
+async def test_dm_decline_notifies_challenger_and_stays_open():
+    app = FakeBotApp()
+    ctx, _ = fake_context()
+    a, b = user(1, "Amit"), user(2, "Bina")
+    dm = lambda u: SimpleNamespace(effective_user=u, effective_chat=SimpleNamespace(id=u.id, type="private"),
+                                   effective_message=SimpleNamespace(reply_to_message=None))
+    await app.cmd_battle(dm(a), ctx)
+    bid = await setup_and_create(app, ctx, a)
+    await press(app, ctx, b, f"bt_dec:{bid}")
+    assert "declined" in app._last_edit
+    assert ctx.bot.send_message.await_args.args[0] == 1                     # challenger told
+    assert app._bt_state()[bid].state == "pending"
+
+
+async def test_dm_accept_updates_challenger_card_and_only_one_can_accept():
+    app = FakeBotApp()
+    ctx, _ = fake_context()
+    a, b, c = user(1, "Amit"), user(2, "Bina"), user(3, "Chetan")
+    dm = lambda u: SimpleNamespace(effective_user=u, effective_chat=SimpleNamespace(id=u.id, type="private"),
+                                   effective_message=SimpleNamespace(reply_to_message=None))
+    await app.cmd_battle(dm(a), ctx)
+    bid = await setup_and_create(app, ctx, a)
+    await press(app, ctx, b, f"bt_acc:{bid}")
+    kw = ctx.bot.edit_message_text.await_args.kwargs
+    assert kw["chat_id"] == 1 and kw["message_id"] == 500                   # invite card edited
+    assert "accepted your battle" in ctx.bot.edit_message_text.await_args.args[0]
+    q = await press(app, ctx, c, f"bt_acc:{bid}")                           # too late
+    assert q.answer.await_args.kwargs.get("show_alert") is True
+    app._bt_state()[bid].state = "done"

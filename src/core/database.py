@@ -54,6 +54,7 @@ class DatabaseManager:
         self.poll_map_col        = self.db["poll_map"]
         self.auto_quiz_state_col = self.db["auto_quiz_state"]
         self.settings_col        = self.db["settings"]
+        self.battles_col         = self.db["battles"]      # open battle challenges (survive restart)
 
         self._ensure_indexes()
         logger.info(f"✅ MongoDB connected: {redact_url(url)} / db={db_name}")
@@ -92,6 +93,9 @@ class DatabaseManager:
             self.activities_col.create_index([("type", ASCENDING), ("user_id", ASCENDING), ("timestamp", DESCENDING)])
             self.activities_col.create_index([("timestamp", DESCENDING)])
             self.broadcasts_col.create_index([("created_at", DESCENDING)])
+            self.battles_col.create_index("id", unique=True)
+            self.battles_col.create_index("p1")
+            self.battles_col.create_index("expires_at", expireAfterSeconds=0)   # Mongo auto-deletes
         except Exception as e:
             logger.warning(f"Index creation warning: {e}")
 
@@ -294,6 +298,19 @@ class DatabaseManager:
             updates = {winner: "battle_wins", loser: "battle_losses"}
         for uid, fld in updates.items():
             self.users_col.update_one({"user_id": uid}, {"$inc": {fld: 1, "battles_played": 1}})
+
+    # ── Open battle challenges (setup/pending) ──
+    def save_battle(self, doc: Dict) -> None:
+        self.battles_col.replace_one({"id": doc["id"]}, doc, upsert=True)
+
+    def get_battle(self, bid: str) -> Optional[Dict]:
+        return self.battles_col.find_one({"id": bid}, {"_id": 0})
+
+    def delete_battle(self, bid: str) -> None:
+        self.battles_col.delete_one({"id": bid})
+
+    def open_battles_of(self, user_id: int) -> List[Dict]:
+        return list(self.battles_col.find({"p1": user_id}, {"_id": 0, "id": 1}).limit(20))
 
     def get_battle_pref(self, user_id: int) -> Optional[tuple]:
         """Last custom battle settings (n_q, secs) or None."""
