@@ -313,6 +313,21 @@ async def test_setup_only_challenger_can_change_and_settings_apply():
     assert bt_.state == "pending" and "15" in app._last_edit and "30s" in app._last_edit
 
 
+async def test_timer_choices_and_labels():
+    from src.bot.battle import _tlabel, T_CHOICES
+    assert [_tlabel(t) for t in T_CHOICES] == ["10s", "15s", "20s", "30s", "1m", "4m"]
+    app = FakeBotApp()
+    ctx, _ = fake_context()
+    a = user(1, "Amit")
+    await app.cmd_battle(group_update(a), ctx)
+    b = next(iter(app._bt_state().values()))
+    _, kb = app._bt_setup_view(b)
+    rows = [[x.text.replace("✅ ", "") for x in r] for r in kb.inline_keyboard]
+    assert ["10s", "15s", "20s"] in rows and ["30s", "1m", "4m"] in rows
+    await press(app, ctx, a, f"bt_t:{b.id}:240")
+    assert b.secs == 240 and "4m each" in app._last_edit
+
+
 async def test_topic_with_too_few_questions_is_refused():
     app = FakeBotApp()
     for i, q in enumerate(app.quiz_manager.questions):

@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 BATTLE_QUESTIONS = 10     # defaults; the challenger can change them in the setup card
 BATTLE_SECONDS   = 20     # Telegram open_period per question
 Q_CHOICES        = (5, 10, 15, 20)
-T_CHOICES        = (10, 15, 20, 30)
+T_CHOICES        = (10, 15, 20, 30, 60, 240)   # Telegram allows up to 600 s
 INVITE_TTL       = 300    # seconds a setup/challenge stays open
 START_DELAY      = 3      # seconds between "battle starts" and first question
 ROUND_GAP        = 1      # pause after each question before the next one
@@ -137,6 +137,11 @@ class Battle:
         return (a, b) if self.times[a] < self.times[b] else (b, a)
 
 
+def _tlabel(secs: int) -> str:
+    """10 -> '10s', 60 -> '1m', 240 -> '4m'."""
+    return f"{secs // 60}m" if secs >= 60 and secs % 60 == 0 else f"{secs}s"
+
+
 def dataclass_replace_mode(b: "Battle", mode: str) -> "Battle":
     import dataclasses
     return dataclasses.replace(b, mode=mode)
@@ -236,7 +241,7 @@ class BattleMixin:
 
     def _bt_settings_line(self, b: "Battle") -> str:
         topic = html.escape(b.category) if b.category else "All topics"
-        return (f"<blockquote>🎯 Questions › {b.n_q}\n⏱ Time › {b.secs}s each\n"
+        return (f"<blockquote>🎯 Questions › {b.n_q}\n⏱ Time › {_tlabel(b.secs)} each\n"
                 f"📚 Topic › {topic}</blockquote>")
 
     def _bt_setup_view(self, b: "Battle"):
@@ -247,8 +252,9 @@ class BattleMixin:
         mark = lambda on, label: f"✅ {label}" if on else label
         rows = [
             [InlineKeyboardButton(mark(b.n_q == n, f"{n} Q"), callback_data=f"bt_q:{b.id}:{n}") for n in Q_CHOICES],
-            [InlineKeyboardButton(mark(b.secs == t, f"{t}s"), callback_data=f"bt_t:{b.id}:{t}") for t in T_CHOICES],
         ]
+        tbtn = [InlineKeyboardButton(mark(b.secs == t, _tlabel(t)), callback_data=f"bt_t:{b.id}:{t}") for t in T_CHOICES]
+        rows += [tbtn[k:k + 3] for k in range(0, len(tbtn), 3)]
         cats = [InlineKeyboardButton(mark(not b.category, "🎲 All topics"), callback_data=f"bt_c:{b.id}:-1")]
         cats += [InlineKeyboardButton(mark(b.category == c, c[:20]), callback_data=f"bt_c:{b.id}:{i}")
                  for i, c in enumerate(b.cat_options)]
@@ -419,7 +425,7 @@ class BattleMixin:
         intro = (
             f"⚔️  <b>BATTLE STARTED</b>\n{UI.LINE}\n\n"
             f"{UI.mention(b.p1, b.p1_name)}  vs  {UI.mention(b.p2, b.p2_name)}\n\n"
-            f"🎯 {b.n_q} questions · ⏱ {b.secs}s each\n"
+            f"🎯 {b.n_q} questions · ⏱ {_tlabel(b.secs)} each\n"
             f"First question in {START_DELAY}s…"
         )
         for uid in b.players:
