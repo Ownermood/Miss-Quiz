@@ -32,6 +32,11 @@ class UserCommandsMixin(object):
             await self.gq_start_from_link(update, context, context.args[0][3:])
             return
 
+        # Deep link: /start shared_<quiz_id> → open shared custom quiz card
+        if is_pm and context.args and context.args[0].startswith("shared_") and hasattr(self, "mq_open_shared"):
+            await self.mq_open_shared(update, context, context.args[0][7:])
+            return
+
         # Deep link: /start mq / mq_new → own quizzes
         if is_pm and context.args and context.args[0] in ("mq", "mq_new") and hasattr(self, "mq_start_draft"):
             if context.args[0] == "mq_new":

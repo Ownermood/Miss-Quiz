@@ -309,18 +309,37 @@ class DatabaseManager:
         import secrets
         sid = secrets.token_hex(4)
         self.quiz_sets_col.insert_one({
-            "id": sid, "owner": int(owner), "title": str(title)[:40], "questions": questions,
-            "count": len(questions), "secs": int(secs), "plays": 0,
-            "created_at": datetime.utcnow().isoformat(),
+            "id": sid, "owner": int(owner), "title": str(title)[:60], "questions": questions,
+            "count": len(questions), "secs": int(secs), "plays": 0, "shuffle": False,
+            "source_files": [], "created_at": datetime.utcnow().isoformat(),
         })
         return sid
+
+    def save_quiz_set(self, doc: Dict) -> str:
+        """Insert or replace a user's custom quiz set in MongoDB."""
+        doc = dict(doc)
+        doc.setdefault("created_at", datetime.utcnow().isoformat())
+        doc.setdefault("plays", 0)
+        doc.setdefault("shuffle", False)
+        doc.setdefault("source_files", [])
+        self.quiz_sets_col.replace_one({"id": str(doc["id"])}, doc, upsert=True)
+        return str(doc["id"])
+
+    def inc_quiz_set_plays(self, sid: str, correct: int = 0, total: int = 0) -> None:
+        """Increment attempt counter and cumulative score stats for a custom quiz set."""
+        inc_fields = {"plays": 1}
+        if total > 0:
+            inc_fields["total_q_answered"] = int(total)
+            inc_fields["total_q_correct"] = int(correct)
+        self.quiz_sets_col.update_one({"id": str(sid)}, {"$inc": inc_fields})
 
     def get_quiz_set(self, sid: str) -> Optional[Dict]:
         return self.quiz_sets_col.find_one({"id": str(sid)}, {"_id": 0})
 
     def list_quiz_sets(self, owner: int, limit: int = 20, skip: int = 0) -> List[Dict]:
         return list(self.quiz_sets_col.find(
-            {"owner": int(owner)}, {"_id": 0, "id": 1, "title": 1, "count": 1, "secs": 1, "created_at": 1}
+            {"owner": int(owner)},
+            {"_id": 0, "id": 1, "title": 1, "count": 1, "secs": 1, "plays": 1, "shuffle": 1, "created_at": 1, "source_files": 1}
         ).sort("created_at", DESCENDING).skip(max(0, skip)).limit(limit))
 
     def count_quiz_sets(self, owner: int) -> int:
