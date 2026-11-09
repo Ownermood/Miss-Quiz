@@ -341,10 +341,11 @@ class AutoQuizScheduler:
                 logger.error(f"[SCHEDULER] get_groups_due_for_quiz() failed: {e}")
                 return
 
+            from src.bot.group_quiz import is_active as _group_quiz_running
             group_targets = [
                 (g["chat_id"], g.get("message_thread_id"), g.get("bot_is_admin"))
                 for g in groups
-                if g.get("chat_id")
+                if g.get("chat_id") and not _group_quiz_running(g["chat_id"])   # a group quiz is on
             ]
         else:
             # No DB (dev/polling mode): fall back to all active chats.

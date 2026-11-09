@@ -31,6 +31,7 @@ src/bot/poll_manager.py     Poll answers, poll_id mapping (battle polls pehle ba
 src/bot/admin_panel.py      /admin panel: har admin command ka button (stats, reload, ➕ Add Questions = ek hi button: text/file/forwarded quiz poll, Done tak leta rahe; edit/delete quiz, broadcast + confirm, undo broadcast, start photo, Admins, restart). **Admins**: sirf owner/WIFU add/remove kar sakte (`_can_manage_admins`; `/dev add|remove` bhi owner-only). Add = ID ya forward → custom title (≤32) → ek emoji (premium `custom_emoji_id` save) → `developers` doc mein `title/emoji/emoji_id`; naye admin ko bot DM bhejta hai (fail ho to owner ko batata hai); remove pe bhi DM. Find Question (ID ya shabd → Edit/Delete buttons). Delete = confirm screen (pura question + answer) phir delete, `/delquiz 12` seedha confirm. Panel buttons usi message ko edit karte hain (`_MsgProxy(edit=True)`, Back auto-add). Input wale buttons `ap_await` set karte hain, agla message handle_admin_input (group -1) leta hai, /cancel. Entry button /start pe red, sirf admin DM. Start photo set (photo ya link → file_id, `settings` collection). Har callback pe auth
 src/bot/premium.py          PremiumExtBot: HAR outgoing message/caption/poll/button ka emoji apne aap premium (PACK_NEW + PACK exact, SUBST look-alike; 3 packs; Admin Panel → Emoji Test se check). 'Back' button hamesha red. Har HTML message apne aap poora bold + extra blank lines saaf (`style_request`, `BOLD_TEXT=0` se band; <code>/<pre> wale messages bold nahi hote). Premium reject ho to plain resend. Naye emoji ke liye bas PACK/SUBST mein jodo
 src/bot/battle.py           1v1 battle (BattleMixin + Battle). Group + DM. In-memory state
+src/bot/group_quiz.py       Group Quiz (GroupQuizMixin): /startquiz (group admin) → apna quiz ya Bot 10/20/30 Q; quiz card ka 👥 Start in Group (`startgroup=gq_<id>`). Timed polls, har 10 pe leaderboard, Pause/Resume/Skip/Stop (admin ya starter), final result + Play again. Ek group = ek session (`ACTIVE`), us waqt auto quiz skip. `quiz_sessions` mein save → restart ke baad agle Q se resume. /stopquiz. /score mein nahi judta
 src/bot/my_quiz.py          Create Own Quiz / /myquiz (MyQuizMixin): DM mein text/file/forwarded quiz poll → draft (user_data mq_draft, group -4) → Done → naam → `quiz_sets`. Max 10 quiz/user, 3–100 Q. Bot pool mein nahi jaate
 src/bot/tracking.py         User/group tracking
 src/bot/ui.py               UI strings, LINE/THIN, mention helpers
@@ -44,7 +45,7 @@ tests/                      ~220 tests (pytest, mongomock): web security, schedu
 
 **Branding:** naam "Miss Quiz Bot", community `t.me/VillanCommunity` (`ui.COMMUNITY_URL`). `/start` = photo (agar set) + bold blockquote caption + rangeen buttons (`_start_kb`). `/help` = 3 bold blockquotes (Play / Progress / Groups) + buttons, koi admin section nahi. Command menu mein sirf user commands; admin sab kuch /start ke red Admin Panel se (purane per-admin menus startup pe delete).
 
-**MongoDB collections:** `settings` (key/value), `questions`, `users`, `groups`, `broadcasts`, `activities`, `developers`, `poll_map`, `auto_quiz_state`, `battles` (open challenges, TTL), `quiz_sets` (users ke apne quiz), `_counters` (auto-increment quiz id).
+**MongoDB collections:** `settings` (key/value), `questions`, `users`, `groups`, `broadcasts`, `activities`, `developers`, `poll_map`, `auto_quiz_state`, `battles` (open challenges, TTL), `quiz_sets` (users ke apne quiz), `quiz_sessions` (chalte group quiz), `_counters` (auto-increment quiz id).
 
 **Auth layers:**
 - Bot: `_is_owner()` / `_is_authorized()` (`handlers_main.py`), `check_access()` (`dev_commands.py`). Owner + WIFU + `developers` collection.
@@ -143,7 +144,7 @@ Pakke bugs aur sirf "possible risks" alag-alag likho.
 - [ ] Har chat mein X din tak repeat na ho (DB mein)
 - [ ] Send fail ho to retry. Inactive groups pause. Rate limit ke liye staggering + 429 handling.
 
-**Group Quiz (manual sessions)** → plan: `docs/GROUP_QUIZ_PLAN.md` (Phase A–E). Owner ke jawab ke baad shuru.
+**Group Quiz (manual sessions)** → `docs/GROUP_QUIZ_PLAN.md`. Bana: A (quiz sets = My Quizzes), B, C, D (resume). Baaki: negative marking, 📊 My result DM, speed control, per-user quiz_results
 
 **Phase 2: Quiz Builder MVP**
 - [ ] DM mein quiz banana (step by step), forward kiye poll se import, .txt/.csv import

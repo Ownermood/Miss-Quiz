@@ -1,6 +1,6 @@
 # Group Quiz (Manual Quiz Sessions) — Plan
 
-> Status: **plan, abhi code nahi**. Owner ke "haan" ke baad phases mein banega.
+> Status: **bana (Nov 2026)** — `src/bot/group_quiz.py` + `src/bot/my_quiz.py`. Defaults chune: koi bhi quiz bana sake, sirf group admin chalaye, timer = quiz ka, negative 0, /score mein nahi, koi daily limit nahi. Baaki: negative marking, My result DM, speed.
 > Auto quiz (har ghante 1 poll) jaisa hai waisa rahega. Ye ek **naya, alag feature** hai.
 
 ---

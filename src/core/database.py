@@ -56,6 +56,7 @@ class DatabaseManager:
         self.settings_col        = self.db["settings"]
         self.battles_col         = self.db["battles"]      # open battle challenges (survive restart)
         self.quiz_sets_col       = self.db["quiz_sets"]    # users' own quizzes (private, not in the bot pool)
+        self.quiz_sessions_col   = self.db["quiz_sessions"]  # running group quizzes (resume after restart)
 
         self._ensure_indexes()
         logger.info(f"✅ MongoDB connected: {redact_url(url)} / db={db_name}")
@@ -99,6 +100,7 @@ class DatabaseManager:
             self.battles_col.create_index("expires_at", expireAfterSeconds=0)   # Mongo auto-deletes
             self.quiz_sets_col.create_index("id", unique=True)
             self.quiz_sets_col.create_index([("owner", ASCENDING), ("created_at", DESCENDING)])
+            self.quiz_sessions_col.create_index("chat_id", unique=True)
         except Exception as e:
             logger.warning(f"Index creation warning: {e}")
 
@@ -326,6 +328,17 @@ class DatabaseManager:
 
     def delete_quiz_set(self, sid: str, owner: int) -> bool:
         return self.quiz_sets_col.delete_one({"id": str(sid), "owner": int(owner)}).deleted_count == 1
+
+    # ── Group quiz sessions ──
+    def save_quiz_session(self, doc: Dict) -> None:
+        doc = dict(doc, updated_at=datetime.utcnow().isoformat())
+        self.quiz_sessions_col.replace_one({"chat_id": doc["chat_id"]}, doc, upsert=True)
+
+    def delete_quiz_session(self, chat_id: int) -> None:
+        self.quiz_sessions_col.delete_one({"chat_id": chat_id})
+
+    def list_quiz_sessions(self) -> List[Dict]:
+        return list(self.quiz_sessions_col.find({"status": {"$in": ["running", "paused"]}}, {"_id": 0}))
 
     # ── Open battle challenges (setup/pending) ──
     def save_battle(self, doc: Dict) -> None:

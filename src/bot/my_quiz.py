@@ -141,7 +141,7 @@ class MyQuizMixin:
         return await load_page(call("list_quiz_sets"), call("count_quiz_sets"), owner, page)
 
     @staticmethod
-    def _mq_card_view(qs: Dict, saved: bool = False):
+    def _mq_card_view(qs: Dict, saved: bool = False, bot_username: str = ""):
         from src.bot.battle import _tlabel
         text = (("✅ <b>Saved!</b>\n" if saved else "") +
                 f"📝 <b>{html.escape(qs.get('title', 'Quiz'))}</b>\n"
@@ -150,6 +150,9 @@ class MyQuizMixin:
                 f"📅 Created › {str(qs.get('created_at', ''))[:10]}</blockquote>")
         kb = InlineKeyboardMarkup([
             [_btn("⚔️ Battle with this quiz", f"mq_bt:{qs['id']}", "success")],
+            *([[InlineKeyboardButton("👥 Start in Group", style="primary",
+                                     url=f"https://t.me/{bot_username}?startgroup=gq_{qs['id']}")]]
+              if bot_username else []),
             [_btn("🗑 Delete", f"mq_del:{qs['id']}", "danger"), _btn("⬅️ Back", "mq_list", "danger")],
         ])
         return text, kb
@@ -286,7 +289,8 @@ class MyQuizMixin:
             await self._mq_show(context, d, "⚠️ <b>Couldn't save the quiz. Please try again.</b>", None)
             return
         qs = await self._mq_db("get_quiz_set", sid) or {"id": sid, "title": title, "count": len(d["qs"]), "secs": 20}
-        await self._mq_show(context, d, *self._mq_card_view(qs, saved=True))
+        await self._mq_show(context, d, *self._mq_card_view(qs, saved=True,
+                                                            bot_username=getattr(context.bot, "username", "")))
         logger.info(f"[MYQUIZ] {user.id} saved {sid} ({len(d['qs'])} questions)")
 
     # ── buttons ──────────────────────────────────────────────────────────
@@ -345,7 +349,7 @@ class MyQuizMixin:
             return
         if action == "mq_open":
             await query.answer()
-            await self._bt_edit(query, *self._mq_card_view(qs))
+            await self._bt_edit(query, *self._mq_card_view(qs, bot_username=context.bot.username))
         elif action == "mq_del":
             await query.answer()
             await self._bt_edit(

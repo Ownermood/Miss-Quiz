@@ -122,6 +122,9 @@ class PollMixin(object):
 
         # 1v1 battle polls are scored separately (in memory, on the event loop)
         # and never touch regular stats
+        if hasattr(self, "gq_on_poll_answer") and self.gq_on_poll_answer(str(poll_id), answer.user, option_ids):
+            await asyncio.to_thread(self.ensure_user_registered, answer.user, None, "poll-answer")
+            return
         if hasattr(self, "battle_on_poll_answer") and \
                 self.battle_on_poll_answer(str(poll_id), user_id, option_ids):
             await asyncio.to_thread(self.ensure_user_registered, answer.user, None, "poll-answer")

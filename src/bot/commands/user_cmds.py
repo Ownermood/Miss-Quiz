@@ -27,6 +27,11 @@ class UserCommandsMixin(object):
         chat    = update.effective_chat
         is_pm   = chat.type == "private"
 
+        # Deep link in a group: /start gq_<quiz id> (quiz card → Start in Group)
+        if not is_pm and context.args and context.args[0].startswith("gq_") and hasattr(self, "gq_start_from_link"):
+            await self.gq_start_from_link(update, context, context.args[0][3:])
+            return
+
         # Deep link: /start mq / mq_new → own quizzes
         if is_pm and context.args and context.args[0] in ("mq", "mq_new") and hasattr(self, "mq_start_draft"):
             if context.args[0] == "mq_new":
@@ -100,6 +105,7 @@ class UserCommandsMixin(object):
             f"<blockquote><b>{e('play')} PLAY\n"
             f"/quiz — get a question\n"
             f"/battle — 1v1 with a friend\n"
+            f"/myquiz — make your own quiz\n"
             f"/categories — all topics</b></blockquote>\n"
             f"<blockquote><b>{e('stats')} YOUR PROGRESS\n"
             f"/score — scorecard &amp; rank\n"
@@ -107,6 +113,7 @@ class UserCommandsMixin(object):
             f"/achievements — badges</b></blockquote>\n"
             f"<blockquote><b>{e('users')} IN GROUPS\n"
             f"Make me admin → a new quiz every hour.\n"
+            f"/startquiz — run a full quiz (admins)\n"
             f"/quiz and /battle work without admin too.</b></blockquote>\n"
             f"<b>{e('signal')} Need help? {COMMUNITY}</b>"
         )

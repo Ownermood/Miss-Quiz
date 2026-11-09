@@ -31,6 +31,7 @@ from src.bot.commands.admin_cmds import AdminCommandsMixin
 from src.bot.battle import BattleMixin
 from src.bot.admin_panel import AdminPanelMixin
 from src.bot.my_quiz import MyQuizMixin
+from src.bot.group_quiz import GroupQuizMixin
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +44,7 @@ class TelegramQuizBot(
     AdminCommandsMixin,
     BattleMixin,
     MyQuizMixin,
+    GroupQuizMixin,
     AdminPanelMixin,
 ):
 
@@ -214,6 +216,8 @@ class TelegramQuizBot(
         """Schedule startup broadcast + owner alert as background tasks."""
         loop = asyncio.get_running_loop()
         loop.create_task(self._send_owner_alert())
+        if self.application is not None:                       # group quizzes running before a restart
+            loop.create_task(self.gq_resume_all(self.application.bot))
         loop.create_task(self._send_startup_broadcast())
 
     async def _send_owner_alert(self):
@@ -354,6 +358,8 @@ class TelegramQuizBot(
         app.add_handler(CommandHandler("info",        self.cmd_info))
         app.add_handler(CommandHandler("battle",      self.cmd_battle))
         app.add_handler(CommandHandler("myquiz",      self.cmd_myquiz))
+        app.add_handler(CommandHandler("startquiz",   self.cmd_startquiz))
+        app.add_handler(CommandHandler("stopquiz",    self.cmd_stopquiz))
 
         # Admin commands
         app.add_handler(CommandHandler("addquiz",     self.cmd_addquiz))
@@ -391,6 +397,8 @@ class TelegramQuizBot(
             self._cb_delquiz, pattern=r"^dq_"))
         app.add_handler(CallbackQueryHandler(
             self.handle_battle_callback, pattern=r"^bt_(acc|dec|q|t|m|ch|go|rm|p|my|s|new):"))
+        app.add_handler(CallbackQueryHandler(
+            self.handle_group_quiz_callback, pattern=r"^gq\|"))
         app.add_handler(CallbackQueryHandler(
             self.handle_myquiz_callback, pattern=r"^mq_(done|name|cancel|list|new|open|del|delok|bt)(:|$)"))
         app.add_handler(CallbackQueryHandler(
@@ -451,6 +459,7 @@ class TelegramQuizBot(
             BotCommand("quiz",         "🎯 Get a quiz question"),
             BotCommand("battle",       "⚔️ 1v1 quiz battle"),
             BotCommand("myquiz",       "📝 Your own quizzes"),
+            BotCommand("startquiz",    "👥 Run a quiz in this group"),
             BotCommand("score",        "🏆 Your score & rank"),
             BotCommand("stats",        "📈 Your detailed stats"),
             BotCommand("achievements", "🏅 Badges & milestones"),
