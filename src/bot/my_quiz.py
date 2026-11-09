@@ -1150,9 +1150,9 @@ class MyQuizMixin:
         elif action == "mq_timer":
             await query.answer()
             cur = int(qs.get("secs") or 20)
-            t = lambda s: _btn(("✅ " if s == cur else "") + f"{s}s", f"mq_settimer:{sid}:{s}",
+            t = lambda s: _btn(("✅ " if s == cur else "") + f"{s} sec", f"mq_settimer:{sid}:{s}",
                                "success" if s == cur else "primary")
-            rows = [[t(10), t(15), t(20)], [t(30), t(45), t(60)],
+            rows = [[t(10), t(15)], [t(20), t(30)], [t(45), t(60)],
                     [_btn("⬅️ Back", f"mq_edit:{sid}", "primary")]]
             await self._bt_edit(
                 query,

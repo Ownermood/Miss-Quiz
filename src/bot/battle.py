@@ -389,14 +389,14 @@ class BattleMixin:
             qmax = self._bt_q_max()
             text = (f"🎯 <b>HOW MANY QUESTIONS?</b>\n{head}"
                     f"<i>Tap one, or type any number ({Q_MIN}–{qmax}).</i>")
-            opts = [P(("✅ " if b.n_q == n else "") + str(n), f"bt_q:{b.id}:{n}") for n in Q_CHOICES if n <= qmax]
-            rows = [opts[k:k + 3] for k in range(0, len(opts), 3)] + [[back("cust"), cancel]]
+            opts = [P(("✅ " if b.n_q == n else "") + f"{n} Questions", f"bt_q:{b.id}:{n}") for n in Q_CHOICES if n <= qmax]
+            rows = [opts[k:k + 2] for k in range(0, len(opts), 2)] + [[back("cust"), cancel]]
             return text, InlineKeyboardMarkup(rows)
         if page == "cust":
             text = (f"⚙️ <b>CUSTOMIZE BATTLE</b>\n{head}{self._bt_settings_line(b)}\n"
                     f"<i>Pick a timer (or type one: 45, 2m). Tap Questions to change the count.</i>")
             opts = [P(("✅ " if b.secs == t else "") + _tlabel(t), f"bt_t:{b.id}:{t}") for t in T_CHOICES]
-            rows = [opts[k:k + 3] for k in range(0, len(opts), 3)]
+            rows = [opts[k:k + 2] for k in range(0, len(opts), 2)]
             back_target = "set" if b.set_id else "mode"
             rows += [[B(f"🎯 Questions: {b.n_q}", f"bt_p:{b.id}:q", "primary")],
                      [B("⚔️ Create Challenge", f"bt_go:{b.id}", "success")],

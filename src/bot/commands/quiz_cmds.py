@@ -310,8 +310,10 @@ class QuizCommandsMixin(object):
                 text += f"• {ins}\n"
 
         kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🎓 Play Quiz",     callback_data="play_quiz"),
-             InlineKeyboardButton("🎓 My Profile",    callback_data="my_profile")],
+            [InlineKeyboardButton("▶️ Play Quiz", callback_data="play_quiz", style="success"),
+             InlineKeyboardButton("📚 My Quizzes", callback_data="mq_list", style="primary")],
+            [InlineKeyboardButton("📊 Scorecard", callback_data="score", style="primary"),
+             InlineKeyboardButton("🏅 Achievements", callback_data="achievements", style="primary")],
             self._nav_row(back_screen="home"),
         ])
         if edit_msg:
