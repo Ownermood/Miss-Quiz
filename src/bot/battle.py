@@ -244,23 +244,41 @@ class BattleMixin:
         return (f"<blockquote>🎯 Questions › {b.n_q}\n⏱ Time › {_tlabel(b.secs)} each\n"
                 f"📚 Topic › {topic}</blockquote>")
 
-    def _bt_setup_view(self, b: "Battle"):
+    def _bt_setup_view(self, b: "Battle", page: str = "main"):
+        """Main card: 3 clear setting buttons. Tapping one opens only that
+        choice (current = green, others = blue); picking returns here."""
         vs = UI.mention(b.p2, b.p2_name) if b.p2 else "<i>anyone</i>"
-        text = (f"⚔️ <b>BATTLE SETUP</b>\n{UI.mention(b.p1, b.p1_name)}  vs  {vs}\n"
-                f"{self._bt_settings_line(b)}\n"
-                f"<i>Choose, then tap Create Challenge.</i>")
-        mark = lambda on, label: f"✅ {label}" if on else label
-        rows = [
-            [InlineKeyboardButton(mark(b.n_q == n, f"{n} Q"), callback_data=f"bt_q:{b.id}:{n}") for n in Q_CHOICES],
-        ]
-        tbtn = [InlineKeyboardButton(mark(b.secs == t, _tlabel(t)), callback_data=f"bt_t:{b.id}:{t}") for t in T_CHOICES]
-        rows += [tbtn[k:k + 3] for k in range(0, len(tbtn), 3)]
-        cats = [InlineKeyboardButton(mark(not b.category, "🎲 All topics"), callback_data=f"bt_c:{b.id}:-1")]
-        cats += [InlineKeyboardButton(mark(b.category == c, c[:20]), callback_data=f"bt_c:{b.id}:{i}")
-                 for i, c in enumerate(b.cat_options)]
-        rows += [cats[k:k + 2] for k in range(0, len(cats), 2)]
-        rows.append([InlineKeyboardButton("⚔️ Create Challenge", callback_data=f"bt_go:{b.id}", style="success")])
-        rows.append([InlineKeyboardButton("❌ Cancel", callback_data=f"bt_dec:{b.id}", style="danger")])
+        topic = b.category or "All topics"
+        B = lambda text, data, style="primary": InlineKeyboardButton(text, callback_data=data, style=style)
+        if page == "q":
+            title, opts = "🎯 How many questions?", [B(f"{n} questions", f"bt_q:{b.id}:{n}",
+                                                     "success" if b.n_q == n else "primary") for n in Q_CHOICES]
+            per_row = 2
+        elif page == "t":
+            title, opts = "⏱ Time for each question?", [B(_tlabel(t), f"bt_t:{b.id}:{t}",
+                                                         "success" if b.secs == t else "primary") for t in T_CHOICES]
+            per_row = 3
+        elif page == "c":
+            title = "📚 Which topic?"
+            opts = [B("🎲 All topics", f"bt_c:{b.id}:-1", "success" if not b.category else "primary")]
+            opts += [B(c[:24], f"bt_c:{b.id}:{i}", "success" if b.category == c else "primary")
+                     for i, c in enumerate(b.cat_options)]
+            per_row = 2
+        else:
+            text = (f"⚔️ <b>BATTLE SETUP</b>\n{UI.mention(b.p1, b.p1_name)}  vs  {vs}\n"
+                    f"{self._bt_settings_line(b)}\n"
+                    f"<i>Tap a setting to change it, then Create Challenge.</i>")
+            kb = InlineKeyboardMarkup([
+                [B(f"🎯 Questions: {b.n_q}", f"bt_p:{b.id}:q")],
+                [B(f"⏱ Time: {_tlabel(b.secs)} each", f"bt_p:{b.id}:t")],
+                [B(f"📚 Topic: {topic[:24]}", f"bt_p:{b.id}:c")],
+                [B("⚔️ Create Challenge", f"bt_go:{b.id}", "success")],
+                [B("❌ Cancel", f"bt_dec:{b.id}", "danger")],
+            ])
+            return text, kb
+        text = f"⚔️ <b>BATTLE SETUP</b>\n<b>{title}</b>\n<i>Green = current choice.</i>"
+        rows = [opts[k:k + per_row] for k in range(0, len(opts), per_row)]
+        rows.append([B("⬅️ Back", f"bt_p:{b.id}:main", "danger")])
         return text, InlineKeyboardMarkup(rows)
 
     def _bt_challenge_view(self, b: "Battle", bot_username: str):
@@ -304,9 +322,14 @@ class BattleMixin:
             await query.answer("This battle is no longer available.", show_alert=True)
             return
 
-        if action in ("bt_q", "bt_t", "bt_c", "bt_go"):
+        if action in ("bt_q", "bt_t", "bt_c", "bt_go", "bt_p"):
             if user.id != b.p1 or b.state != "setup":
                 await query.answer("Only the challenger can change this.", show_alert=True)
+                return
+            if action == "bt_p":
+                await query.answer()
+                page = parts[2] if len(parts) > 2 and parts[2] in ("q", "t", "c") else "main"
+                await self._bt_edit(query, *self._bt_setup_view(b, page))
                 return
             try:
                 val = int(parts[2]) if action != "bt_go" else 0

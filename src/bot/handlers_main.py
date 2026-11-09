@@ -386,7 +386,7 @@ class TelegramQuizBot(
         app.add_handler(CallbackQueryHandler(
             self._cb_delquiz, pattern=r"^dq_"))
         app.add_handler(CallbackQueryHandler(
-            self.handle_battle_callback, pattern=r"^bt_(acc|dec|q|t|c|go|rm):"))
+            self.handle_battle_callback, pattern=r"^bt_(acc|dec|q|t|c|go|rm|p):"))
         app.add_handler(CallbackQueryHandler(
             self.handle_admin_panel_callback, pattern=r"^ap:"))
         app.add_handler(CallbackQueryHandler(

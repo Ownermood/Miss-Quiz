@@ -321,9 +321,11 @@ async def test_timer_choices_and_labels():
     a = user(1, "Amit")
     await app.cmd_battle(group_update(a), ctx)
     b = next(iter(app._bt_state().values()))
-    _, kb = app._bt_setup_view(b)
-    rows = [[x.text.replace("✅ ", "") for x in r] for r in kb.inline_keyboard]
+    _, kb = app._bt_setup_view(b, "t")
+    rows = [[x.text for x in r] for r in kb.inline_keyboard]
     assert ["10s", "15s", "20s"] in rows and ["30s", "1m", "4m"] in rows
+    styles = {x.text: x.style for r in kb.inline_keyboard for x in r}
+    assert styles["20s"] == "success" and styles["10s"] == "primary"   # current = green
     await press(app, ctx, a, f"bt_t:{b.id}:240")
     assert b.secs == 240 and "4m each" in app._last_edit
 
@@ -360,4 +362,23 @@ async def test_rematch_challenges_the_other_player_with_same_settings():
     assert (new.p1, new.p2, new.n_q, new.secs, new.state) == (2, 1, 15, 10, "pending")
     assert ctx.bot.send_message.await_args.args[0] == -100
     q = await press(app, ctx, user(9, "X"), "bt_rm:old")                  # outsider
+    assert q.answer.await_args.kwargs.get("show_alert") is True
+
+
+
+async def test_setup_main_card_is_three_clear_buttons_and_navigates():
+    app = FakeBotApp()
+    ctx, _ = fake_context()
+    a = user(1, "Amit")
+    await app.cmd_battle(group_update(a), ctx)
+    b = next(iter(app._bt_state().values()))
+    _, kb = app._bt_setup_view(b)
+    labels = [r[0].text for r in kb.inline_keyboard]
+    assert labels[:3] == ["🎯 Questions: 10", "⏱ Time: 20s each", "📚 Topic: All topics"]
+    assert all(r[0].style for r in kb.inline_keyboard)                     # every button coloured
+    await press(app, ctx, a, f"bt_p:{b.id}:q")
+    assert "How many questions" in app._last_edit
+    await press(app, ctx, a, f"bt_q:{b.id}:15")                            # pick → back to main
+    assert b.n_q == 15 and "BATTLE SETUP" in app._last_edit and "Questions › 15" in app._last_edit
+    q = await press(app, ctx, user(2, "B"), f"bt_p:{b.id}:t")              # not challenger
     assert q.answer.await_args.kwargs.get("show_alert") is True
