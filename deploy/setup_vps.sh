@@ -9,7 +9,7 @@
 #   sudo bash setup_vps.sh --atlas    # bot only, keep using MongoDB Atlas
 set -euo pipefail
 
-REPO="https://github.com/ownermood/miss-quiz.git"
+REPO="https://github.com/Ownermood/MissQuiz.git"
 BRANCH="main"
 APP_DIR="/opt/miss-quiz"
 APP_USER="missquiz"
