@@ -307,7 +307,7 @@ class TelegramQuizBot(
         from src.bot.premium import e
         q_display = UI.fmt_num(self._q_count())
         return (
-            f"<b>╭──── ❨ {e('cap')} MISS QUIZ STUDIO ❩ ────╮</b>\n\n"
+            f"<b>╭──── ❨ 🎓 MISS QUIZ STUDIO ❩ ────╮</b>\n\n"
             f"<b>{e('hi')} Welcome, {user_mention}!</b>\n\n"
             f"<blockquote><b>1️⃣ CUSTOM QUIZ STUDIO\n"
             f"• Create quizzes from PDF, DOCX, TXT &amp; Polls\n"
