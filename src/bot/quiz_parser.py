@@ -598,17 +598,21 @@ _U_OPT = re.compile(
     r"^(?:option\s*)?[\(\[]?\s*([A-Ja-j]|[1-9]|10|i{1,3}|iv|v|vi{0,3}|ix|x|[" + _HI_LETTERS + r"])\s*[\)\]\.:\-–]\s*(.*)$",
     re.IGNORECASE)
 _U_ANS = re.compile(
-    r"^(?:correct\s*(?:answer|option|ans)?|right\s*answer|ans(?:wer)?s?|उत्तर|सही\s*उत्तर|key)\s*(?:is)?\s*[:\-–=\.\)]*\s*(.+)$",
+    r"^(?:the\s+)?(?:correct\s*(?:answer|option|ans|choice|response)?|right\s*(?:answer|option|choice)"
+    r"|ans(?:wer)?s?|उत्तर|सही\s*उत्तर|key)\s*(?:is)?\s*[:\-–—=\.\)>→⇒➜]*\s*(.+)$",
     re.IGNORECASE)
 _U_EXP = re.compile(
     r"^(?:explanation|explain|exp|solution|sol|reason|hint|व्याख्या|हल|स्पष्टीकरण)\s*[:\-–\.]\s*(.*)$",
     re.IGNORECASE)
 _U_META = re.compile(r"^(category|subject|topic|difficulty|level|exam|source)\s*[:\-]\s*(.*)$", re.IGNORECASE)
 _U_KEY_HDR = re.compile(
-    r"^(?:answer\s*key|answers|ans(?:wer)?\s*sheet|उत्तर\s*(?:कुंजी|माला))\s*[:\-]?\s*(.*)$|^(?:answer|ans)\s*[:\-]?\s*$",
+    r"^(?:answer\s*key|answers|ans(?:wer)?\s*sheet|उत्तर\s*(?:कुंजी|माला)|solutions?"
+    r"|answers?\s*(?:&|and|with)\s*(?:explanations?|solutions?)|answer\s*key\s*(?:&|and|with)\s*explanations?)"
+    r"\s*[:\-–—]?\s*(.*)$|^(?:answer|ans)\s*[:\-]?\s*$",
     re.IGNORECASE)
-_U_KEY_ITEM = re.compile(r"(?:q\s*)?(\d+)\s*[\.\):\-–=]?\s*\(?([A-Ja-j]|\d{1,2}|[" + _HI_LETTERS + r"])\)?(?=[\s,;|]|$)",
+_U_KEY_ITEM = re.compile(r"(?:q(?:ue(?:stion)?|n)?\.?\s*)?(\d+)\s*[\.\):\-–—=|]?\s*\(?([A-Ja-j]|\d{1,2}|[" + _HI_LETTERS + r"])\)?(?=[\s,;|.\)]|$)",
                          re.IGNORECASE)
+_U_KEY_LINE = re.compile(r"^\s*(?:" + _U_KEY_ITEM.pattern + r"[\s,;|.]*)+$", re.IGNORECASE)
 _U_MARK = re.compile(r"(\s*(?:\*{1,2}|✅|✔️?|☑️?|✓|\(correct\)|\[correct\]|\(ans\)|\[ans\]|←\s*correct|<-+\s*correct))\s*$",
                      re.IGNORECASE)
 _U_INLINE_OPT = re.compile(r"(?:^|\s)[\(\[]?([A-Ja-j])[\)\]\.]\s+")
@@ -617,8 +621,20 @@ _U_INLINE_ANS = re.compile(
     re.IGNORECASE)
 
 
+def _u_strip_symbols(line: str) -> str:
+    """Drop leading emoji / symbols ('✅ Answer: B', '👉 Q1.', '➤ (a) x')."""
+    import unicodedata
+    i = 0
+    arrow = lambda c: 0x2190 <= ord(c) <= 0x21FF or 0x27F0 <= ord(c) <= 0x27FF or 0x2900 <= ord(c) <= 0x297F
+    while i < len(line) and (line[i] in "\ufe0f\u200d\u20e3 \t|" or arrow(line[i]) or   # keep √ ± etc.
+                             unicodedata.category(line[i]) in ("So", "Sk", "Cf", "Cs", "Co")):
+        i += 1
+    return line[i:] if i and i < len(line) else line
+
+
 def _u_clean_line(line: str) -> str:
     line = line.replace("​", "").replace(" ", " ").strip()
+    line = _u_strip_symbols(line)
     line = re.sub(r"^[>\-•●▪◦·*]+\s+(?=\S)", "", line)            # quote / bullet marks (incl. '* ')
     line = re.sub(r"(\*\*|__|`)", "", line)                         # markdown bold/code
     return line.strip()
@@ -716,12 +732,22 @@ def _u_answer_key(lines: List[str]) -> Tuple[List[str], Dict[int, str]]:
     key: Dict[int, str] = {}
     for i, line in enumerate(lines):
         m = _U_KEY_HDR.match(line)
-        if m:
-            body = " ".join(([m.group(1)] if m.group(1) else []) + lines[i + 1:])
-            items = _U_KEY_ITEM.findall(body)
-            if len(items) >= 1:
-                key = {int(n): a for n, a in items}
-                return lines[:i], key
+        if not m:
+            continue
+        found: Dict[int, str] = {}
+        for ln in ([m.group(1)] if m.group(1) else []) + lines[i + 1:]:
+            ln = ln.replace("|", " ").strip()
+            if not ln:
+                continue
+            if _U_KEY_LINE.match(ln):                          # '1-a 2-b 3-c' / '1. B'
+                pairs = _U_KEY_ITEM.findall(ln)
+            else:                                              # '1. (b) because Article 21…'
+                mm = _U_KEY_ITEM.match(ln)
+                pairs = [mm.groups()] if mm else []
+            for n, a in pairs:
+                found.setdefault(int(n), a)                    # first mention wins
+        if found:
+            return lines[:i], found
     return lines, key
 
 

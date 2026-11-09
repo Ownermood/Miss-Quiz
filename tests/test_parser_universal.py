@@ -123,3 +123,39 @@ def test_bulk_import_end_to_end_saves_into_empty_db():
     assert len(qm.questions) == 5
     res2 = bulk_import(text, qm)                                           # same file again
     assert res2["imported"] == 0 and res2["duplicates"] == 6
+
+
+# ── more answer layouts seen in real files (AI / coaching PDFs) ──────────────
+
+import pytest as _pytest
+from src.bot.quiz_parser import universal_parse as _up
+
+
+@_pytest.mark.parametrize("ans_line", [
+    "✅ Answer: B", "👉 Correct Answer — (b)", "Answer — B", "🔑 Ans: (b)", "➤ Correct Option: B",
+    "The correct answer is (b)", "Correct answer is B", "Right option: b", "Answer => B",
+    "✔️ Answer: Delhi", "Ans → (b) Delhi",
+])
+def test_answer_line_variants(ans_line):
+    qs, probs = _up(f"1. Capital of India?\n(a) Mumbai\n(b) Delhi\n(c) Pune\n{ans_line}\n")
+    assert len(qs) == 1 and qs[0]["correct_answer"] == 1, (ans_line, probs)
+
+
+@_pytest.mark.parametrize("key", [
+    "ANSWER KEY\n1. B\n2. C",
+    "Answers: 1-b, 2-c",
+    "Answer Key\n| Q | Ans |\n| 1 | B |\n| 2 | C |",
+    "Solutions\n1. (b) Delhi is the capital, see Article 1 a\n2. (c) because 2+2=4 a",
+    "Answers & Explanations\nQ1 (b) — Delhi.\nQ2 (c) — four.",
+    "उत्तर कुंजी\n1 (b)\n2 (c)",
+])
+def test_answer_key_variants(key):
+    text = ("Q1. Capital of India?\nA) Mumbai\nB) Delhi\nC) Pune\n\n"
+            "Q2. 2+2?\nA) 3\nB) 5\nC) 4\n\n" + key)
+    qs, probs = _up(text)
+    assert [q["correct_answer"] for q in qs] == [1, 2], (key, probs)
+
+
+def test_math_symbols_at_start_are_kept():
+    qs, _ = _up("1. √16 = ?\n(a) 2\n(b) 4\nAnswer: b")
+    assert qs[0]["question"].startswith("√16")
