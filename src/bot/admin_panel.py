@@ -113,22 +113,21 @@ class AdminPanelMixin:
     # ── screens ──────────────────────────────────────────────────────────
 
     def _panel_kb(self, is_owner: bool) -> InlineKeyboardMarkup:
-        last = [btn("Emoji Test", "star", BLUE, callback_data="ap:emoji:0")]
-        if is_owner:
-            last.append(btn("Restart Bot", "warn", GREEN, callback_data="ap:restart"))
+        last = ([btn("Restart Bot", "warn", GREEN, callback_data="ap:restart")] if is_owner else []) \
+            + [btn("Close", "cross", RED, callback_data="ap:close")]
         rows = [
             [btn("Add Questions", "plus", GREEN, callback_data="ap:addq")],
-            [btn("Find Question", "search", GREEN, callback_data="ap:find")],
             [btn("Edit Quiz", "edit", BLUE, callback_data="ap:edit"),
              btn("Delete Quiz", "trash", BLUE, callback_data="ap:delquiz")],
             [btn("Bot Stats", "stats", BLUE, callback_data="ap:stats"),
              btn("Reload", "bolt", BLUE, callback_data="ap:reload")],
+            [btn("Find Question (ID/Words)", "search", GREEN, callback_data="ap:find")],
             [btn("Broadcast", "signal", BLUE, callback_data="ap:bc"),
              btn("Undo Broadcast", "back", BLUE, callback_data="ap:dbc")],
             [btn("Start Photo", "folder", BLUE, callback_data="ap:photo"),
-             btn("Admins", "users", BLUE, callback_data="ap:team")],
+             btn("Emoji Test", "star", BLUE, callback_data="ap:emoji:0")],
+            [btn("Admins", "users", GREEN, callback_data="ap:team")],
             last,
-            [btn("Close", "cross", RED, callback_data="ap:close")],
         ]
         return InlineKeyboardMarkup(rows)
 
