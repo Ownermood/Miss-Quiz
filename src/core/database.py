@@ -694,6 +694,13 @@ class DatabaseManager:
     def get_all_developers(self) -> List[Dict]:
         return list(self.developers_col.find({}, {"_id": 0}))
 
+    def set_admin_profile(self, user_id: int, title: str = "", emoji: str = "",
+                          emoji_id: str = "") -> None:
+        """Custom title + emoji (premium custom_emoji_id optional) shown for an admin."""
+        self.developers_col.update_one(
+            {"user_id": user_id},
+            {"$set": {"title": title, "emoji": emoji, "emoji_id": emoji_id}})
+
     def remove_developer(self, user_id: int) -> bool:
         result = self.developers_col.delete_one({"user_id": user_id})
         return result.deleted_count > 0

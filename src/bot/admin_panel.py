@@ -115,7 +115,7 @@ class AdminPanelMixin:
             [btn("Broadcast", "signal", BLUE, callback_data="ap:bc"),
              btn("Undo Broadcast", "back", BLUE, callback_data="ap:dbc")],
             [btn("Start Photo", "folder", BLUE, callback_data="ap:photo"),
-             btn("Team", "users", BLUE, callback_data="ap:team")],
+             btn("Admins", "users", BLUE, callback_data="ap:team")],
             [btn("Emoji Test", "star", BLUE, callback_data="ap:emoji:0")],
         ]
         if is_owner:
@@ -258,24 +258,56 @@ class AdminPanelMixin:
             await self._edit(q.message, await self._panel_text(), self._panel_kb(owner))
         elif data == "ap:team":
             await q.answer()
-            team = f"{e('users')} <b>TEAM</b>\n{UI.THIN}\n"
-            if self.db:
-                try:
-                    devs = await asyncio.to_thread(self.db.get_all_developers)
-                    team += "\n".join(
-                        f"<b>• {UI.mention(d.get('user_id'), d.get('name') or d.get('username') or d.get('user_id'))}</b>"
-                        f"  <code>{d.get('user_id')}</code>" for d in devs) or "<b>No developers yet.</b>"
-                except Exception as ex:
-                    logger.warning(f"[ADMIN PANEL] team list failed: {ex}")
-            await self._edit(q.message, team, InlineKeyboardMarkup([
-                [btn("Add Developer", "plus", GREEN, callback_data="ap:dev_add"),
-                 btn("Remove Developer", "trash", RED, callback_data="ap:dev_rm")],
-                [btn("Back", "back", RED, callback_data="ap:home")]]))
-        elif data in ("ap:dev_add", "ap:dev_rm"):
-            verb = "add" if data == "ap:dev_add" else "remove"
-            await ask(f"dev_{verb}",
-                      f"{e('users')} <b>{verb.upper()} DEVELOPER</b>\n{UI.THIN}\n"
-                      "<b>Send the user's numeric Telegram ID.</b>\n<i>/cancel to stop</i>")
+            ud.pop("ap_await", None)
+            await self._edit(q.message, *(await self._admins_view(user.id)))
+        elif data == "ap:adm_add":
+            if not self._can_manage_admins(user.id):
+                await q.answer("⛔ Only the owner can add admins.", show_alert=True); return
+            ud["adm_draft"] = {}
+            await ask("adm_id",
+                      f"{e('plus')} <b>ADD ADMIN · step 1/3</b>\n{UI.THIN}\n"
+                      "<b>Send their numeric Telegram ID</b>, or forward any message from them.\n"
+                      "<i>/cancel to stop</i>")
+        elif data == "ap:adm_skip":
+            if not self._can_manage_admins(user.id):
+                await q.answer("⛔", show_alert=True); return
+            await q.answer()
+            step = ud.get("ap_await")
+            if step == "adm_title":
+                await self._admin_step_emoji(q.message, ud, edit=True)
+            elif step == "adm_emoji":
+                ud.pop("ap_await", None)
+                await self._admin_finish(update, context, ud, q.message)
+        elif data == "ap:adm_rm":
+            if not self._can_manage_admins(user.id):
+                await q.answer("⛔ Only the owner can remove admins.", show_alert=True); return
+            await q.answer()
+            devs = await asyncio.to_thread(self.db.get_all_developers) if self.db else []
+            rows = [[btn(f"Remove {(d.get('title') or d.get('name') or d.get('user_id'))}"[:40], "trash", RED,
+                         callback_data=f"ap:adm_rmc:{d.get('user_id')}")] for d in devs if d.get("user_id")]
+            await self._edit(q.message, f"{e('trash')} <b>REMOVE ADMIN</b>\n<b>Tap the admin to remove.</b>"
+                             if rows else f"{e('users')} <b>No admins to remove.</b>",
+                             InlineKeyboardMarkup(rows + [[btn("Back", "back", RED, callback_data="ap:team")]]))
+        elif data.startswith(("ap:adm_rmc:", "ap:adm_rmy:")):
+            if not self._can_manage_admins(user.id):
+                await q.answer("⛔ Only the owner can remove admins.", show_alert=True); return
+            try:
+                target = int(data.rsplit(":", 1)[1])
+            except ValueError:
+                await q.answer(); return
+            await q.answer()
+            if data.startswith("ap:adm_rmc:"):
+                await self._edit(q.message, f"{e('warn')} <b>Remove admin <code>{target}</code>?</b>",
+                                 InlineKeyboardMarkup([[btn("Yes, remove", "trash", RED, callback_data=f"ap:adm_rmy:{target}")],
+                                                       [btn("Back", "back", RED, callback_data="ap:adm_rm")]]))
+            else:
+                removed = await asyncio.to_thread(self.db.remove_developer, target) if self.db else False
+                if removed:
+                    await self._notify_admin(context, target,
+                        f"{e('warn')} <b>You are no longer an admin of Miss Quiz Bot.</b>")
+                text, kb = await self._admins_view(user.id)
+                await self._edit(q.message, (f"{e('check')} <b>Removed.</b>\n\n" if removed
+                                             else f"{e('cross')} <b>Not found.</b>\n\n") + text, kb)
 
         # broadcast confirm / undo
         elif data == "ap:bc_yes" and dev:
@@ -356,17 +388,155 @@ class AdminPanelMixin:
         elif key == "find":
             ud.pop("ap_await", None)
             await self._reply(update, *self._find_results((msg.text or "").strip(), user.id))
-        elif key in ("dev_add", "dev_remove"):
-            uid = (msg.text or "").strip()
-            if not uid.isdigit():
-                await self._reply(update, f"{e('warn')} <b>Send a numeric Telegram ID.</b>")
-            else:
+        elif key.startswith("adm_"):
+            if not self._can_manage_admins(user.id):
                 ud.pop("ap_await", None)
-                dev = getattr(self, "_dev", None)
-                if dev:
-                    context.args = [key[4:], uid]
-                    await dev.dev(update, context)
+            else:
+                await self._admin_input_step(update, context, ud, key, msg)
         raise ApplicationHandlerStop
+
+    # ── admins: add with custom title + premium emoji, notify them ───────
+
+    @staticmethod
+    def _can_manage_admins(uid: int) -> bool:
+        from src.core.config import AUTHORIZED_USERS   # owner (+ WIFU)
+        return uid in AUTHORIZED_USERS
+
+    @staticmethod
+    def _admin_badge(d: dict) -> str:
+        """Admin's emoji (premium if saved) + bold title, HTML-safe."""
+        import html as _h
+        from src.bot.premium import premium_on
+        emo = d.get("emoji") or ""
+        if emo and d.get("emoji_id") and premium_on():
+            emo = f'<tg-emoji emoji-id="{d["emoji_id"]}">{_h.escape(emo)}</tg-emoji>'
+        else:
+            emo = _h.escape(emo)
+        title = _h.escape(d.get("title") or "")
+        return " ".join(x for x in (emo, f"<b>{title}</b>" if title else "") if x)
+
+    async def _admins_view(self, viewer: int):
+        import html as _h
+        devs = []
+        if self.db:
+            try:
+                devs = await asyncio.to_thread(self.db.get_all_developers)
+            except Exception as ex:
+                logger.warning(f"[ADMIN PANEL] admins list failed: {ex}")
+        lines = [f"{e('users')} <b>ADMINS</b> · {len(devs)}\n{UI.THIN}"]
+        for d in devs:
+            name = d.get("name") or d.get("username") or str(d.get("user_id"))
+            badge = self._admin_badge(d)
+            lines.append(f"{badge + ' — ' if badge else '• '}{UI.mention(d.get('user_id'), _h.unescape(str(name)))}"
+                         f"  <code>{d.get('user_id')}</code>")
+        if not devs:
+            lines.append("<b>No admins yet.</b>")
+        rows = []
+        if self._can_manage_admins(viewer):
+            rows.append([btn("Add Admin", "plus", GREEN, callback_data="ap:adm_add"),
+                         btn("Remove Admin", "trash", RED, callback_data="ap:adm_rm")])
+        rows.append([btn("Back", "back", RED, callback_data="ap:home")])
+        return "\n".join(lines), InlineKeyboardMarkup(rows)
+
+    async def _admin_step_emoji(self, target_msg, ud, edit=False):
+        ud["ap_await"] = "adm_emoji"
+        text = (f"{e('star')} <b>ADD ADMIN · step 3/3</b>\n{UI.THIN}\n"
+                "<b>Send ONE emoji for them</b> — premium emoji work too.")
+        kb = InlineKeyboardMarkup([[btn("Skip", "play", BLUE, callback_data="ap:adm_skip")],
+                                   [btn("Back", "back", RED, callback_data="ap:team")]])
+        if edit:
+            await self._edit(target_msg, text, kb)
+        else:
+            await target_msg.reply_text(text, parse_mode="HTML", reply_markup=kb)
+
+    async def _admin_input_step(self, update, context, ud, key, msg):
+        draft = ud.setdefault("adm_draft", {})
+        if key == "adm_id":
+            uid, name = None, None
+            origin = getattr(msg, "forward_origin", None)
+            sender = getattr(origin, "sender_user", None) if origin else None
+            if sender:
+                uid, name = sender.id, sender.full_name
+            elif (msg.text or "").strip().isdigit():
+                uid = int(msg.text.strip())
+            if not uid:
+                await self._reply(update, f"{e('warn')} <b>Send a numeric ID or forward their message.</b>\n"
+                                          "<i>If forwarding shows a hidden name, use the ID instead.</i>")
+                return
+            if self._can_manage_admins(uid):
+                await self._reply(update, f"{e('warn')} <b>That's the owner — already has full access.</b>")
+                return
+            if not name:
+                try:
+                    chat = await context.bot.get_chat(uid)
+                    name = chat.full_name or chat.first_name
+                except Exception:
+                    name = f"User {uid}"
+            draft.update({"user_id": uid, "name": name})
+            ud["ap_await"] = "adm_title"
+            await msg.reply_text(
+                f"{e('edit')} <b>ADD ADMIN · step 2/3</b>\n{UI.THIN}\n"
+                f"<b>Admin:</b> {UI.mention(uid, name)}\n\n"
+                "<b>Send the name/title to show for them</b> (max 32 characters), e.g. <i>Quiz Master</i>.",
+                parse_mode="HTML",
+                reply_markup=InlineKeyboardMarkup([[btn("Skip", "play", BLUE, callback_data="ap:adm_skip")],
+                                                   [btn("Back", "back", RED, callback_data="ap:team")]]))
+        elif key == "adm_title":
+            title = (msg.text or "").strip()
+            if not title or len(title) > 32:
+                await self._reply(update, f"{e('warn')} <b>Send a title of 1–32 characters.</b>")
+                return
+            draft["title"] = title
+            await self._admin_step_emoji(msg, ud)
+        elif key == "adm_emoji":
+            emoji, emoji_id = "", ""
+            for ent in (msg.entities or []):
+                if ent.type == "custom_emoji":
+                    emoji_id = ent.custom_emoji_id
+                    emoji = msg.text[ent.offset: ent.offset + ent.length] if msg.text else ""
+                    break
+            if not emoji:
+                emoji = (msg.text or "").strip()
+            if not emoji or len(emoji) > 8 or emoji.isalnum():
+                await self._reply(update, f"{e('warn')} <b>Send just one emoji.</b>")
+                return
+            draft.update({"emoji": emoji, "emoji_id": emoji_id})
+            ud.pop("ap_await", None)
+            await self._admin_finish(update, context, ud, None)
+
+    async def _admin_finish(self, update, context, ud, edit_msg):
+        draft = ud.pop("adm_draft", {}) or {}
+        uid = draft.get("user_id")
+        if not uid or not self.db:
+            await self._reply(update, f"{e('cross')} <b>Nothing to save — start again.</b>")
+            return
+        await asyncio.to_thread(self.db.add_developer, uid, "", draft.get("name", ""),
+                                added_by=update.effective_user.id)
+        await asyncio.to_thread(self.db.set_admin_profile, uid, draft.get("title", ""),
+                                draft.get("emoji", ""), draft.get("emoji_id", ""))
+        badge = self._admin_badge(draft)
+        dm_ok = await self._notify_admin(context, uid,
+            f"{e('party')} <b>You've been promoted to Admin of Miss Quiz Bot!</b>\n\n"
+            + (f"<blockquote><b>Your title: {badge}</b></blockquote>\n" if badge else "")
+            + "<b>Open /start → Admin Panel to manage the bot.</b>")
+        text, kb = await self._admins_view(update.effective_user.id)
+        head = (f"{e('check')} <b>{UI.mention(uid, draft.get('name', str(uid)))} is now an admin"
+                f"{' — ' + badge if badge else ''}.</b>\n"
+                + ("<b>They got a message from the bot.</b>" if dm_ok else
+                   f"{e('warn')} <b>Couldn't message them — they must open the bot and press Start once.</b>")
+                + "\n\n")
+        if edit_msg is not None:
+            await self._edit(edit_msg, head + text, kb)
+        else:
+            await self._reply(update, head + text, reply_markup=kb)
+
+    async def _notify_admin(self, context, uid: int, text: str) -> bool:
+        try:
+            await context.bot.send_message(uid, text, parse_mode="HTML")
+            return True
+        except Exception as ex:
+            logger.info(f"[ADMIN PANEL] could not DM {uid}: {ex}")
+            return False
 
     # ── emoji test (see every premium emoji the bot can send) ────────────
 

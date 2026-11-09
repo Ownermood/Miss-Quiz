@@ -505,6 +505,13 @@ class DeveloperCommands(BroadcastCommandsMixin, QuizEditorMixin):
 
             action = context.args[0].lower()
 
+            # Only the owner (and WIFU) may grant or revoke admin rights —
+            # a developer must not be able to make anyone else an admin.
+            if action in ("add", "remove") and update.effective_user.id not in config.AUTHORIZED_USERS:
+                reply = await update.message.reply_text("⛔ Only the owner can add or remove admins.")
+                await self.auto_clean_message(update.message, reply)
+                return
+
             if action == "add":
                 if len(context.args) < 2:
                     reply = await update.message.reply_text("❌ Usage: /dev add [user_id]")

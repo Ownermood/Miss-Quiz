@@ -262,18 +262,98 @@ async def test_broadcast_media_is_sent_as_replied_message(bot):
     assert passed.message.reply_to_message is media
 
 
-async def test_add_developer_needs_numeric_id(bot):
+@pytest.fixture
+def owner_only(monkeypatch):
+    import src.core.config as cfg
+    monkeypatch.setattr(cfg, "AUTHORIZED_USERS", [OWNER])
+
+
+def _msg(text=None, entities=None, origin=None):
+    m = MagicMock(text=text, entities=entities or [], forward_origin=origin, photo=None)
+    m.reply_text = AsyncMock()
+    return m
+
+
+async def test_add_admin_full_flow_with_premium_emoji(bot, owner_only):
     from telegram.ext import ApplicationHandlerStop
-    bot._dev = MagicMock(); bot._dev.dev = AsyncMock()
-    ctx = _ctx(); ctx.user_data["ap_await"] = "dev_add"
-    bad = SimpleNamespace(effective_user=SimpleNamespace(id=OWNER), effective_message=MagicMock(text="abc"))
+    from telegram import MessageEntity
+    bot.db.add_developer = MagicMock(); bot.db.set_admin_profile = MagicMock()
+    bot.db.get_all_developers.return_value = []
+    ctx = _ctx(); ctx.bot = MagicMock()
+    ctx.bot.get_chat = AsyncMock(return_value=SimpleNamespace(full_name="Rahul", first_name="Rahul"))
+    ctx.bot.send_message = AsyncMock()
+
+    await bot.handle_admin_panel_callback(_cb(OWNER, "ap:adm_add"), ctx)
+    assert ctx.user_data["ap_await"] == "adm_id"
+    owner = SimpleNamespace(id=OWNER)
+    for text, ents in (("4455", None), ("Quiz Master", None),
+                       ("🔥", [MessageEntity("custom_emoji", 0, 1, custom_emoji_id="5116414868357907335")])):
+        u = SimpleNamespace(effective_user=owner, effective_message=_msg(text, ents))
+        with pytest.raises(ApplicationHandlerStop):
+            await bot.handle_admin_input(u, ctx)
+
+    bot.db.add_developer.assert_called_once()
+    assert bot.db.add_developer.call_args.args[0] == 4455
+    bot.db.set_admin_profile.assert_called_once_with(4455, "Quiz Master", "🔥", "5116414868357907335")
+    dm_to, dm_text = ctx.bot.send_message.await_args.args
+    assert dm_to == 4455 and "promoted to Admin" in dm_text and "Quiz Master" in dm_text
+    assert "ap_await" not in ctx.user_data
+
+
+async def test_developer_cannot_add_admins(bot, owner_only):
+    ctx = _ctx()
+    u = _cb(DEV, "ap:adm_add")
+    await bot.handle_admin_panel_callback(u, ctx)
+    assert "ap_await" not in ctx.user_data
+    assert u.callback_query.answer.await_args.kwargs.get("show_alert") is True
+    ctx.user_data["ap_await"] = "adm_id"             # even with a forged state
+    from telegram.ext import ApplicationHandlerStop
+    bot.db.add_developer = MagicMock()
     with pytest.raises(ApplicationHandlerStop):
-        await bot.handle_admin_input(bad, ctx)
-    bot._dev.dev.assert_not_awaited()
-    good = SimpleNamespace(effective_user=SimpleNamespace(id=OWNER), effective_message=MagicMock(text="12345"))
+        await bot.handle_admin_input(SimpleNamespace(effective_user=SimpleNamespace(id=DEV),
+                                                     effective_message=_msg("4455")), ctx)
+    bot.db.add_developer.assert_not_called()
+
+
+async def test_add_admin_by_forward_and_skips(bot, owner_only):
+    from telegram.ext import ApplicationHandlerStop
+    bot.db.add_developer = MagicMock(); bot.db.set_admin_profile = MagicMock()
+    bot.db.get_all_developers.return_value = []
+    ctx = _ctx(); ctx.bot = MagicMock(); ctx.bot.send_message = AsyncMock(side_effect=Exception("Forbidden"))
+    ctx.user_data["ap_await"] = "adm_id"
+    fwd = SimpleNamespace(sender_user=SimpleNamespace(id=777, full_name="Neha"))
     with pytest.raises(ApplicationHandlerStop):
-        await bot.handle_admin_input(good, ctx)
-    assert ctx.args == ["add", "12345"]
+        await bot.handle_admin_input(SimpleNamespace(effective_user=SimpleNamespace(id=OWNER),
+                                                     effective_message=_msg("hi", origin=fwd)), ctx)
+    await bot.handle_admin_panel_callback(_cb(OWNER, "ap:adm_skip"), ctx)     # skip title
+    assert ctx.user_data["ap_await"] == "adm_emoji"
+    await bot.handle_admin_panel_callback(_cb(OWNER, "ap:adm_skip"), ctx)     # skip emoji → save
+    bot.db.set_admin_profile.assert_called_once_with(777, "", "", "")
+    assert "Couldn't message them" in bot._edit.await_args.args[1]          # DM failed → owner told
+
+
+async def test_remove_admin_confirms_and_notifies(bot, owner_only):
+    bot.db.remove_developer = MagicMock(return_value=True)
+    bot.db.get_all_developers.return_value = []
+    ctx = _ctx(); ctx.bot = MagicMock(); ctx.bot.send_message = AsyncMock()
+    await bot.handle_admin_panel_callback(_cb(OWNER, "ap:adm_rmc:777"), ctx)
+    bot.db.remove_developer.assert_not_called()                              # confirm first
+    await bot.handle_admin_panel_callback(_cb(OWNER, "ap:adm_rmy:777"), ctx)
+    bot.db.remove_developer.assert_called_once_with(777)
+    assert ctx.bot.send_message.await_args.args[0] == 777
+
+
+async def test_slash_dev_add_is_owner_only(owner_only):
+    from src.bot.dev_commands import DeveloperCommands
+    dev = DeveloperCommands(MagicMock(), MagicMock())
+    dev.check_access = AsyncMock(return_value=True)
+    msg = MagicMock(); msg.reply_text = AsyncMock(); msg.reply_to_message = None
+    upd = SimpleNamespace(effective_user=SimpleNamespace(id=DEV, username="dev", first_name="Dev", last_name=None),
+                          effective_chat=SimpleNamespace(id=1, type="private"),
+                          message=msg, effective_message=msg)
+    await dev.dev(upd, SimpleNamespace(args=["add", "999"]))
+    dev.db.add_developer.assert_not_called()
+    assert "Only the owner" in msg.reply_text.await_args.args[0]
 
 
 async def test_cancel_clears_pending_input(bot):
