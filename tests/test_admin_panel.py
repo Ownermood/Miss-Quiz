@@ -85,18 +85,30 @@ async def test_guide_and_stats(bot):
     bot.cmd_botstats.assert_awaited_once()
 
 
-async def test_admin_commands_only_in_admin_scope(bot, monkeypatch):
+async def test_menu_has_only_user_commands_and_clears_admin_menus(bot, monkeypatch):
     import src.core.config as cfg
     monkeypatch.setattr(cfg, "AUTHORIZED_USERS", [OWNER])
     bot.db.get_all_developers.return_value = [{"user_id": DEV}]
     bot.application = MagicMock()
     bot.application.bot.set_my_commands = AsyncMock()
+    bot.application.bot.delete_my_commands = AsyncMock()
     await bot._set_commands()
-    calls = bot.application.bot.set_my_commands.await_args_list
-    default = [c.command for c in calls[0].args[0]]
-    assert "admin" not in default and "broadcast" not in default
-    scoped = {c.kwargs["scope"].chat_id: [x.command for x in c.args[0]] for c in calls[1:]}
-    assert set(scoped) == {OWNER, DEV} and "admin" in scoped[OWNER]
+    assert bot.application.bot.set_my_commands.await_count == 1        # no per-admin menus
+    menu = [c.command for c in bot.application.bot.set_my_commands.await_args.args[0]]
+    for admin_cmd in ("admin", "broadcast", "addquiz", "botstats", "reload"):
+        assert admin_cmd not in menu
+    cleared = {c.kwargs["scope"].chat_id for c in bot.application.bot.delete_my_commands.await_args_list}
+    assert cleared == {OWNER, DEV}
+
+
+async def test_help_is_bold_organized_without_admin_section(bot):
+    bot._smart_edit = AsyncMock()
+    u = SimpleNamespace(effective_user=SimpleNamespace(id=OWNER))
+    await bot.cmd_help(u, None)
+    text = bot._smart_edit.await_args.args[1]
+    assert "/broadcast" not in text and "/addquiz" not in text and "CLAT" not in text
+    assert text.count("<blockquote><b>") == 3 and "/battle" in text
+    assert "╔" not in text      # no box drawing that breaks on mobile
 
 
 def test_registered_and_routed_before_generic():
@@ -125,7 +137,8 @@ def test_start_kb_admin_button_only_when_allowed(bot):
 
 def test_greeting_rebranded(bot):
     t = bot._build_greeting("Amit")
-    assert "MISS QUIZ" in t and "CLAT" not in t and "<blockquote>" in t
+    assert "MISS QUIZ" in t and "CLAT" not in t and "<blockquote><b>" in t
+    assert "WELCOME TO" not in t
     assert len(t) < 1024          # fits a photo caption
 
 

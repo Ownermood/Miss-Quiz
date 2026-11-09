@@ -291,13 +291,12 @@ class TelegramQuizBot(
         from src.bot.premium import e
         q_display = UI.fmt_num(self._q_count())
         return (
-            f"<b>WELCOME TO MISS QUIZ BOT</b> {e('flower')}\n\n"
-            f"╭──── ❨ 🎓 <b>MISS QUIZ</b> ❩ ────╮\n\n"
-            f"{e('hi')} Hey <b>{user_mention}</b>!\n"
-            f"<blockquote>{e('cool')} Quiz in groups &amp; DM, 1v1 battles with friends "
-            f"and a live leaderboard.</blockquote>\n"
-            f"<blockquote>{e('bolt')} {q_display} questions · new quiz every hour</blockquote>\n"
-            f"╰──────────────────────╯\n\n"
+            f"<b>╭──── ❨ 🎓 MISS QUIZ ❩ ────╮</b>\n\n"
+            f"{e('hi')} <b>Hey {user_mention}!</b>\n"
+            f"<blockquote><b>{e('cool')} Quiz in groups &amp; DM, 1v1 battles with friends "
+            f"and a live leaderboard.</b></blockquote>\n"
+            f"<blockquote><b>{e('bolt')} {q_display} questions · new quiz every hour</b></blockquote>\n"
+            f"<b>╰──────────────────────╯</b>\n\n"
             f"{e('play')} <b>QUIZ • BATTLE • WIN!</b>"
         )
 
@@ -417,32 +416,22 @@ class TelegramQuizBot(
 
     async def _set_commands(self):
         user_cmds = [
+            BotCommand("start",        "🏠 Home"),
             BotCommand("quiz",         "🎯 Get a quiz question"),
             BotCommand("battle",       "⚔️ 1v1 quiz battle"),
-            BotCommand("score",        "🏆 Your personal score"),
+            BotCommand("score",        "🏆 Your score & rank"),
             BotCommand("stats",        "📈 Your detailed stats"),
             BotCommand("achievements", "🏅 Badges & milestones"),
-            BotCommand("botstats",     "📊 Bot-wide statistics"),
-            BotCommand("categories",   "📚 Browse quiz categories"),
-            BotCommand("help",         "📖 Command center"),
-            BotCommand("start",        "🚀 Welcome screen"),
-            BotCommand("ping",         "🏓 Connection test"),
+            BotCommand("categories",   "📚 Quiz topics"),
+            BotCommand("help",         "❓ Help"),
         ]
         try:
             await self.application.bot.set_my_commands(user_cmds)
         except Exception as e:
             logger.warning(f"set_my_commands: {e}")
 
-        # Admin commands appear only in the command menu of admins' own DMs
-        admin_cmds = user_cmds + [
-            BotCommand("admin",      "🔴 Admin panel"),
-            BotCommand("broadcast",  "📡 Broadcast message"),
-            BotCommand("addquiz",    "➕ Add question"),
-            BotCommand("importquiz", "📥 Bulk import .txt"),
-            BotCommand("editquiz",   "📝 Edit question"),
-            BotCommand("delquiz",    "🗑 Delete question"),
-            BotCommand("reload",     "⚡ Reload questions"),
-        ]
+        # Admins use the red Admin Panel button on /start, not the menu.
+        # Remove admin menus set by older versions (per-chat scopes persist).
         from telegram import BotCommandScopeChat
         from src.core.config import AUTHORIZED_USERS
         admin_ids = set(AUTHORIZED_USERS)
@@ -454,10 +443,9 @@ class TelegramQuizBot(
                 logger.warning(f"set_my_commands: developers lookup failed: {e}")
         for uid in admin_ids:
             try:
-                await self.application.bot.set_my_commands(
-                    admin_cmds, scope=BotCommandScopeChat(chat_id=uid))
-            except Exception as e:   # e.g. admin never opened the bot's DM
-                logger.debug(f"set_my_commands for admin {uid}: {e}")
+                await self.application.bot.delete_my_commands(scope=BotCommandScopeChat(chat_id=uid))
+            except Exception as e:   # never opened the bot's DM / nothing set
+                logger.debug(f"delete_my_commands for {uid}: {e}")
 
     # ─── Core helpers ─────────────────────────────────────────
 

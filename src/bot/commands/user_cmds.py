@@ -85,60 +85,27 @@ class UserCommandsMixin(object):
 
     async def cmd_help(self, update: Update, context: ContextTypes.DEFAULT_TYPE,
                        edit_msg=None):
-        is_authorized = await self._is_authorized(update.effective_user.id) if update.effective_user else False
-
+        from src.bot.premium import btn, e
         text = (
-            f"╔══════════════════════════════════════════╗\n"
-            f"║   🎓  <b>𝐌𝐈𝐒𝐒 𝐐𝐔𝐈𝐙</b>  ·  Command Guide   ║\n"
-            f"╚══════════════════════════════════════════╝\n\n"
-
-            f"🎯  <b>𝐐𝐔𝐈𝐙  𝐂𝐄𝐍𝐓𝐄𝐑</b>\n"
-            f"╭──────────────────────────────────────────╮\n"
-            f"│  /quiz              ›  Start a quiz\n"
-            f"│  /battle            ›  1v1 battle\n"
-            f"│  /categories      ›  Browse all topics\n"
-            f"╰──────────────────────────────────────────╯\n\n"
-
-            f"📊  <b>𝐏𝐑𝐎𝐆𝐑𝐄𝐒𝐒  𝐂𝐄𝐍𝐓𝐄𝐑</b>\n"
-            f"╭──────────────────────────────────────────╮\n"
-            f"│  /score           ›  Scorecard &amp; rank\n"
-            f"│  /stats            ›  Full analytics\n"
-            f"│  /achievements  ›  Badges &amp; milestones\n"
-            f"╰──────────────────────────────────────────╯\n\n"
-
-            f"🔧  <b>𝐒𝐘𝐒𝐓𝐄𝐌</b>\n"
-            f"╭──────────────────────────────────────────╮\n"
-            f"│  /ping    ›  Latency check\n"
-            f"│  /info     ›  Bot information\n"
-            f"│  /start   ›  Dashboard\n"
-            f"╰──────────────────────────────────────────╯\n"
+            f"{e('question')} <b>HELP · MISS QUIZ</b>\n\n"
+            f"<blockquote><b>{e('play')} PLAY\n"
+            f"/quiz — get a question\n"
+            f"/battle — 1v1 with a friend\n"
+            f"/categories — all topics</b></blockquote>\n"
+            f"<blockquote><b>{e('stats')} YOUR PROGRESS\n"
+            f"/score — scorecard &amp; rank\n"
+            f"/stats — full analytics\n"
+            f"/achievements — badges</b></blockquote>\n"
+            f"<blockquote><b>{e('users')} IN GROUPS\n"
+            f"Make me admin → a new quiz every hour.\n"
+            f"/quiz and /battle work without admin too.</b></blockquote>\n"
+            f"<b>{e('signal')} Need help? {COMMUNITY}</b>"
         )
-
-        if is_authorized:
-            text += (
-                f"\n👑  <b>𝐀𝐃𝐌𝐈𝐍  𝐂𝐄𝐍𝐓𝐄𝐑</b>  · Owner &amp; Devs only\n"
-                f"╭──────────────────────────────────────────╮\n"
-                f"│  /dev           ›  Admin panel\n"
-                f"│  /addquiz      ›  Add question\n"
-                f"│  /editquiz     ›  Edit question\n"
-                f"│  /delquiz      ›  Delete question\n"
-                f"│  /importquiz  ›  Bulk import (.txt)\n"
-                f"│  /broadcast      ›  Message everyone\n"
-                f"│  /delbroadcast  ›  Delete last broadcast\n"
-                f"│  /botstats    ›  Platform analytics\n"
-                f"│  /reload        ›  Sync from database\n"
-                f"│  /restart       ›  Restart bot\n"
-                f"╰──────────────────────────────────────────╯\n"
-            )
-
-        text += (
-            f"\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            f"⚡  {COMMUNITY}  ·  CLAT 2027"
-        )
-
+        from src.bot.ui import COMMUNITY_URL
         kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🎓 Play Quiz",   callback_data="play_quiz"),
-             InlineKeyboardButton("ℹ️ Bot Info",    callback_data="info")],
+            [btn("Play Quiz", "play", "primary", callback_data="play_quiz"),
+             btn("Battle", "fight", "primary", callback_data="start_battle")],
+            [btn("Community", "users", "success", url=COMMUNITY_URL)],
             self._nav_row(back_screen="home"),
         ])
         await self._smart_edit(update, text, kb, edit_msg=edit_msg)

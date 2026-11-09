@@ -42,7 +42,7 @@ tests/                      test_config.py, test_quiz_manager.py, test_ui.py
 
 **Battle:** `/battle` (group: open ya reply-target; DM: invite link `start=bt_<id>`). 5 questions × 20s, +1 sahi, tie → kam time. Battle answers regular stats mein nahi jaate. `users` pe `$inc`: `battle_wins`, `battle_losses`, `battle_draws`, `battles_played`. DM mein har poll ka owner hai (forwarded poll se cheating band). Restart pe chalti battle khatam.
 
-**Branding:** naam "Miss Quiz Bot", community `t.me/VillanCommunity` (`ui.COMMUNITY_URL`). `/start` = photo (agar set) + blockquote caption + rangeen buttons (`_start_kb`).
+**Branding:** naam "Miss Quiz Bot", community `t.me/VillanCommunity` (`ui.COMMUNITY_URL`). `/start` = photo (agar set) + bold blockquote caption + rangeen buttons (`_start_kb`). `/help` = 3 bold blockquotes (Play / Progress / Groups) + buttons, koi admin section nahi. Command menu mein sirf user commands; admin sab kuch /start ke red Admin Panel se (purane per-admin menus startup pe delete).
 
 **MongoDB collections:** `settings` (key/value), `questions`, `users`, `groups`, `broadcasts`, `activities`, `developers`, `poll_map`, `auto_quiz_state`, `_counters` (auto-increment quiz id).
 
