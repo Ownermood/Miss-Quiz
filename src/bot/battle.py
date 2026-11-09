@@ -32,9 +32,11 @@ from src.bot.ui import UI, get_thread_id
 
 logger = logging.getLogger(__name__)
 
-BATTLE_QUESTIONS = 5
+BATTLE_QUESTIONS = 10     # defaults; the challenger can change them in the setup card
 BATTLE_SECONDS   = 20     # Telegram open_period per question
-INVITE_TTL       = 120    # seconds a challenge stays open
+Q_CHOICES        = (5, 10, 15, 20)
+T_CHOICES        = (10, 15, 20, 30)
+INVITE_TTL       = 300    # seconds a setup/challenge stays open
 START_DELAY      = 3      # seconds between "battle starts" and first question
 ROUND_GAP        = 1      # pause after each question before the next one
 
@@ -59,7 +61,11 @@ class Battle:
     p2_name:   str = ""
     chat_id:   Optional[int] = None    # group battles only
     thread_id: Optional[int] = None
-    state:     str = "pending"         # pending | running | done
+    state:     str = "pending"         # setup | pending | running | done
+    n_q:       int = BATTLE_QUESTIONS   # chosen in the setup card
+    secs:      int = BATTLE_SECONDS
+    category:  str = ""                 # "" = all topics
+    cat_options: List[str] = field(default_factory=list)
     created:   float = field(default_factory=time.monotonic)
     msg_id:    Optional[int] = None    # challenge message (group)
     scores:    Dict[int, int] = field(default_factory=dict)
@@ -71,7 +77,7 @@ class Battle:
         return [p for p in (self.p1, self.p2) if p]
 
     def expired(self, now: Optional[float] = None) -> bool:
-        return self.state == "pending" and (now or time.monotonic()) - self.created > INVITE_TTL
+        return self.state in ("setup", "pending") and (now or time.monotonic()) - self.created > INVITE_TTL
 
     def can_accept(self, uid: int) -> Tuple[bool, str]:
         if self.state != "pending":
@@ -131,6 +137,11 @@ class Battle:
         return (a, b) if self.times[a] < self.times[b] else (b, a)
 
 
+def dataclass_replace_mode(b: "Battle", mode: str) -> "Battle":
+    import dataclasses
+    return dataclasses.replace(b, mode=mode)
+
+
 class BattleMixin:
     """Mixed into TelegramQuizBot. Uses self.db, self.quiz_manager, self._reply."""
 
@@ -155,20 +166,22 @@ class BattleMixin:
             for pid in list(b.rounds):
                 self._battle_polls.pop(pid, None)
 
-    def _bt_pick_questions(self) -> List[Dict]:
-        picked, seen = [], set()
-        for _ in range(BATTLE_QUESTIONS * 6):
-            q = self.quiz_manager.get_random_question(chat_id=0)
-            if not q:
-                break
-            key = q.get("id") or q.get("question")
-            if key in seen or len(q.get("options") or []) < 2:
-                continue
-            seen.add(key)
-            picked.append(q)
-            if len(picked) == BATTLE_QUESTIONS:
-                break
-        return picked
+    def _bt_pool(self, category: str = "") -> List[Dict]:
+        qs = [q for q in (getattr(self.quiz_manager, "questions", []) or [])
+              if len(q.get("options") or []) >= 2]
+        if category:
+            qs = [q for q in qs if (q.get("category") or "").lower() == category.lower()]
+        return qs
+
+    def _bt_pick_questions(self, b: "Battle") -> List[Dict]:
+        import random
+        pool = self._bt_pool(b.category)
+        return random.sample(pool, min(b.n_q, len(pool)))
+
+    def _bt_top_categories(self, limit: int = 6) -> List[str]:
+        from collections import Counter
+        c = Counter((q.get("category") or "General") for q in self._bt_pool())
+        return [name for name, n in c.most_common(limit) if n >= Q_CHOICES[0]]
 
     @staticmethod
     def _bt_name(user) -> str:
@@ -177,6 +190,7 @@ class BattleMixin:
     # ── /battle ──────────────────────────────────────────────────────────
 
     async def cmd_battle(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Step 1: the challenger picks questions / time / topic (setup card)."""
         user, chat, msg = update.effective_user, update.effective_chat, update.effective_message
         if not user or not chat or not msg:
             return
@@ -184,13 +198,15 @@ class BattleMixin:
         if self._bt_busy(user.id):
             await self._reply(update, "⚔️ You already have a battle running or waiting.")
             return
-        if len(getattr(self.quiz_manager, "questions", []) or []) < BATTLE_QUESTIONS:
+        if len(self._bt_pool()) < Q_CHOICES[0]:
             await self._reply(update, "⚠️ Not enough questions for a battle yet.")
             return
 
         bid = secrets.token_urlsafe(6).replace("-", "x").replace("_", "y")
         b = Battle(id=bid, mode="dm" if chat.type == "private" else "group",
-                   p1=user.id, p1_name=self._bt_name(user))
+                   p1=user.id, p1_name=self._bt_name(user), state="setup")
+        b.n_q = min(BATTLE_QUESTIONS, max(q for q in Q_CHOICES if q <= len(self._bt_pool())))
+        b.cat_options = self._bt_top_categories()
 
         if b.mode == "group":
             # From a button the message is the bot's own; its reply_to is the
@@ -209,55 +225,109 @@ class BattleMixin:
                     return
                 b.p2, b.p2_name = target.id, self._bt_name(target)
             b.chat_id, b.thread_id = chat.id, get_thread_id(update)
-            vs = UI.mention(b.p2, b.p2_name) if b.p2 else "<i>anyone</i>"
-            text = (
-                f"⚔️  <b>1v1 BATTLE</b>\n{UI.LINE}\n\n"
-                f"{UI.mention(b.p1, b.p1_name)}  vs  {vs}\n\n"
-                f"🎯 {BATTLE_QUESTIONS} questions · ⏱ {BATTLE_SECONDS}s each\n"
-                f"⌛ Challenge open for {INVITE_TTL // 60} min"
-            )
-            kb = InlineKeyboardMarkup([[
-                InlineKeyboardButton("✅ Accept",  callback_data=f"bt_acc:{bid}"),
-                InlineKeyboardButton("❌ Decline", callback_data=f"bt_dec:{bid}"),
-            ]])
-            sent = await self._reply(update, text, reply_markup=kb)
-            b.msg_id = getattr(sent, "message_id", None)
-        else:
-            link = f"https://t.me/{context.bot.username}?start=bt_{bid}"
-            text = (
-                f"⚔️  <b>1v1 BATTLE</b>\n{UI.LINE}\n\n"
-                f"Send this link to a friend. When they open it, the battle starts "
-                f"here in both your DMs.\n\n"
-                f"🔗 <code>{html.escape(link)}</code>\n\n"
-                f"🎯 {BATTLE_QUESTIONS} questions · ⏱ {BATTLE_SECONDS}s each · "
-                f"⌛ link valid {INVITE_TTL // 60} min"
-            )
-            share = ("https://t.me/share/url?url=" + quote(link, safe="") +
-                     "&text=" + quote("Battle me on Miss Quiz ⚔️"))
-            kb = InlineKeyboardMarkup([
-                [InlineKeyboardButton("📤 Share invite", url=share)],
-                [InlineKeyboardButton("❌ Cancel", callback_data=f"bt_dec:{bid}")],
-            ])
-            await self._reply(update, text, reply_markup=kb)
 
+        text, kb = self._bt_setup_view(b)
+        sent = await self._reply(update, text, reply_markup=kb)
+        b.msg_id = getattr(sent, "message_id", None)
         self._bt_state()[bid] = b
-        logger.info(f"[BATTLE] {bid} created mode={b.mode} p1={b.p1} p2={b.p2}")
+        logger.info(f"[BATTLE] {bid} setup mode={b.mode} p1={b.p1} p2={b.p2}")
 
-    # ── accept / decline ─────────────────────────────────────────────────
+    # ── views ────────────────────────────────────────────────────────────
+
+    def _bt_settings_line(self, b: "Battle") -> str:
+        topic = html.escape(b.category) if b.category else "All topics"
+        return (f"<blockquote>🎯 Questions › {b.n_q}\n⏱ Time › {b.secs}s each\n"
+                f"📚 Topic › {topic}</blockquote>")
+
+    def _bt_setup_view(self, b: "Battle"):
+        vs = UI.mention(b.p2, b.p2_name) if b.p2 else "<i>anyone</i>"
+        text = (f"⚔️ <b>BATTLE SETUP</b>\n{UI.mention(b.p1, b.p1_name)}  vs  {vs}\n"
+                f"{self._bt_settings_line(b)}\n"
+                f"<i>Choose, then tap Create Challenge.</i>")
+        mark = lambda on, label: f"✅ {label}" if on else label
+        rows = [
+            [InlineKeyboardButton(mark(b.n_q == n, f"{n} Q"), callback_data=f"bt_q:{b.id}:{n}") for n in Q_CHOICES],
+            [InlineKeyboardButton(mark(b.secs == t, f"{t}s"), callback_data=f"bt_t:{b.id}:{t}") for t in T_CHOICES],
+        ]
+        cats = [InlineKeyboardButton(mark(not b.category, "🎲 All topics"), callback_data=f"bt_c:{b.id}:-1")]
+        cats += [InlineKeyboardButton(mark(b.category == c, c[:20]), callback_data=f"bt_c:{b.id}:{i}")
+                 for i, c in enumerate(b.cat_options)]
+        rows += [cats[k:k + 2] for k in range(0, len(cats), 2)]
+        rows.append([InlineKeyboardButton("⚔️ Create Challenge", callback_data=f"bt_go:{b.id}", style="success")])
+        rows.append([InlineKeyboardButton("❌ Cancel", callback_data=f"bt_dec:{b.id}", style="danger")])
+        return text, InlineKeyboardMarkup(rows)
+
+    def _bt_challenge_view(self, b: "Battle", bot_username: str):
+        if b.mode == "group":
+            vs = UI.mention(b.p2, b.p2_name) if b.p2 else "<i>anyone</i>"
+            text = (f"⚔️ <b>1v1 BATTLE</b>\n{UI.mention(b.p1, b.p1_name)}  vs  {vs}\n"
+                    f"{self._bt_settings_line(b)}\n"
+                    f"⌛ <i>Open for {INVITE_TTL // 60} min</i>")
+            kb = InlineKeyboardMarkup([[
+                InlineKeyboardButton("✅ Accept", callback_data=f"bt_acc:{b.id}", style="success"),
+                InlineKeyboardButton("❌ Decline", callback_data=f"bt_dec:{b.id}", style="danger"),
+            ]])
+            return text, kb
+        link = f"https://t.me/{bot_username}?start=bt_{b.id}"
+        text = (f"⚔️ <b>1v1 BATTLE</b>\n"
+                f"Send this link to a friend — when they open it, the battle starts in both your DMs.\n"
+                f"{self._bt_settings_line(b)}\n"
+                f"🔗 {html.escape(link)}\n⌛ <i>Link valid {INVITE_TTL // 60} min</i>")
+        share = ("https://t.me/share/url?url=" + quote(link, safe="") +
+                 "&text=" + quote("Battle me on Miss Quiz ⚔️"))
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("📤 Share invite", url=share)],
+            [InlineKeyboardButton("❌ Cancel", callback_data=f"bt_dec:{b.id}", style="danger")],
+        ])
+        return text, kb
+
+    # ── buttons: setup / accept / decline / rematch ──────────────────────
 
     async def handle_battle_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         query = update.callback_query
         user  = update.effective_user
         if not query or not user or not query.data:
             return
-        action, _, bid = query.data.partition(":")
+        parts = query.data.split(":")
+        action, bid = parts[0], (parts[1] if len(parts) > 1 else "")
+        if action == "bt_rm":
+            await self._bt_rematch(query, user, bid, context)
+            return
         b = self._bt_state().get(bid)
-        if not b:
+        if not b or b.expired():
             await query.answer("This battle is no longer available.", show_alert=True)
             return
 
+        if action in ("bt_q", "bt_t", "bt_c", "bt_go"):
+            if user.id != b.p1 or b.state != "setup":
+                await query.answer("Only the challenger can change this.", show_alert=True)
+                return
+            try:
+                val = int(parts[2]) if action != "bt_go" else 0
+            except (IndexError, ValueError):
+                await query.answer(); return
+            if action == "bt_q" and val in Q_CHOICES:
+                b.n_q = val
+            elif action == "bt_t" and val in T_CHOICES:
+                b.secs = val
+            elif action == "bt_c":
+                b.category = b.cat_options[val] if 0 <= val < len(b.cat_options) else ""
+            elif action == "bt_go":
+                have = len(self._bt_pool(b.category))
+                if have < b.n_q:
+                    await query.answer(f"Only {have} questions in this topic — pick fewer or another topic.",
+                                       show_alert=True)
+                    return
+                b.state, b.created = "pending", time.monotonic()
+                await query.answer("Challenge created! ⚔️")
+                await self._bt_edit(query, *self._bt_challenge_view(b, context.bot.username))
+                return
+            await query.answer()
+            await self._bt_edit(query, *self._bt_setup_view(b))
+            return
+
         if action == "bt_dec":
-            if user.id == b.p1 and b.state == "pending":
+            if user.id == b.p1 and b.state in ("setup", "pending"):
                 b.state = "done"
                 await query.answer("Battle cancelled.")
                 await self._bt_edit(query, f"⚔️ Battle cancelled by {UI.mention(b.p1, b.p1_name)}.")
@@ -280,16 +350,55 @@ class BattleMixin:
             await query.answer("Battle accepted! ⚔️")
             await self._bt_edit(
                 query,
-                f"⚔️  <b>BATTLE STARTED</b>\n{UI.LINE}\n\n"
-                f"{UI.mention(b.p1, b.p1_name)}  vs  {UI.mention(b.p2, b.p2_name)}\n\n"
+                f"⚔️ <b>BATTLE STARTED</b>\n"
+                f"{UI.mention(b.p1, b.p1_name)}  vs  {UI.mention(b.p2, b.p2_name)}\n"
+                f"{self._bt_settings_line(b)}\n"
                 f"First question in {START_DELAY}s…",
             )
             if hasattr(self, "ensure_user_registered"):
                 try:
-                    self.ensure_user_registered(user, source="battle")
+                    await asyncio.to_thread(self.ensure_user_registered, user, None, "battle")
+                except Exception:
+                    pass
+            if b.mode == "dm":   # rematch accepted in DM: tell the challenger too
+                try:
+                    await context.bot.send_message(b.p1, f"⚔️ <b>{html.escape(b.p2_name)} accepted — starting!</b>",
+                                                   parse_mode=ParseMode.HTML)
                 except Exception:
                     pass
             asyncio.create_task(self._bt_run(b, context))
+
+    async def _bt_rematch(self, query, user, old_bid: str, context) -> None:
+        old = getattr(self, "_bt_finished", {}).get(old_bid)
+        if not old or user.id not in old.players:
+            await query.answer("Rematch is no longer available — start a new /battle.", show_alert=True)
+            return
+        self._bt_cleanup()
+        other = old.p2 if user.id == old.p1 else old.p1
+        other_name = old.p2_name if user.id == old.p1 else old.p1_name
+        if self._bt_busy(user.id) or self._bt_busy(other):
+            await query.answer("One of you is already in a battle.", show_alert=True)
+            return
+        bid = secrets.token_urlsafe(6).replace("-", "x").replace("_", "y")
+        b = Battle(id=bid, mode=old.mode, p1=user.id, p1_name=self._bt_name(user),
+                   p2=other, p2_name=other_name, chat_id=old.chat_id, thread_id=old.thread_id,
+                   n_q=old.n_q, secs=old.secs, category=old.category)
+        self._bt_state()[bid] = b
+        await query.answer("Rematch sent! ⚔️")
+        text, _ = self._bt_challenge_view(dataclass_replace_mode(b, "group"), context.bot.username)
+        kb = InlineKeyboardMarkup([[
+            InlineKeyboardButton("✅ Accept", callback_data=f"bt_acc:{bid}", style="success"),
+            InlineKeyboardButton("❌ Decline", callback_data=f"bt_dec:{bid}", style="danger"),
+        ]])
+        target = b.chat_id if b.mode == "group" else other
+        kw = {"parse_mode": ParseMode.HTML, "reply_markup": kb}
+        if b.mode == "group" and b.thread_id:
+            kw["message_thread_id"] = b.thread_id
+        try:
+            await context.bot.send_message(target, "🔁 <b>REMATCH</b>\n" + text, **kw)
+        except Exception as e:
+            b.state = "done"
+            logger.warning(f"[BATTLE] rematch {bid} could not be sent: {e}")
 
     async def battle_join_from_link(self, update: Update, context: ContextTypes.DEFAULT_TYPE,
                                     bid: str) -> None:
@@ -310,7 +419,7 @@ class BattleMixin:
         intro = (
             f"⚔️  <b>BATTLE STARTED</b>\n{UI.LINE}\n\n"
             f"{UI.mention(b.p1, b.p1_name)}  vs  {UI.mention(b.p2, b.p2_name)}\n\n"
-            f"🎯 {BATTLE_QUESTIONS} questions · ⏱ {BATTLE_SECONDS}s each\n"
+            f"🎯 {b.n_q} questions · ⏱ {b.secs}s each\n"
             f"First question in {START_DELAY}s…"
         )
         for uid in b.players:
@@ -327,8 +436,8 @@ class BattleMixin:
 
     async def _bt_run(self, b: Battle, context: ContextTypes.DEFAULT_TYPE) -> None:
         try:
-            questions = self._bt_pick_questions()
-            if len(questions) < BATTLE_QUESTIONS:
+            questions = self._bt_pick_questions(b)
+            if len(questions) < b.n_q:
                 b.state = "done"
                 await self._bt_notify(b, context, "⚠️ Battle cancelled: not enough questions.")
                 return
@@ -344,7 +453,7 @@ class BattleMixin:
                 try:
                     await asyncio.wait_for(
                         asyncio.gather(*(r.done.wait() for r in rounds)),
-                        timeout=BATTLE_SECONDS + 1,
+                        timeout=b.secs + 1,
                     )
                 except asyncio.TimeoutError:
                     pass
@@ -362,9 +471,9 @@ class BattleMixin:
         if not 0 <= correct < len(options):
             correct = 0
         kwargs = dict(
-            question=f"⚔️ {n}/{BATTLE_QUESTIONS}  {q['question']}"[:300],
+            question=f"⚔️ {n}/{b.n_q}  {q['question']}"[:300],
             options=options, type=Poll.QUIZ, correct_option_id=correct,
-            is_anonymous=False, open_period=BATTLE_SECONDS,
+            is_anonymous=False, open_period=b.secs,
         )
         targets = [(b.chat_id, b.thread_id)] if b.mode == "group" else [(u, None) for u in b.players]
         rounds = []
@@ -397,7 +506,7 @@ class BattleMixin:
 
     async def _bt_finish(self, b: Battle, context) -> None:
         winner, loser = b.result()
-        line = lambda u, n: (f"{UI.mention(u, n)}  ›  <b>{b.scores[u]}</b>/{BATTLE_QUESTIONS}"
+        line = lambda u, n: (f"{UI.mention(u, n)}  ›  <b>{b.scores[u]}</b>/{b.n_q}"
                              f"  ·  {b.times[u]:.1f}s")
         if winner:
             wname = b.p1_name if winner == b.p1 else b.p2_name
@@ -407,10 +516,11 @@ class BattleMixin:
         text = (
             f"⚔️  <b>BATTLE RESULT</b>\n{UI.LINE}\n\n"
             f"{line(b.p1, b.p1_name)}\n{line(b.p2, b.p2_name)}\n\n"
-            f"{head}\n\n<i>Tie-break: less time on correct answers.</i>\n"
-            f"Play again: /battle"
+            f"{head}\n\n<i>Tie-break: less time on correct answers.</i>"
         )
-        await self._bt_notify(b, context, text)
+        self._bt_finished_put(b)
+        await self._bt_notify(b, context, text, InlineKeyboardMarkup([[
+            InlineKeyboardButton("🔁 Rematch", callback_data=f"bt_rm:{b.id}", style="success")]]))
         if self.db:
             try:
                 await asyncio.to_thread(self.db.record_battle_result, b.p1, b.p2, winner)
@@ -418,13 +528,25 @@ class BattleMixin:
                 logger.error(f"[BATTLE] {b.id} record_battle_result failed: {e}")
         logger.info(f"[BATTLE] {b.id} done scores={b.scores} winner={winner}")
 
-    async def _bt_notify(self, b: Battle, context, text: str) -> None:
+    def _bt_finished_put(self, b: "Battle") -> None:
+        """Keep finished battles 30 min for Rematch (bounded)."""
+        fin = self.__dict__.setdefault("_bt_finished", {})
+        fin[b.id] = b
+        b.created = time.monotonic()
+        for k in [k for k, v in fin.items() if time.monotonic() - v.created > 1800][:100]:
+            fin.pop(k, None)
+        while len(fin) > 500:
+            fin.pop(next(iter(fin)))
+
+    async def _bt_notify(self, b: Battle, context, text: str, kb=None) -> None:
         if b.mode == "group":
             targets = [(b.chat_id, b.thread_id)]
         else:
             targets = [(u, None) for u in b.players]
         for chat_id, thread_id in targets:
             kw = {"parse_mode": ParseMode.HTML}
+            if kb is not None:
+                kw["reply_markup"] = kb
             if thread_id:
                 kw["message_thread_id"] = thread_id
             try:
@@ -433,8 +555,9 @@ class BattleMixin:
                 logger.warning(f"[BATTLE] {b.id} notify {chat_id} failed: {e}")
 
     @staticmethod
-    async def _bt_edit(query, text: str) -> None:
+    async def _bt_edit(query, text: str, reply_markup=None) -> None:
         try:
-            await query.edit_message_text(text, parse_mode=ParseMode.HTML)
+            await query.edit_message_text(text, parse_mode=ParseMode.HTML, reply_markup=reply_markup)
         except Exception as e:
-            logger.debug(f"[BATTLE] edit failed: {e}")
+            if "not modified" not in str(e).lower():
+                logger.debug(f"[BATTLE] edit failed: {e}")

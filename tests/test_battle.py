@@ -107,6 +107,24 @@ def group_update(u, reply_to=None):
                            effective_message=msg, message=msg)
 
 
+async def press(app, ctx, uid_user, data):
+    q = SimpleNamespace(data=data, answer=AsyncMock(), edit_message_text=AsyncMock())
+    await app.handle_battle_callback(SimpleNamespace(callback_query=q, effective_user=uid_user), ctx)
+    if q.edit_message_text.await_args:
+        app._last_edit = q.edit_message_text.await_args.args[0]
+    return q
+
+
+async def setup_and_create(app, ctx, challenger, secs=0.2, n_q=None):
+    bid = next(iter(app._bt_state()))
+    b = app._bt_state()[bid]
+    b.secs = secs                       # keep tests fast
+    if n_q:
+        await press(app, ctx, challenger, f"bt_q:{bid}:{n_q}")
+    await press(app, ctx, challenger, f"bt_go:{bid}")
+    return bid
+
+
 @pytest.fixture(autouse=True)
 def fast(monkeypatch):
     monkeypatch.setattr(bt, "START_DELAY", 0)
@@ -136,11 +154,9 @@ async def test_group_battle_full_flow():
     ctx, polls = fake_context()
     a, b = user(1, "Amit"), user(2, "Bina")
     await app.cmd_battle(group_update(a), ctx)
-    bid = next(iter(app._bt_state()))
-    assert "1v1 BATTLE" in app.replies[0][0]
-
-    q = SimpleNamespace(data=f"bt_acc:{bid}", answer=AsyncMock(), edit_message_text=AsyncMock())
-    await app.handle_battle_callback(SimpleNamespace(callback_query=q, effective_user=b), ctx)
+    assert "BATTLE SETUP" in app.replies[0][0]
+    bid = await setup_and_create(app, ctx, a, n_q=5)
+    await press(app, ctx, b, f"bt_acc:{bid}")
 
     # Amit answers everything correctly (option 1), Bina always wrong
     await _answer_all(app, polls, 0, {1: 1, 2: 0, 99: 1})
@@ -150,9 +166,10 @@ async def test_group_battle_full_flow():
         await asyncio.sleep(0.01)
 
     battle = app._bt_state()[bid]
-    assert len(polls) == bt.BATTLE_QUESTIONS and all(p[0] == -100 for p in polls)
+    assert len(polls) == 5 and all(p[0] == -100 for p in polls)
     assert battle.scores == {1: 5, 2: 0}
     app.db.record_battle_result.assert_called_once_with(1, 2, 1)
+    assert ctx.bot.send_message.call_args.kwargs["reply_markup"].inline_keyboard[0][0].callback_data == f"bt_rm:{bid}"
     result_text = ctx.bot.send_message.call_args.args[1]
     assert "Winner" in result_text and "Amit" in result_text
 
@@ -169,8 +186,8 @@ async def test_dm_battle_via_link():
     dm = lambda u: SimpleNamespace(effective_user=u, effective_chat=SimpleNamespace(id=u.id, type="private"),
                                    effective_message=SimpleNamespace(reply_to_message=None))
     await app.cmd_battle(dm(a), ctx)
-    text = app.replies[0][0]
-    bid = next(iter(app._bt_state()))
+    bid = await setup_and_create(app, ctx, a, n_q=5)
+    text = app._last_edit
     assert f"start=bt_{bid}" in text
 
     await app.battle_join_from_link(dm(b), ctx, bid)
@@ -180,7 +197,7 @@ async def test_dm_battle_via_link():
             break
         await asyncio.sleep(0.01)
     battle = app._bt_state()[bid]
-    assert len(polls) == 2 * bt.BATTLE_QUESTIONS          # one poll per player per question
+    assert len(polls) == 2 * 5          # one poll per player per question
     assert {p[0] for p in polls} == {1, 2}
     assert battle.scores == {1: 0, 2: 5}
     app.db.record_battle_result.assert_called_once_with(1, 2, 2)
@@ -203,8 +220,8 @@ async def test_decline_by_target_and_outsider_blocked():
     a, b, c = user(1, "Amit"), user(2, "Bina"), user(3, "Chetan")
     await app.cmd_battle(group_update(a, reply_to=b), ctx)
     bid = next(iter(app._bt_state()))
-    q = SimpleNamespace(data=f"bt_acc:{bid}", answer=AsyncMock(), edit_message_text=AsyncMock())
-    await app.handle_battle_callback(SimpleNamespace(callback_query=q, effective_user=c), ctx)
+    await setup_and_create(app, ctx, a)
+    q = await press(app, ctx, c, f"bt_acc:{bid}")
     assert app._bt_state()[bid].state == "pending"           # outsider can't accept
     q.data = f"bt_dec:{bid}"
     await app.handle_battle_callback(SimpleNamespace(callback_query=q, effective_user=b), ctx)
@@ -273,3 +290,59 @@ async def test_battle_button_from_bot_message_is_open_challenge():
     await app.cmd_battle(upd, ctx)
     b = next(iter(app._bt_state().values()))
     assert b.p2 is None and "anyone" in app.replies[-1][0]
+
+
+
+# ── setup card ─────────────────────────────────────────────────────────────
+
+async def test_setup_only_challenger_can_change_and_settings_apply():
+    app = FakeBotApp()
+    ctx, polls = fake_context()
+    a, b = user(1, "Amit"), user(2, "Bina")
+    await app.cmd_battle(group_update(a), ctx)
+    bid = next(iter(app._bt_state()))
+    q = await press(app, ctx, b, f"bt_q:{bid}:15")                     # not the challenger
+    assert q.answer.await_args.kwargs.get("show_alert") is True
+    await press(app, ctx, a, f"bt_q:{bid}:15")
+    await press(app, ctx, a, f"bt_t:{bid}:30")
+    bt_ = app._bt_state()[bid]
+    assert (bt_.n_q, bt_.secs, bt_.state) == (15, 30, "setup")
+    q = await press(app, ctx, b, f"bt_acc:{bid}")                       # can't accept during setup
+    assert bt_.state == "setup"
+    await press(app, ctx, a, f"bt_go:{bid}")
+    assert bt_.state == "pending" and "15" in app._last_edit and "30s" in app._last_edit
+
+
+async def test_topic_with_too_few_questions_is_refused():
+    app = FakeBotApp()
+    for i, q in enumerate(app.quiz_manager.questions):
+        q["category"] = "Polity" if i < 5 else "GK"
+    ctx, _ = fake_context()
+    a = user(1, "Amit")
+    await app.cmd_battle(group_update(a), ctx)
+    bid = next(iter(app._bt_state()))
+    bt_ = app._bt_state()[bid]
+    idx = bt_.cat_options.index("Polity")
+    await press(app, ctx, a, f"bt_c:{bid}:{idx}")
+    await press(app, ctx, a, f"bt_q:{bid}:10")
+    q = await press(app, ctx, a, f"bt_go:{bid}")
+    assert "Only 5 questions" in q.answer.await_args.args[0] and bt_.state == "setup"
+    await press(app, ctx, a, f"bt_q:{bid}:5")
+    await press(app, ctx, a, f"bt_go:{bid}")
+    assert bt_.state == "pending"
+    picked = app._bt_pick_questions(bt_)
+    assert len(picked) == 5 and all(q["category"] == "Polity" for q in picked)
+
+
+async def test_rematch_challenges_the_other_player_with_same_settings():
+    app = FakeBotApp()
+    ctx, _ = fake_context()
+    old = Battle(id="old", mode="group", p1=1, p1_name="Amit", chat_id=-100, n_q=15, secs=10)
+    old.start(2, "Bina")
+    app._bt_finished_put(old)
+    q = await press(app, ctx, user(2, "Bina"), "bt_rm:old")
+    new = next(v for v in app._bt_state().values())
+    assert (new.p1, new.p2, new.n_q, new.secs, new.state) == (2, 1, 15, 10, "pending")
+    assert ctx.bot.send_message.await_args.args[0] == -100
+    q = await press(app, ctx, user(9, "X"), "bt_rm:old")                  # outsider
+    assert q.answer.await_args.kwargs.get("show_alert") is True
