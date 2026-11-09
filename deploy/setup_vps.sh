@@ -10,7 +10,7 @@
 set -euo pipefail
 
 REPO="https://github.com/ownermood/miss-quiz.git"
-BRANCH="ccr-f1e736ea-a5z34q"
+BRANCH="main"
 APP_DIR="/opt/miss-quiz"
 APP_USER="missquiz"
 LOCAL_MONGO=1; CHECK=0

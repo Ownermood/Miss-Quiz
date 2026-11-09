@@ -305,13 +305,14 @@ class DatabaseManager:
             self.users_col.update_one({"user_id": uid}, {"$inc": {fld: 1, "battles_played": 1}})
 
     # ── Users' own quizzes ──
-    def create_quiz_set(self, owner: int, title: str, questions: List[Dict], secs: int = 20) -> str:
+    def create_quiz_set(self, owner: int, title: str, questions: List[Dict], secs: int = 20,
+                        source_files: Optional[List[Dict]] = None) -> str:
         import secrets
         sid = secrets.token_hex(4)
         self.quiz_sets_col.insert_one({
             "id": sid, "owner": int(owner), "title": str(title)[:60], "questions": questions,
             "count": len(questions), "secs": int(secs), "plays": 0, "shuffle": False,
-            "source_files": [], "created_at": datetime.utcnow().isoformat(),
+            "source_files": list(source_files or []), "created_at": datetime.utcnow().isoformat(),
         })
         return sid
 

@@ -122,9 +122,11 @@ async def _bot_lifecycle():
 
     await bot.initialize_webhook(token, final_url)
     await bot.application.start()
+    await bot.restore_poll_mappings_to_bot_data()
     telegram_bot = bot
     logger.info("✅ Telegram bot ready")
     bot.run_startup_tasks()
+    await bot.recover_groups_from_history()
 
     # Auto-quiz scheduler — was missing from webhook mode entirely.
     # Must start AFTER application.start() so bot.application.bot is live.

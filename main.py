@@ -1,5 +1,5 @@
 """
-CLAT Vision Quiz Bot — Entry point
+Miss Quiz Bot — Entry point
 """
 
 import os
@@ -168,8 +168,9 @@ def run_polling_mode(config: Config):
             scheduler.start()
             await bot.application.updater.start_polling(
                 drop_pending_updates=True,
-                allowed_updates=["message", "poll_answer", "callback_query", "my_chat_member"],
+                allowed_updates=["message", "poll_answer", "callback_query", "my_chat_member", "inline_query"],
             )
+            bot.run_startup_tasks()
             # Recover groups from history NOW — bot is connected, get_chat() works.
             # Scans activities + auto_quiz_state for group IDs not yet in groups_col,
             # calls getChat() for each, and registers them immediately.

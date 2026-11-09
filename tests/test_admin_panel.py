@@ -53,7 +53,7 @@ async def test_owner_panel_red_buttons_with_restart(bot):
     assert "ADMIN PANEL" in text and "Paused (not admin)  ›  1" in text
     assert "ap:restart" in buttons(kb)
     styles = {b.callback_data: b.style for row in kb.inline_keyboard for b in row}
-    assert styles["ap:stats"] == "primary" and styles["ap:restart"] == "success" and styles["ap:close"] == "danger"
+    assert styles["ap:stats"] == "primary" and styles["ap:restart"] == "success" and styles["ap:delquiz"] == "danger"
 
 
 async def test_dev_has_no_restart(bot):

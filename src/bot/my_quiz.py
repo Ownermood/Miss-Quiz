@@ -68,7 +68,7 @@ async def load_page(db_call, count_call, owner: int, page: int):
     pages = max(1, -(-total // PER_PAGE))
     page = max(1, min(page, pages))
     sets = await db_call(owner, PER_PAGE, (page - 1) * PER_PAGE)
-    return (sets if isinstance(sets, list) else []), page, pages, total
+    return (sets if isinstance(sets, list) else []), page, pages
 
 
 def parse_questions(text: str, items: Optional[List[Dict]] = None,
@@ -198,9 +198,11 @@ class MyQuizMixin:
     def _mq_collect_view(d: Dict) -> Tuple[str, InlineKeyboardMarkup]:
         q_count = len(d["qs"])
         f_count = len(d.get("files") or [])
+        skipped = len(d.get("problems") or [])
         body = (
-            f"✏️ <b>CREATE OWN QUIZ</b>\n"
+            f"✏️ <b>CREATE YOUR QUIZ</b>\n"
             f"<blockquote>✅ Questions added › <b>{q_count}</b>" +
+            (f"\n⚠️ Skipped {skipped} (missing answer or options)" if skipped else "") +
             (f"\n📎 Study file attached › <b>{html.escape(d['fname'])}</b> ({f_count} file)" if d.get("fname") else "") +
             "</blockquote>\n"
         )
@@ -220,7 +222,7 @@ class MyQuizMixin:
     @staticmethod
     def _mq_list_view(sets: List[Dict], page: int, pages: int, total: int = 0) -> Tuple[str, InlineKeyboardMarkup]:
         from src.bot.battle import _tlabel
-        head = f"📚 <b>YOUR QUIZZES</b>  ·  Total Created: <b>{total or len(sets)}</b>\n"
+        head = (f"📚 <b>YOUR QUIZZES</b>" + (f" · page {page}/{pages}" if pages > 1 else "") + f"  ·  Total Created: <b>{total or len(sets)}</b>\n")
         if not sets:
             body = head + "\n<i>You haven't created any quizzes yet. Tap below to build your first quiz!</i>"
             return body, InlineKeyboardMarkup([[_btn("➕ Create New Quiz", "mq_new", "success")]])
@@ -266,7 +268,7 @@ class MyQuizMixin:
         share_link = f"https://t.me/{bot_username}?start=shared_{sid}" if bot_username else f"Code: {sid}"
 
         text = (
-            ("🎉 <b>QUIZ PUBLISHED &amp; READY!</b>\n" if saved else "") +
+            ("🎉 <b>Saved! Quiz Published &amp; Ready!</b>\n" if saved else "") +
             f"🎓 <b>{title}</b>\n"
             f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
             f"<blockquote>"
@@ -361,7 +363,9 @@ class MyQuizMixin:
 
     async def mq_open_list(self, update: Update, context, query=None, page: int = 1):
         user = update.effective_user
-        text, kb = self._mq_list_view(*await self._mq_page(user.id, page))
+        sets, cur_page, pages = await self._mq_page(user.id, page)
+        total = await self._mq_db("count_quiz_sets", user.id, default=len(sets))
+        text, kb = self._mq_list_view(sets, cur_page, pages, total=total if isinstance(total, int) else len(sets))
         if query:
             await self._bt_edit(query, text, kb)
         else:
@@ -482,7 +486,7 @@ class MyQuizMixin:
                 d.setdefault("files", []).append(f_entry)
 
             if doc.file_size and doc.file_size > MAX_FILE:
-                note = "File is over 20 MB — saved in 📚 Study Materials, send a smaller text/PDF for questions."
+                note = "File is too big (over 20 MB) — saved in 📚 Study Materials, send a smaller text/PDF for questions."
             else:
                 try:
                     from src.bot.file_extract import extract
@@ -531,7 +535,11 @@ class MyQuizMixin:
         qs_list = list(d["qs"])
         files_list = list(d.get("files") or [])
         context.user_data.pop("mq_draft", None)
-        sid = secrets.token_hex(4)
+        sid = await self._mq_db("create_quiz_set", user.id, title[:60], qs_list, 20)
+        if not isinstance(sid, str) or not sid:
+            sid = secrets.token_hex(4)
+        if files_list and self.db and hasattr(self.db, "update_quiz_set"):
+            await self._mq_db("update_quiz_set", sid, user.id, {"source_files": files_list})
         now_iso = datetime.datetime.utcnow().isoformat()
         doc = {
             "id": sid,
@@ -545,18 +553,9 @@ class MyQuizMixin:
             "source_files": files_list,
             "created_at": now_iso,
         }
-        await self._mq_db("save_quiz_set", doc)
         logger.info(f"[MYQUIZ] saved {sid} '{title}' ({len(qs_list)} Q, {len(files_list)} files) for {user.id}")
         card_text, kb = self._mq_card_view(doc, saved=True, bot_username=context.bot.username, is_owner=True)
-        msg_id = d.get("msg")
-        if msg_id:
-            try:
-                await context.bot.edit_message_text(card_text, chat_id=d["chat"], message_id=msg_id,
-                                                    parse_mode=ParseMode.HTML, reply_markup=kb)
-                return
-            except Exception:
-                pass
-        await context.bot.send_message(d["chat"], card_text, parse_mode=ParseMode.HTML, reply_markup=kb)
+        await self._mq_show(context, d, card_text, kb)
 
     # ── callbacks ────────────────────────────────────────────────────────
 
@@ -656,7 +655,7 @@ class MyQuizMixin:
             return
 
         is_owner = (qs.get("owner") == user.id)
-        owner_only_actions = {"mq_edit", "mq_rename", "mq_timer", "mq_settimer", "mq_shuffle", "mq_attach", "mq_del", "mq_delok"}
+        owner_only_actions = {"mq_open", "mq_edit", "mq_rename", "mq_timer", "mq_settimer", "mq_shuffle", "mq_attach", "mq_del", "mq_delok"}
         if action in owner_only_actions and not is_owner:
             await query.answer("⛔ Only the creator of this quiz can edit or delete it.", show_alert=True)
             return

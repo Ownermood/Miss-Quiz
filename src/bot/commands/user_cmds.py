@@ -300,7 +300,7 @@ class UserCommandsMixin(object):
             await self._reply(update, "👉 <b>Usage:</b> <code>/clone &lt;quiz_id&gt;</code>\nExample: <code>/clone gq_abc123</code>")
             return
 
-        sid = args[0].removeprefix("gq_").strip()
+        sid = args[0].removeprefix("gq_").removeprefix("shared_").strip()
         qs = None
         if self.db and hasattr(self.db, "get_quiz_set"):
             qs = await asyncio.to_thread(self.db.get_quiz_set, sid)
@@ -318,7 +318,8 @@ class UserCommandsMixin(object):
             "title": new_title,
             "count": len(qs["questions"]),
             "questions": list(qs["questions"]),
-            "secs": int(qs.get("secs") or 20)
+            "secs": int(qs.get("secs") or 20),
+            "source_files": list(qs.get("source_files") or []),
         }
         if self.db and hasattr(self.db, "save_quiz_set"):
             await asyncio.to_thread(self.db.save_quiz_set, new_doc)
@@ -350,7 +351,7 @@ class UserCommandsMixin(object):
         titles = []
 
         for raw_id in args:
-            sid = raw_id.removeprefix("gq_").strip()
+            sid = raw_id.removeprefix("gq_").removeprefix("shared_").strip()
             qs = None
             if self.db and hasattr(self.db, "get_quiz_set"):
                 qs = await asyncio.to_thread(self.db.get_quiz_set, sid)

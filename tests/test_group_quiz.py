@@ -238,7 +238,7 @@ def test_quiz_card_has_start_in_group_link():
     _, kb = MyQuizMixin._mq_card_view({"id": "ab12", "title": "T", "count": 3, "secs": 20},
                                       bot_username="MissQuiz_Bot")
     urls = [b.url for r in kb.inline_keyboard for b in r if b.url]
-    assert urls == ["https://t.me/MissQuiz_Bot?startgroup=gq_ab12"]
+    assert "https://t.me/MissQuiz_Bot?startgroup=gq_ab12" in urls
 
 
 
@@ -261,3 +261,20 @@ async def test_shared_bot_quiz_link_starts_in_another_group():
     await app.gq_start_from_link(group_upd(user(4), chat_id=-777), c, "bot15")
     s = gq.ACTIVE[-777]
     assert len(s.questions) == 15 and s.title == "Bot Quiz · 15 questions"
+
+
+async def test_group_lobby_ready_counter_and_toggles():
+    app = App()
+    c, polls, sent = ctx(admins=(1,))
+    host = user(1, "Host")
+    p2 = user(2, "Riva")
+    s = await app._gq_begin(c, GROUP, None, host, "Mock Test", questions(3), 10, "s1", skip_lobby=False)
+    assert s.status == "lobby" and len(s.ready_players) == 1
+    await press(app, c, p2, f"gq|ready|{GROUP}")
+    assert len(s.ready_players) == 2 and s.ready_players["2"] == "Riva"
+    await press(app, c, host, f"gq|tog_neg|{GROUP}")
+    assert s.negative_rate == 0.0
+    await press(app, c, host, f"gq|launch|{GROUP}")
+    assert s.status == "running"
+    s.secs = 0.05
+    await wait_done()

@@ -215,6 +215,7 @@ class AdminPanelMixin:
     async def cmd_cancel(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if context.user_data is not None:
             context.user_data.pop("mq_renaming", None)
+            context.user_data.pop("mq_attaching_file", None)
             context.user_data.pop("mq_prac", None)
             if context.user_data.pop("mq_draft", None):
                 await self._reply(update, f"{e('cross')} <b>Quiz not saved.</b>")
@@ -313,15 +314,13 @@ class AdminPanelMixin:
             if not self._can_manage_admins(user.id):
                 await q.answer("⛔ Only the owner can add admins.", show_alert=True); return
             ud["adm_draft"] = {}
-            await ask("adm_quick",
-                      f"{e('plus')} <b>ADD ADMIN (1-Step Quick Add)</b>\n{UI.THIN}\n"
-                      "Send in <b>ONE</b> single message (any order works!):\n"
+            await ask("adm_id",
+                      f"{e('plus')} <b>ADD ADMIN (1-Step or Guided)</b>\n{UI.THIN}\n"
+                      "<b>Option A — 1-Step Quick Add (one line):</b>\n"
                       "<code>&lt;Custom Name&gt; &lt;Emoji&gt; &lt;User_ID&gt;</code>\n"
-                      "<i>or</i> <code>&lt;User_ID&gt; &lt;Custom Name&gt; &lt;Emoji&gt;</code>\n\n"
-                      "<b>Examples:</b>\n"
-                      "• <code>Quiz Master 👑 1234567890</code>\n"
-                      "• <code>1234567890 Co-Owner ⚡</code>\n"
-                      "• <i>Or forward a message from the user</i>\n\n"
+                      "• Example: <code>Quiz Master 👑 1234567890</code>\n\n"
+                      "<b>Option B — Step-by-Step:</b>\n"
+                      "• Send just their <b>User ID</b> or <b>forward a message</b> from them.\n\n"
                       "<i>Send /cancel to abort.</i>")
         elif data == "ap:adm_skip":
             if not self._can_manage_admins(user.id):
@@ -496,6 +495,14 @@ class AdminPanelMixin:
         rows.append([btn("Back", "back", RED, callback_data="ap:home")])
         return "\n".join(lines), InlineKeyboardMarkup(rows)
 
+    async def _admin_step_title(self, target_msg, ud):
+        ud["ap_await"] = "adm_title"
+        text = (f"{e('edit')} <b>ADD ADMIN · step 2/3</b>\n{UI.THIN}\n"
+                "<b>Send a custom title for them</b> (e.g. <code>Quiz Master</code>), or tap Skip.")
+        kb = InlineKeyboardMarkup([[btn("Skip", "play", BLUE, callback_data="ap:adm_skip")],
+                                   [btn("Back", "back", RED, callback_data="ap:team")]])
+        await target_msg.reply_text(text, parse_mode="HTML", reply_markup=kb)
+
     async def _admin_step_emoji(self, target_msg, ud, edit=False):
         ud["ap_await"] = "adm_emoji"
         text = (f"{e('star')} <b>ADD ADMIN · step 3/3</b>\n{UI.THIN}\n"
@@ -511,17 +518,37 @@ class AdminPanelMixin:
         draft = ud.setdefault("adm_draft", {})
         origin = getattr(msg, "forward_origin", None)
         sender = getattr(origin, "sender_user", None) if origin else None
-
         raw_text = (msg.text or msg.caption or "").strip()
-        tokens = raw_text.split()
 
+        # Step 2 of 3: custom title
+        if key == "adm_title":
+            draft["title"] = raw_text[:32]
+            await self._admin_step_emoji(msg, ud, edit=False)
+            return
+
+        # Step 3 of 3: emoji (standard or Telegram custom emoji)
+        if key == "adm_emoji":
+            emo = raw_text.split()[0][:8] if raw_text else ""
+            emo_id = ""
+            for ent in list(msg.entities or []) + list(msg.caption_entities or []):
+                if ent.type == "custom_emoji":
+                    emo_id = ent.custom_emoji_id
+                    break
+            draft["emoji"] = emo
+            draft["emoji_id"] = emo_id
+            ud.pop("ap_await", None)
+            await self._admin_finish(update, context, ud, None)
+            return
+
+        # Step 1 (adm_id / adm_quick): supports BOTH 1-step ("Quiz Master 👑 1234567890")
+        # and step-by-step (just "4455" or a forwarded message)!
+        tokens = raw_text.split()
         uid = sender.id if sender else None
         name = sender.full_name if sender else None
-        emoji = "⭐️"
+        emoji = ""
         emoji_id = ""
         custom_emo_str = ""
 
-        # Check Telegram Custom Emoji Entity (UTF-16 safe via msg.parse_entity)
         entities = list(msg.entities or []) + list(msg.caption_entities or [])
         for ent in entities:
             if ent.type == "custom_emoji":
@@ -534,34 +561,49 @@ class AdminPanelMixin:
                     emoji = custom_emo_str
                 break
 
+        # If forwarded message or single bare number -> guided step-by-step flow
+        if sender or (len(tokens) == 1 and tokens[0].isdigit()):
+            if uid is None:
+                uid = int(tokens[0])
+            if self._can_manage_admins(uid):
+                await self._reply(update, f"{e('warn')} <b>That user is already the owner.</b>")
+                ud.pop("ap_await", None)
+                return
+            if not name:
+                try:
+                    chat = await context.bot.get_chat(uid)
+                    name = chat.full_name or chat.first_name
+                except Exception:
+                    name = f"User {uid}"
+            draft.update({"user_id": uid, "name": name, "title": "", "emoji": "", "emoji_id": ""})
+            await self._admin_step_title(msg, ud)
+            return
+
+        # 1-Step Quick Add: "<Custom Name> <Emoji> <User_ID>" in any order
         title_tokens = []
         for tok in tokens:
-            # 1. Numeric token: either User ID (5..12 digits) or Custom Emoji ID (13+ digits)
             if tok.isdigit():
                 if len(tok) >= 13 and not emoji_id:
                     emoji_id = tok
                     continue
-                elif 5 <= len(tok) <= 12 and uid is None:
+                elif uid is None:
                     uid = int(tok)
                     continue
-            # 2. Emoji token (matches custom emoji fallback or non-alphanumeric symbol)
             if custom_emo_str and tok == custom_emo_str:
                 continue
             if len(tok) <= 4 and not any(ch.isalnum() for ch in tok):
-                if emoji == "⭐️" or not custom_emo_str:
+                if not emoji or not custom_emo_str:
                     emoji = tok
                 continue
             title_tokens.append(tok)
-
-        title = " ".join(title_tokens)[:32] if title_tokens else "Admin"
 
         if not uid:
             await self._reply(
                 update,
                 f"{e('warn')} <b>Could not find a valid User ID!</b>\n"
-                "Please send in one line:\n"
-                "<code>&lt;Custom Name&gt; &lt;Emoji&gt; &lt;User_ID&gt;</code>\n"
-                "<i>Example:</i> <code>Quiz Master 👑 1234567890</code>"
+                "Send either:\n"
+                "• 1-Step: <code>&lt;Custom Name&gt; &lt;Emoji&gt; &lt;User_ID&gt;</code>\n"
+                "• Or just the <code>User_ID</code> / a forwarded message."
             )
             return
 
@@ -570,6 +612,9 @@ class AdminPanelMixin:
             ud.pop("ap_await", None)
             return
 
+        title = " ".join(title_tokens)[:32] if title_tokens else "Admin"
+        if not emoji:
+            emoji = "⭐️"
         if not name:
             try:
                 chat = await context.bot.get_chat(uid)
@@ -582,7 +627,7 @@ class AdminPanelMixin:
             "name": name,
             "title": title,
             "emoji": emoji,
-            "emoji_id": emoji_id
+            "emoji_id": emoji_id,
         })
         ud.pop("ap_await", None)
         await self._admin_finish(update, context, ud, None)

@@ -161,6 +161,9 @@ def _kb(s: Session) -> InlineKeyboardMarkup:
                                  [InlineKeyboardButton("⏹ Stop", callback_data=f"gq|stop|{c}", style="danger")]])
 
 
+LOBBY_TIMEOUT = 120      # auto-start lobby after 120s if host hasn't tapped Start Now
+
+
 def _lobby_text(s: Session, extra_note: str = "") -> str:
     n_ready = len(s.ready_players)
     neg_str = f"-{s.negative_rate} marks" if s.negative_rate > 0 else "OFF (No Negative)"
@@ -173,32 +176,22 @@ def _lobby_text(s: Session, extra_note: str = "") -> str:
             p_items.append(f"<i>…and {n_ready - 30} more</i>")
         ready_block = "<blockquote>" + "  ·  ".join(p_items) + "</blockquote>"
     else:
-        ready_block = "<blockquote><i>⏳ Waiting for players to tap “🙋‍♂️ I'm Ready!” below…</i></blockquote>"
+        ready_block = "<blockquote><i>⏳ Waiting for players to tap “🙋‍♂️ I'm ready!” below…</i></blockquote>"
 
+    note_block = f"\n{extra_note}\n" if extra_note else ""
     return (
-        f"👋 <b>Hello everyone! Miss Quiz is ready to host:</b>
-"
-        f"━━━━━━━━━━━━━━━━━━━━━━━━━━
-"
-        f"📝 <b>{html.escape(s.title)}</b>
-"
+        f"👋 <b>Hello everyone! Miss Quiz is ready to host:</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"📝 <b>{html.escape(s.title)}</b>\n"
         f"<blockquote>"
-        f"❓ <b>Questions:</b> <code>{len(s.questions)} Qs</code>  ·  ⏱ <b>Timer:</b> <code>{s.secs}s / Q</code>
-"
+        f"❓ <b>Questions:</b> <code>{len(s.questions)} Qs</code>  ·  ⏱ <b>Timer:</b> <code>{s.secs}s / Q</code>\n"
         f"⚖️ <b>Negative:</b> <code>{neg_str}</code>  ·  👑 <b>Host:</b> {UI.mention(s.started_by, s.starter_name or 'Host')}"
-        f"</blockquote>
-"
-        f"🙋‍♂️ <b>Players Ready ({n_ready}):</b>
-"
-        f"{ready_block}
-"
-        + (f"
-{extra_note}
-" if extra_note else "")
-        + f"
-👉 <i>Players: Tap <b>“I'm ready! ✅”</b> to join the lobby.
-"
-          f"👑 Host ({html.escape(s.starter_name or 'Admin')}) can tap <b>▶️ Start Now</b> when everyone is in!</i>"
+        f"</blockquote>\n"
+        f"🙋‍♂️ <b>Players Ready ({n_ready}):</b>\n"
+        f"{ready_block}"
+        f"{note_block}\n"
+        f"👉 <i>Players: Tap <b>“I'm ready! ✅”</b> to join the lobby.\n"
+        f"👑 Host ({html.escape(s.starter_name or 'Admin')}) can tap <b>▶️ Start Now</b> when everyone is in!</i>"
     )
 
 
@@ -219,7 +212,7 @@ def _lobby_kb(s: Session) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [InlineKeyboardButton(ready_label, callback_data=f"gq|ready|{c}", style="primary")],
         [
-            InlineKeyboardButton("▶️ Start Now (Host)", callback_data=f"gq|launch|{c}", style="primary"),
+            InlineKeyboardButton("▶️ Start Now (Host)", callback_data=f"gq|launch|{c}", style="success"),
             InlineKeyboardButton("⏰ Auto-Start 30s", callback_data=f"gq|autostart|{c}", style="primary"),
         ],
         [
@@ -373,14 +366,16 @@ class GroupQuizMixin:
 
     async def _gq_begin(self, context, chat_id: int, thread_id, user, title: str,
                         questions: List[Dict], secs: int, set_id: str = "",
-                        negative_rate: float = 0.25, skip_lobby: bool = False) -> Optional[Session]:
+                        negative_rate: float = 0.25, skip_lobby: Optional[bool] = None) -> Optional[Session]:
         if is_active(chat_id):
             return None
+        if skip_lobby is None:
+            skip_lobby = (START_DELAY == 0)
         random.shuffle(questions)
         chat_title = ""
         try:
             ch = await context.bot.get_chat(chat_id)
-            chat_title = ch.title or ""
+            chat_title = getattr(ch, "title", "") or ""
         except Exception:
             pass
         s = Session(
@@ -401,13 +396,18 @@ class GroupQuizMixin:
             sent = await self._gq_send(context, s, _lobby_text(s), _lobby_kb(s))
             s.ctrl_msg_id = getattr(sent, "message_id", None)
             logger.info(f"[GQUIZ] {chat_id} opened lobby '{title}' ({len(questions)} Q, {s.secs}s) by {user.id}")
+            if LOBBY_TIMEOUT > 0:
+                async def _auto_lobby_watchdog():
+                    await asyncio.sleep(LOBBY_TIMEOUT)
+                    if ACTIVE.get(chat_id) is s and s.status == "lobby":
+                        await self._gq_launch_from_lobby(context, s)
+                asyncio.create_task(_auto_lobby_watchdog())
         return s
 
     async def _gq_launch_from_lobby(self, context, s: Session) -> None:
         if s.status != "lobby":
             return
         s.status = "running"
-        # Edit the lobby card into the active control header
         await self._gq_edit_ctrl(context, s, f"🚀 <b>Quiz Live! ({len(s.ready_players)} players joined)</b>")
         if s.mention_players and s.ready_players:
             mentions = ", ".join(
@@ -415,8 +415,7 @@ class GroupQuizMixin:
             )
             await self._gq_send(
                 context, s,
-                f"🔔 <b>TOURNAMENT STARTING IN {START_DELAY} SECONDS!</b>
-"
+                f"🔔 <b>TOURNAMENT STARTING IN {START_DELAY} SECONDS!</b>\n"
                 f"Get ready: {mentions} 🚀"
             )
         await self._gq_save(s)
@@ -463,8 +462,7 @@ class GroupQuizMixin:
                         await self._gq_edit_ctrl(context, s, "⏸ <b>Auto-Paused (no answers for 3 questions).</b>")
                         await self._gq_send(
                             context, s,
-                            "⏸ <b>Quiz Auto-Paused</b> because 3 questions went unanswered.
-"
+                            "⏸ <b>Quiz Auto-Paused</b> because 3 questions went unanswered.\n"
                             "<i>Tap ▶️ Resume on the control panel above when players are ready!</i>",
                             _kb(s)
                         )
@@ -589,8 +587,9 @@ class GroupQuizMixin:
         await self._gq_edit_ctrl(context, s, "🏁 <b>Finished.</b>" if not stopped else "⏹ <b>Stopped.</b>")
 
         # Send Top-3 Winner Certificate Image Cards when certificates=True
+        import inspect as _inspect
         rank = s.ranking()
-        if s.certificates and rank:
+        if s.certificates and rank and not stopped and _inspect.iscoroutinefunction(getattr(context.bot, "send_photo", None)):
             try:
                 import io as _io
                 from telegram import InputFile as _InputFile

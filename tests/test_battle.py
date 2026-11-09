@@ -860,4 +860,4 @@ async def test_photo_question_via_ocr_and_card_buttons_side_by_side(monkeypatch)
     assert len(ctx.user_data["mq_draft"]["qs"]) == 3
     assert ctx.bot.get_file.await_args.args[0] == "big"                # largest size used
     _, kb = app._mq_card_view({"id": "x1", "title": "T", "count": 3, "secs": 20})
-    assert [b.text for b in kb.inline_keyboard[1]] == ["🗑 Delete", "⬅️ Back"]
+    assert [b.text for b in kb.inline_keyboard[-1]] == ["🗑 Delete Quiz", "📚 My Quizzes"]
