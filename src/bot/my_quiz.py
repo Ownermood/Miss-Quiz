@@ -339,6 +339,7 @@ class MyQuizMixin:
 
     # ── callbacks ────────────────────────────────────────────────────────
 
+    handle_myquiz_callback = handle_my_quiz_callback
     async def handle_my_quiz_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         query, user = update.callback_query, update.effective_user
         if not query or not user or not query.data:

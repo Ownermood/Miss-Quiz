@@ -366,6 +366,9 @@ class TelegramQuizBot(
         app.add_handler(CommandHandler("result",      self.cmd_result))
         app.add_handler(CommandHandler("compare",     self.cmd_compare))
         app.add_handler(CommandHandler("mywords",     self.cmd_mywords))
+        app.add_handler(CommandHandler("schedule",    self.cmd_schedule))
+        app.add_handler(CommandHandler("clone",       self.cmd_clone))
+        app.add_handler(CommandHandler("mix",         self.cmd_mix))
 
         # Admin commands
         app.add_handler(CommandHandler("addquiz",     self.cmd_addquiz))
@@ -408,7 +411,7 @@ class TelegramQuizBot(
         app.add_handler(CallbackQueryHandler(
             self.handle_group_quiz_callback, pattern=r"^gq\|"))
         app.add_handler(CallbackQueryHandler(
-            self.handle_myquiz_callback, pattern=r"^mq_(done|name|cancel|list|new|open|del|delok|bt)(:|$)"))
+            self.handle_my_quiz_callback, pattern=r"^mq_"))
         app.add_handler(CallbackQueryHandler(
             self.handle_admin_panel_callback, pattern=r"^ap:"))
         app.add_handler(CallbackQueryHandler(

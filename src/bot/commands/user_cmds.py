@@ -280,3 +280,108 @@ class UserCommandsMixin(object):
                 await self._reply(update, f"⚠️ <code>{html.escape(target)}</code> was not found in your list.")
         else:
             await self._reply(update, "👉 Usage: <code>/mywords add &lt;word&gt;</code> or <code>/mywords del &lt;word&gt;</code>")
+
+
+    # ─── /clone & /mix (Quiz Management) ──────────────────────
+
+    async def cmd_clone(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """/clone <quiz_id> - duplicate any quiz to your own collection."""
+        user = update.effective_user
+        if not user:
+            return
+
+        args = context.args or []
+        if not args:
+            await self._reply(update, "👉 <b>Usage:</b> <code>/clone &lt;quiz_id&gt;</code>\nExample: <code>/clone gq_abc123</code>")
+            return
+
+        sid = args[0].removeprefix("gq_").strip()
+        qs = None
+        if self.db and hasattr(self.db, "get_quiz_set"):
+            qs = await asyncio.to_thread(self.db.get_quiz_set, sid)
+
+        if not qs or not qs.get("questions"):
+            await self._reply(update, "⚠️ <b>Quiz not found.</b> Please check the quiz ID.")
+            return
+
+        import secrets
+        new_sid = secrets.token_urlsafe(8).replace("-", "x").replace("_", "y")
+        new_title = f"Copy of {qs.get('title', 'Quiz')}"[:60]
+        new_doc = {
+            "id": new_sid,
+            "owner": user.id,
+            "title": new_title,
+            "count": len(qs["questions"]),
+            "questions": list(qs["questions"]),
+            "secs": int(qs.get("secs") or 20)
+        }
+        if self.db and hasattr(self.db, "save_quiz_set"):
+            await asyncio.to_thread(self.db.save_quiz_set, new_doc)
+
+        await self._reply(
+            update,
+            f"🎉 <b>Quiz Cloned Successfully!</b>\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"📝 <b>Title:</b> <code>{html.escape(new_title)}</code>\n"
+            f"❓ <b>Questions:</b> {len(qs['questions'])}\n"
+            f"🆔 <b>New ID:</b> <code>{new_sid}</code>\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"<i>You can now edit, battle, or run this quiz from /myquiz!</i>"
+        )
+
+    async def cmd_mix(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """/mix <id1> <id2> ... - combine multiple quizzes into one mega quiz."""
+        user = update.effective_user
+        if not user:
+            return
+
+        args = context.args or []
+        if len(args) < 2:
+            await self._reply(update, "👉 <b>Usage:</b> <code>/mix &lt;id1&gt; &lt;id2&gt; [id3...]</code>\nCombines 2 or more quizzes into a mega quiz.")
+            return
+
+        combined_qs = []
+        seen = set()
+        titles = []
+
+        for raw_id in args:
+            sid = raw_id.removeprefix("gq_").strip()
+            qs = None
+            if self.db and hasattr(self.db, "get_quiz_set"):
+                qs = await asyncio.to_thread(self.db.get_quiz_set, sid)
+            if qs and qs.get("questions"):
+                titles.append(qs.get("title", "Quiz")[:15])
+                for q in qs["questions"]:
+                    key = str(q.get("question") or "").strip().lower()
+                    if key and key not in seen:
+                        seen.add(key)
+                        combined_qs.append(q)
+
+        if len(combined_qs) < 3:
+            await self._reply(update, "⚠️ <b>Not enough valid questions found</b> across the specified IDs.")
+            return
+
+        import secrets
+        new_sid = secrets.token_urlsafe(8).replace("-", "x").replace("_", "y")
+        mixed_title = f"Mixed: {' + '.join(titles[:2])}"[:50]
+        new_doc = {
+            "id": new_sid,
+            "owner": user.id,
+            "title": mixed_title,
+            "count": len(combined_qs),
+            "questions": combined_qs,
+            "secs": 20
+        }
+        if self.db and hasattr(self.db, "save_quiz_set"):
+            await asyncio.to_thread(self.db.save_quiz_set, new_doc)
+
+        await self._reply(
+            update,
+            f"🔀 <b>Mega Quiz Created!</b>\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"📝 <b>Title:</b> <code>{html.escape(mixed_title)}</code>\n"
+            f"❓ <b>Total Questions:</b> {len(combined_qs)}\n"
+            f"🆔 <b>Quiz ID:</b> <code>{new_sid}</code>\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"<i>Saved in /myquiz! Ready to play or run in groups.</i>"
+        )

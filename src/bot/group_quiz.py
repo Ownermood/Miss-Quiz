@@ -20,6 +20,7 @@ import re
 import time
 from urllib.parse import quote
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta
 from types import SimpleNamespace
 from typing import Dict, List, Optional, Tuple
 
@@ -695,6 +696,46 @@ class GroupQuizMixin:
             await self._gq_begin(context, chat_id, thread, user, title, questions, secs, sid)
             return
 
+                if action == "html":
+            last = getattr(self, "_gq_last", {}).get(chat_id) or ACTIVE.get(chat_id)
+            if not last:
+                await query.answer("No completed quiz record found.", show_alert=True)
+                return
+            await query.answer("Generating your HTML scorecard...")
+            try:
+                import io
+                from src.utils.quiz_report import render_analysis_html
+                q_doc = {
+                    "title": last.title,
+                    "questions": last.questions,
+                    "settings": {"duration": last.secs}
+                }
+                results = []
+                for uid_str, sc in last.scores.items():
+                    results.append({
+                        "user_id": int(uid_str),
+                        "name": sc.get("name", "Player"),
+                        "score": sc.get("score", sc.get("correct", 0)),
+                        "correct": sc.get("correct", 0),
+                        "wrong": sc.get("wrong", 0),
+                        "time": sc.get("time", 0.0),
+                        "answers": last.user_history.get(uid_str, [])
+                    })
+                html_bytes, filename = await render_analysis_html(q_doc, results)
+                doc_file = io.BytesIO(html_bytes)
+                doc_file.name = filename
+                await context.bot.send_document(
+                    chat_id=user.id,
+                    document=doc_file,
+                    caption=f"?? <b>Interactive HTML Scorecard:</b> {html.escape(last.title)}\n<i>Open this .html file in any browser to review charts and questions!</i>",
+                    parse_mode=ParseMode.HTML
+                )
+                await query.message.reply_text(f"?? {UI.mention(user.id, user.first_name)}, I have sent your interactive HTML scorecard to your DM!")
+            except Exception as ex:
+                logger.error(f"[GQUIZ] HTML report failed: {ex}", exc_info=True)
+                await query.answer("Please start me in DM first so I can send the file!", show_alert=True)
+            return
+
         if action == "again":
             last = getattr(self, "_gq_last", {}).get(chat_id)
             if not last:
@@ -725,14 +766,236 @@ class GroupQuizMixin:
         elif action == "resume" and s.status == "paused":
             s.status = "running"
             s.wake.set()
+
+    async def cmd_schedule(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """/schedule <HH:MM> [quiz_id] or /schedule in <N>m [quiz_id] in a group."""
+        user, chat, msg = update.effective_user, update.effective_chat, update.effective_message
+        if not user or not chat or chat.type == "private":
+            await self._reply(update, "?? Use <code>/schedule</code> in a group to schedule a quiz!")
+            return
+        if not await self._gq_is_admin(context, chat.id, user, msg):
+            await self._reply(update, "? <b>Only group admins can schedule a quiz.</b>")
+            return
+
+        args = context.args or []
+        if not args:
+            await self._reply(
+                update,
+                "?? <b>Usage:</b>\n"
+                "� <code>/schedule in 15m [quiz_id]</code> � schedule in 15 minutes\n"
+                "� <code>/schedule 20:30 [quiz_id]</code> � schedule at 20:30 (today)\n"
+                "<i>Example: /schedule in 10m gq_bot20</i>"
+            )
+            return
+
+        delay_secs = None
+        set_id = "bot20"
+
+        if args[0].lower() == "in" and len(args) > 1 and args[1].lower().endswith("m"):
+            try:
+                mins = int(args[1][:-1])
+                delay_secs = mins * 60
+                if len(args) > 2:
+                    set_id = args[2].removeprefix("gq_")
+            except ValueError:
+                pass
+        elif ":" in args[0]:
+            try:
+                parts = args[0].split(":")
+                target_h, target_m = int(parts[0]), int(parts[1])
+                now = datetime.now()
+                target_dt = now.replace(hour=target_h, minute=target_m, second=0, microsecond=0)
+                if target_dt < now:
+                    target_dt += timedelta(days=1)
+                delay_secs = int((target_dt - now).total_seconds())
+                if len(args) > 1:
+                    set_id = args[1].removeprefix("gq_")
+            except Exception:
+                pass
+
+        if delay_secs is None or delay_secs <= 0 or delay_secs > 86400 * 7:
+            await self._reply(update, "?? Invalid time format. Use <code>/schedule in 15m</code> or <code>/schedule 21:00</code>")
+            return
+
+        mins_left = round(delay_secs / 60)
+        await self._reply(
+            update,
+            f"? <b>QUIZ SCHEDULED!</b>\n"
+            f"??????????????????\n"
+            f"? <b>Starting in:</b> ~{mins_left} minutes\n"
+            f"?? <b>Target Quiz:</b> <code>{set_id}</code>\n"
+            f"?? <b>Scheduled by:</b> {UI.mention(user.id, user.first_name)}\n"
+            f"??????????????????\n"
+            f"<i>Get ready! The bot will auto-launch the quiz.</i>"
+        )
+
+        async def scheduled_launch():
+            await asyncio.sleep(delay_secs)
+            if not is_active(chat.id):
+                await context.bot.send_message(
+                    chat.id,
+                    f"?? <b>SCHEDULED QUIZ STARTING NOW!</b>\nGet ready!",
+                    parse_mode=ParseMode.HTML
+                )
+                await self._gq_start_set(update, context, set_id)
+
+        asyncio.create_task(scheduled_launch())
             await query.answer("Resumed ▶️")
             await self._gq_edit_ctrl(context, s, "▶️ <b>Running.</b>")
         elif action == "skip" and s.status == "running":
             s.wake.set()
+
+    async def cmd_schedule(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """/schedule <HH:MM> [quiz_id] or /schedule in <N>m [quiz_id] in a group."""
+        user, chat, msg = update.effective_user, update.effective_chat, update.effective_message
+        if not user or not chat or chat.type == "private":
+            await self._reply(update, "?? Use <code>/schedule</code> in a group to schedule a quiz!")
+            return
+        if not await self._gq_is_admin(context, chat.id, user, msg):
+            await self._reply(update, "? <b>Only group admins can schedule a quiz.</b>")
+            return
+
+        args = context.args or []
+        if not args:
+            await self._reply(
+                update,
+                "?? <b>Usage:</b>\n"
+                "� <code>/schedule in 15m [quiz_id]</code> � schedule in 15 minutes\n"
+                "� <code>/schedule 20:30 [quiz_id]</code> � schedule at 20:30 (today)\n"
+                "<i>Example: /schedule in 10m gq_bot20</i>"
+            )
+            return
+
+        delay_secs = None
+        set_id = "bot20"
+
+        if args[0].lower() == "in" and len(args) > 1 and args[1].lower().endswith("m"):
+            try:
+                mins = int(args[1][:-1])
+                delay_secs = mins * 60
+                if len(args) > 2:
+                    set_id = args[2].removeprefix("gq_")
+            except ValueError:
+                pass
+        elif ":" in args[0]:
+            try:
+                parts = args[0].split(":")
+                target_h, target_m = int(parts[0]), int(parts[1])
+                now = datetime.now()
+                target_dt = now.replace(hour=target_h, minute=target_m, second=0, microsecond=0)
+                if target_dt < now:
+                    target_dt += timedelta(days=1)
+                delay_secs = int((target_dt - now).total_seconds())
+                if len(args) > 1:
+                    set_id = args[1].removeprefix("gq_")
+            except Exception:
+                pass
+
+        if delay_secs is None or delay_secs <= 0 or delay_secs > 86400 * 7:
+            await self._reply(update, "?? Invalid time format. Use <code>/schedule in 15m</code> or <code>/schedule 21:00</code>")
+            return
+
+        mins_left = round(delay_secs / 60)
+        await self._reply(
+            update,
+            f"? <b>QUIZ SCHEDULED!</b>\n"
+            f"??????????????????\n"
+            f"? <b>Starting in:</b> ~{mins_left} minutes\n"
+            f"?? <b>Target Quiz:</b> <code>{set_id}</code>\n"
+            f"?? <b>Scheduled by:</b> {UI.mention(user.id, user.first_name)}\n"
+            f"??????????????????\n"
+            f"<i>Get ready! The bot will auto-launch the quiz.</i>"
+        )
+
+        async def scheduled_launch():
+            await asyncio.sleep(delay_secs)
+            if not is_active(chat.id):
+                await context.bot.send_message(
+                    chat.id,
+                    f"?? <b>SCHEDULED QUIZ STARTING NOW!</b>\nGet ready!",
+                    parse_mode=ParseMode.HTML
+                )
+                await self._gq_start_set(update, context, set_id)
+
+        asyncio.create_task(scheduled_launch())
             await query.answer("Skipping ⏭")
         elif action == "stop":
             s.status = "stopped"
             s.wake.set()
+
+    async def cmd_schedule(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """/schedule <HH:MM> [quiz_id] or /schedule in <N>m [quiz_id] in a group."""
+        user, chat, msg = update.effective_user, update.effective_chat, update.effective_message
+        if not user or not chat or chat.type == "private":
+            await self._reply(update, "?? Use <code>/schedule</code> in a group to schedule a quiz!")
+            return
+        if not await self._gq_is_admin(context, chat.id, user, msg):
+            await self._reply(update, "? <b>Only group admins can schedule a quiz.</b>")
+            return
+
+        args = context.args or []
+        if not args:
+            await self._reply(
+                update,
+                "?? <b>Usage:</b>\n"
+                "� <code>/schedule in 15m [quiz_id]</code> � schedule in 15 minutes\n"
+                "� <code>/schedule 20:30 [quiz_id]</code> � schedule at 20:30 (today)\n"
+                "<i>Example: /schedule in 10m gq_bot20</i>"
+            )
+            return
+
+        delay_secs = None
+        set_id = "bot20"
+
+        if args[0].lower() == "in" and len(args) > 1 and args[1].lower().endswith("m"):
+            try:
+                mins = int(args[1][:-1])
+                delay_secs = mins * 60
+                if len(args) > 2:
+                    set_id = args[2].removeprefix("gq_")
+            except ValueError:
+                pass
+        elif ":" in args[0]:
+            try:
+                parts = args[0].split(":")
+                target_h, target_m = int(parts[0]), int(parts[1])
+                now = datetime.now()
+                target_dt = now.replace(hour=target_h, minute=target_m, second=0, microsecond=0)
+                if target_dt < now:
+                    target_dt += timedelta(days=1)
+                delay_secs = int((target_dt - now).total_seconds())
+                if len(args) > 1:
+                    set_id = args[1].removeprefix("gq_")
+            except Exception:
+                pass
+
+        if delay_secs is None or delay_secs <= 0 or delay_secs > 86400 * 7:
+            await self._reply(update, "?? Invalid time format. Use <code>/schedule in 15m</code> or <code>/schedule 21:00</code>")
+            return
+
+        mins_left = round(delay_secs / 60)
+        await self._reply(
+            update,
+            f"? <b>QUIZ SCHEDULED!</b>\n"
+            f"??????????????????\n"
+            f"? <b>Starting in:</b> ~{mins_left} minutes\n"
+            f"?? <b>Target Quiz:</b> <code>{set_id}</code>\n"
+            f"?? <b>Scheduled by:</b> {UI.mention(user.id, user.first_name)}\n"
+            f"??????????????????\n"
+            f"<i>Get ready! The bot will auto-launch the quiz.</i>"
+        )
+
+        async def scheduled_launch():
+            await asyncio.sleep(delay_secs)
+            if not is_active(chat.id):
+                await context.bot.send_message(
+                    chat.id,
+                    f"?? <b>SCHEDULED QUIZ STARTING NOW!</b>\nGet ready!",
+                    parse_mode=ParseMode.HTML
+                )
+                await self._gq_start_set(update, context, set_id)
+
+        asyncio.create_task(scheduled_launch())
             await query.answer("Stopping ⏹")
         else:
             await query.answer()
@@ -749,6 +1012,80 @@ class GroupQuizMixin:
             return
         s.status = "stopped"
         s.wake.set()
+
+    async def cmd_schedule(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """/schedule <HH:MM> [quiz_id] or /schedule in <N>m [quiz_id] in a group."""
+        user, chat, msg = update.effective_user, update.effective_chat, update.effective_message
+        if not user or not chat or chat.type == "private":
+            await self._reply(update, "?? Use <code>/schedule</code> in a group to schedule a quiz!")
+            return
+        if not await self._gq_is_admin(context, chat.id, user, msg):
+            await self._reply(update, "? <b>Only group admins can schedule a quiz.</b>")
+            return
+
+        args = context.args or []
+        if not args:
+            await self._reply(
+                update,
+                "?? <b>Usage:</b>\n"
+                "� <code>/schedule in 15m [quiz_id]</code> � schedule in 15 minutes\n"
+                "� <code>/schedule 20:30 [quiz_id]</code> � schedule at 20:30 (today)\n"
+                "<i>Example: /schedule in 10m gq_bot20</i>"
+            )
+            return
+
+        delay_secs = None
+        set_id = "bot20"
+
+        if args[0].lower() == "in" and len(args) > 1 and args[1].lower().endswith("m"):
+            try:
+                mins = int(args[1][:-1])
+                delay_secs = mins * 60
+                if len(args) > 2:
+                    set_id = args[2].removeprefix("gq_")
+            except ValueError:
+                pass
+        elif ":" in args[0]:
+            try:
+                parts = args[0].split(":")
+                target_h, target_m = int(parts[0]), int(parts[1])
+                now = datetime.now()
+                target_dt = now.replace(hour=target_h, minute=target_m, second=0, microsecond=0)
+                if target_dt < now:
+                    target_dt += timedelta(days=1)
+                delay_secs = int((target_dt - now).total_seconds())
+                if len(args) > 1:
+                    set_id = args[1].removeprefix("gq_")
+            except Exception:
+                pass
+
+        if delay_secs is None or delay_secs <= 0 or delay_secs > 86400 * 7:
+            await self._reply(update, "?? Invalid time format. Use <code>/schedule in 15m</code> or <code>/schedule 21:00</code>")
+            return
+
+        mins_left = round(delay_secs / 60)
+        await self._reply(
+            update,
+            f"? <b>QUIZ SCHEDULED!</b>\n"
+            f"??????????????????\n"
+            f"? <b>Starting in:</b> ~{mins_left} minutes\n"
+            f"?? <b>Target Quiz:</b> <code>{set_id}</code>\n"
+            f"?? <b>Scheduled by:</b> {UI.mention(user.id, user.first_name)}\n"
+            f"??????????????????\n"
+            f"<i>Get ready! The bot will auto-launch the quiz.</i>"
+        )
+
+        async def scheduled_launch():
+            await asyncio.sleep(delay_secs)
+            if not is_active(chat.id):
+                await context.bot.send_message(
+                    chat.id,
+                    f"?? <b>SCHEDULED QUIZ STARTING NOW!</b>\nGet ready!",
+                    parse_mode=ParseMode.HTML
+                )
+                await self._gq_start_set(update, context, set_id)
+
+        asyncio.create_task(scheduled_launch())
 
     # ── after a restart ──────────────────────────────────────────────────
 
