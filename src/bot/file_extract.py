@@ -6,10 +6,11 @@ extract(filename, data) -> (items, text, note)
   text  : plain text for quiz_parser.universal_parse (everything else)
   note  : why nothing could be read (unsupported / scanned PDF / ...)
 
-Supported: .txt .md .text .log .rtf .csv .tsv .xlsx .xlsm .json .docx .odt
-           .pptx .pdf (text PDFs) .html .htm .xml — plus any text/* file.
-Not supported (honest): images & scanned PDFs (need OCR), old binary
-.doc/.xls/.ppt (ask to re-save as .docx/.xlsx/.pptx).
+Supported: .txt .md .text .log .rtf .csv .tsv .xlsx .xlsm .xls .json .docx
+           .odt .ods .odp .pptx .pdf .html .htm .xml .epub .zip (files inside)
+           — plus any text file. Old .doc/.ppt: best-effort text recovery.
+Images & scanned PDFs: OCR when Tesseract is installed on the server
+(apt install tesseract-ocr tesseract-ocr-hin); otherwise an honest note.
 """
 
 import csv
@@ -31,12 +32,77 @@ def decode_text(data: bytes) -> str:
         return data[3:].decode("utf-8", "replace")
     if data.startswith((b"\xff\xfe", b"\xfe\xff")):
         return data.decode("utf-16", "replace")
-    for enc in ("utf-8", "cp1252"):
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError:
+        pass
+    try:                                    # utf-16 without BOM, Hindi legacy encodings…
+        from charset_normalizer import from_bytes
+        best = from_bytes(data[:200_000]).best()
+        if best is not None:
+            return data.decode(best.encoding, "replace")
+    except Exception:
+        pass
+    try:
+        return data.decode("cp1252")
+    except UnicodeDecodeError:
+        return data.decode("latin-1", "replace")
+
+
+# ── OCR (optional: needs the tesseract program on the server) ─────────────
+
+def _ocr_images(images) -> Optional[str]:
+    """Text from PIL images, or None when OCR isn't available."""
+    try:
+        import pytesseract
+        langs = set(pytesseract.get_languages(config=""))
+    except Exception:
+        return None
+    lang = "+".join(l for l in ("eng", "hin") if l in langs) or None
+    out = []
+    for im in images:
         try:
-            return data.decode(enc)
-        except UnicodeDecodeError:
-            continue
-    return data.decode("latin-1", "replace")
+            out.append(pytesseract.image_to_string(im, lang=lang) if lang else pytesseract.image_to_string(im))
+        except Exception:
+            return None
+    return "\n\n".join(out)
+
+
+def _ocr_image_bytes(data: bytes) -> Optional[str]:
+    try:
+        from PIL import Image
+        return _ocr_images([Image.open(io.BytesIO(data))])
+    except Exception:
+        return None
+
+
+def _ocr_pdf(data: bytes, max_pages: int = 40) -> Optional[str]:
+    try:
+        import pypdfium2 as pdfium
+        pdf = pdfium.PdfDocument(data)
+        pages = [pdf[i].render(scale=2).to_pil() for i in range(min(len(pdf), max_pages))]
+    except Exception:
+        return None
+    return _ocr_images(pages)
+
+
+def _questions_found(text: str) -> int:
+    try:
+        from src.bot.quiz_parser import universal_parse
+        return len(universal_parse(text)[0])
+    except Exception:
+        return 0
+
+
+def _binary_text(data: bytes) -> str:
+    """Old binary .doc/.ppt/unknown: recover readable text runs (UTF-16LE or
+    8-bit), keep whichever reads more questions."""
+    runs16 = re.findall(r"(?:[\x20-\x7e\u0900-\u097f\u2018-\u201d\r\n\t]){4,}",
+                        data.decode("utf-16le", "ignore"))
+    runs8 = re.findall(rb"[\x20-\x7e\r\n\t]{4,}", data)
+    t16 = "\n".join(runs16).replace("\r", "\n")
+    t8 = "\n".join(r.decode("latin-1") for r in runs8).replace("\r", "\n")
+    return max((t16, t8), key=lambda t: (_questions_found(t), len(t)))
 
 
 class _HTMLText(HTMLParser):
@@ -174,14 +240,81 @@ def _json_items(obj) -> List[Dict]:
 
 # ── main entry ─────────────────────────────────────────────────────────────
 
-def extract(filename: str, data: bytes) -> Tuple[List[Dict], str, str]:
+IMAGE_EXT = ("jpg", "jpeg", "png", "webp", "gif", "bmp", "heic", "tif", "tiff")
+NO_OCR = ("Reading text from images needs OCR, which isn't switched on for this bot yet. "
+          "Send the questions as text or a text PDF / DOCX / TXT.")
+
+
+def extract(filename: str, data: bytes, _depth: int = 0) -> Tuple[List[Dict], str, str]:
+    """Never raises for bad files: returns a note instead."""
+    try:
+        return _extract(filename, data, _depth)
+    except Exception as e:
+        ext = (filename or "").lower().rsplit(".", 1)[-1] if "." in (filename or "") else "?"
+        return [], "", f"Couldn't read this .{ext} file ({type(e).__name__}). It may be damaged or protected."
+
+
+def _extract(filename: str, data: bytes, _depth: int = 0) -> Tuple[List[Dict], str, str]:
     name = (filename or "").lower()
     ext = name.rsplit(".", 1)[-1] if "." in name else ""
 
-    if ext in ("jpg", "jpeg", "png", "webp", "gif", "bmp", "heic", "tif", "tiff"):
-        return [], "", "Images need OCR (reading text from a picture), which this bot doesn't do. Send the questions as text, .txt, .docx or .pdf."
-    if ext in ("doc", "xls", "ppt"):
-        return [], "", f"Old .{ext} format isn't supported. Open it and 'Save as' .{ext}x, then send again."
+    if ext in IMAGE_EXT:
+        text = _ocr_image_bytes(data)
+        return ([], text, "") if text and text.strip() else ([], "", NO_OCR)
+
+    if ext == "zip" and _depth == 0:                    # every file inside, in name order
+        z = zipfile.ZipFile(io.BytesIO(data))
+        items, texts, notes, total = [], [], [], 0
+        for info in sorted(z.infolist(), key=lambda i: i.filename)[:50]:
+            if info.is_dir() or info.file_size > MAX_BYTES or "__MACOSX" in info.filename:
+                continue
+            total += info.file_size
+            if total > 4 * MAX_BYTES:
+                notes.append("zip too big — the rest was skipped"); break
+            it, tx, nt = extract(info.filename, z.read(info), _depth + 1)
+            items += it
+            if tx.strip():
+                texts.append(tx)
+            if nt:
+                notes.append(f"{info.filename}: {nt}")
+        return items, "\n\n".join(texts), ("; ".join(notes[:3]) if not (items or texts) else "")
+
+    if ext == "xls":
+        try:
+            import xlrd
+        except ImportError:
+            return [], "", "Old .xls needs one more library on the server. 'Save as' .xlsx and send again."
+        wb = xlrd.open_workbook(file_contents=data)
+        items, text = [], []
+        for sh in wb.sheets():
+            rows = [sh.row_values(r) for r in range(sh.nrows)]
+            got, _ = _table_items(rows)
+            if got:
+                items += got
+            else:
+                text.append(_rows_to_text(rows))
+        return items, "\n\n".join(text), ""
+
+    if ext in ("doc", "ppt", "wps", "pps"):
+        text = _binary_text(data)
+        if _questions_found(text):
+            return [], text, ""
+        return [], "", f"Old .{ext} files can't be read reliably. Open it and 'Save as' .{ext}x (or PDF), then send again."
+
+    if ext in ("ods", "odp", "odg"):
+        z = zipfile.ZipFile(io.BytesIO(data))
+        xml = z.read("content.xml").decode("utf-8", "replace")
+        xml = re.sub(r"</text:(?:p|h)>|<text:line-break/>|</table:table-row>", "\n", xml)
+        xml = re.sub(r"</table:table-cell>", "\t", xml)
+        text = html.unescape(re.sub(r"<[^>]+>", "", xml))
+        rows = [r.split("\t") for r in text.split("\n") if r.strip()]
+        items, _ = _table_items(rows) if ext == "ods" else ([], None)
+        return items, "" if items else text, ""
+
+    if ext == "epub":
+        z = zipfile.ZipFile(io.BytesIO(data))
+        pages = sorted(n for n in z.namelist() if n.lower().endswith((".xhtml", ".html", ".htm")))
+        return [], "\n\n".join(html_to_text(z.read(n).decode("utf-8", "replace")) for n in pages), ""
 
     if ext in ("xlsx", "xlsm"):
         import openpyxl
@@ -235,12 +368,27 @@ def extract(filename: str, data: bytes) -> Tuple[List[Dict], str, str]:
         return [], "\n\n".join(_xml_text(z.read(n).decode("utf-8", "replace"), "a:p", "a:t") for n in slides), ""
 
     if ext == "pdf":
-        from pypdf import PdfReader
-        reader = PdfReader(io.BytesIO(data))
-        text = "\n".join((p.extract_text() or "") for p in reader.pages)
-        if len(text.strip()) < 20:
-            return [], "", "This PDF has no selectable text (it's a scan/photo). Scanned PDFs need OCR, which this bot doesn't do."
-        return [], text, ""
+        # two text engines: keep whichever reads more questions (layouts differ a lot)
+        candidates = []
+        try:
+            from pypdf import PdfReader
+            reader = PdfReader(io.BytesIO(data))
+            candidates.append("\n".join((p.extract_text() or "") for p in reader.pages))
+        except Exception:
+            pass
+        try:
+            import pdfplumber
+            with pdfplumber.open(io.BytesIO(data)) as pdf:
+                candidates.append("\n".join((p.extract_text() or "") for p in pdf.pages))
+        except Exception:
+            pass
+        candidates = [c for c in candidates if len(c.strip()) >= 20]
+        if candidates:
+            return [], max(candidates, key=lambda t: (_questions_found(t), len(t))), ""
+        text = _ocr_pdf(data)                           # scanned PDF
+        if text and text.strip():
+            return [], text, ""
+        return [], "", "This PDF has no selectable text (it's a scan/photo). " + NO_OCR
 
     s = decode_text(data)
     if ext in ("html", "htm", "xml") or re.match(r"\s*<(?:!doctype html|html)", s, re.I):
@@ -248,5 +396,10 @@ def extract(filename: str, data: bytes) -> Tuple[List[Dict], str, str]:
     if ext == "rtf" or s.startswith("{\\rtf"):
         return [], rtf_to_text(s), ""
     if "\x00" in s[:2000]:
+        if data[:4] == b"PK\x03\x04" and _depth == 0:     # renamed zip-based file
+            return extract((filename or "file") + ".zip", data, _depth)
+        text = _binary_text(data)
+        if _questions_found(text):
+            return [], text, ""
         return [], "", f"Can't read this file type (.{ext or '?'}). Send .txt, .docx, .pdf, .csv, .xlsx or .json."
     return [], s, ""

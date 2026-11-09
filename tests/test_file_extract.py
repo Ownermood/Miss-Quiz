@@ -147,3 +147,86 @@ async def test_document_handler_imports_csv_end_to_end(monkeypatch):
             break
         await asyncio.sleep(0.02)
     assert qm.add_questions.call_args.args[0][0]["question"] == "Capital?"
+
+
+# ── all-rounder formats ─────────────────────────────────────────────────────
+
+import io as _io
+import zipfile as _zip
+from pathlib import Path as _Path
+from src.bot.file_extract import extract as _ex
+from src.bot.quiz_parser import universal_parse as _up
+
+_Q = "1. Capital of India?\n(a) Mumbai\n(b) Delhi\n✅ Answer: B\n\n2. 2+2?\n(a) 4\n(b) 5\nAns: a\n"
+
+
+def _answers(items, text):
+    from src.bot.quiz_parser import items_to_questions
+    qs, _ = _up(text) if text else ([], [])
+    qs += items_to_questions(items)[0] if items else []
+    return [q["correct_answer"] for q in qs]
+
+
+def test_real_pdf_with_emoji_answers_and_key():
+    data = (_Path(__file__).parent / "fixtures" / "sample_questions.pdf").read_bytes()
+    items, text, note = _ex("CLAT.pdf", data)
+    assert not note and _answers(items, text) == [1, 2, 0]
+
+
+def test_zip_reads_every_file_inside():
+    buf = _io.BytesIO()
+    with _zip.ZipFile(buf, "w") as z:
+        z.writestr("part1.txt", _Q)
+        z.writestr("part2.csv", "question,a,b,answer\nLargest planet?,Earth,Jupiter,B\n")
+        z.writestr("__MACOSX/._part1.txt", "junk")
+    items, text, note = _ex("set.zip", buf.getvalue())
+    assert sorted(_answers(items, text)) == [0, 1, 1]
+
+
+def test_ods_odp_epub():
+    def odf(xml_body):
+        buf = _io.BytesIO()
+        with _zip.ZipFile(buf, "w") as z:
+            z.writestr("content.xml", xml_body)
+        return buf.getvalue()
+    lines = "".join(f"<text:p>{l}</text:p>" for l in _Q.splitlines())
+    assert _answers(*_ex("q.odp", odf(f"<x>{lines}</x>"))[:2]) == [1, 0]
+    buf = _io.BytesIO()
+    with _zip.ZipFile(buf, "w") as z:
+        z.writestr("OEBPS/ch1.xhtml", "<html><body>" + "".join(f"<p>{l}</p>" for l in _Q.splitlines()) + "</body></html>")
+    assert _answers(*_ex("book.epub", buf.getvalue())[:2]) == [1, 0]
+
+
+def test_old_doc_best_effort_and_renamed_zip():
+    blob = b"\xd0\xcf\x11\xe0" + b"\x00" * 64 + _Q.replace("\n", "\r").encode("utf-16le") + b"\x00" * 64
+    items, text, note = _ex("old.doc", blob)
+    assert _answers(items, text) == [1, 0]
+    buf = _io.BytesIO()
+    with _zip.ZipFile(buf, "w") as z:
+        z.writestr("q.txt", _Q)
+    items, text, note = _ex("download.bin", buf.getvalue())             # zip with a wrong name
+    assert _answers(items, text) == [1, 0]
+
+
+def test_image_without_ocr_gives_clear_note(monkeypatch):
+    import src.bot.file_extract as fe
+    monkeypatch.setattr(fe, "_ocr_image_bytes", lambda d: None)
+    items, text, note = _ex("notes.jpg", b"\xff\xd8\xff")
+    assert not text and "OCR" in note
+
+
+def test_image_with_ocr(monkeypatch):
+    import src.bot.file_extract as fe
+    monkeypatch.setattr(fe, "_ocr_image_bytes", lambda d: _Q)
+    assert _answers(*_ex("notes.png", b"img")[:2]) == [1, 0]
+
+
+def test_broken_file_never_raises():
+    items, text, note = _ex("bad.xlsx", b"not a real xlsx")
+    assert not items and not text and "Couldn't read" in note
+
+
+def test_utf16_without_bom_and_hindi():
+    data = ("प्रश्न 1. भारत की राजधानी?\n(क) मुंबई\n(ख) दिल्ली\nउत्तर: ख\n").encode("utf-16le")
+    items, text, note = _ex("hindi.txt", data)
+    assert _answers(items, text) == [1]
