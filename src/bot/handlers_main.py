@@ -228,7 +228,7 @@ class TelegramQuizBot(
             except Exception:
                 pass
         text = (
-            f"🎓  <b>CLAT VISION</b>  ·  System Status\n"
+            f"🎓  <b>MISS QUIZ</b>  ·  System Status\n"
             f"━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
             f"  ✅  Bot is live and operational.\n\n"
             f"  🕒  <b>{now}</b>\n"
@@ -236,7 +236,7 @@ class TelegramQuizBot(
             f"  👥  Users      ›  <b>{total_users}</b>\n"
             f"  💬  Groups     ›  <b>{total_groups}</b>\n\n"
             f"━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            f"  ⚡  All systems online  ·  /dev for controls"
+            f"  ⚡  All systems online  ·  /start → Admin Panel"
         )
         recipients = {OWNER_ID}
         if self.db:

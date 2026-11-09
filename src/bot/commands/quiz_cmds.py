@@ -37,8 +37,10 @@ class QuizCommandsMixin(object):
                 f"📭 <b>No Questions Found</b>\n"
                 f"{UI.LINE}\n\n"
                 + (f"  {cat_e} Category: <b>{html.escape(category)}</b>\n\n" if category else "")
-                + "  The question bank is empty.\n\n"
-                "  Use /addquiz to add questions."
+                + ("  The question bank is empty.\n\n"
+                   "  Admin Panel → ➕ Add Questions."
+                   if await self._is_authorized(update.effective_user.id) else
+                   "  No questions here yet — please check back soon.")
             )
             await self._reply(update, text, reply_markup=InlineKeyboardMarkup([[
                 InlineKeyboardButton("🎓 Try Again", callback_data="play_quiz")
@@ -247,19 +249,19 @@ class QuizCommandsMixin(object):
             f"{UI.LINE}\n\n"
             f"👤  {mention}\n\n"
             f"<b>𝐎𝐕𝐄𝐑𝐀𝐋𝐋  𝐏𝐄𝐑𝐅𝐎𝐑𝐌𝐀𝐍𝐂𝐄</b>\n"
-            f"╭──────────────────────────────╮\n"
-            f"│  Quizzes      ›  {quizzes_completed}\n"
-            f"│  Accuracy     ›  {accuracy}%\n"
-            f"│  Avg Score    ›  {avg_score}\n"
-            f"│  Total Marks  ›  {total_marks}\n"
-            f"╰──────────────────────────────╯\n\n"
+            f"<blockquote>"
+            f"Quizzes      ›  {quizzes_completed}\n"
+            f"Accuracy     ›  {accuracy}%\n"
+            f"Avg Score    ›  {avg_score}\n"
+            f"Total Marks  ›  {total_marks}\n"
+            f"</blockquote>\n\n"
         )
 
         # Subject breakdown
         if subject_stats:
             text += (
                 f"<b>𝐒𝐔𝐁𝐉𝐄𝐂𝐓  𝐁𝐑𝐄𝐀𝐊𝐃𝐎𝐖𝐍</b>\n"
-                f"╭──────────────────────────────╮\n"
+                f"<blockquote>"
             )
             for subj, sdata in subject_stats.items():
                 if not isinstance(sdata, dict):
@@ -267,8 +269,8 @@ class QuizCommandsMixin(object):
                 s_attempted = sdata.get("attempted", 0)
                 s_correct   = sdata.get("correct",   0)
                 s_acc       = round(s_correct / max(s_attempted, 1) * 100, 1) if s_attempted else 0
-                text += f"│  {html.escape(subj[:18])}   ›  {s_acc}%  ({s_correct}/{s_attempted})\n"
-            text += f"╰──────────────────────────────╯\n\n"
+                text += f"{html.escape(subj[:18])}   ›  {s_acc}%  ({s_correct}/{s_attempted})\n"
+            text += f"</blockquote>\n\n"
 
         # Insights
         insights = []

@@ -566,22 +566,22 @@ class BroadcastCommandsMixin:
             LINE = "━" * 38
             extra = ""
             if skipped_count > 0:
-                extra += f"│  Auto-Cleaned  ›  <b>{skipped_count}</b>  (blocked/inactive)\n"
+                extra += f"Blocked the bot  ›  <b>{skipped_count}</b>  (DMs paused, data kept)\n"
             if fail_count > 0:
-                extra += f"│  Skipped       ›  <b>{fail_count}</b>  (no access)\n"
+                extra += f"Skipped       ›  <b>{fail_count}</b>  (no access)\n"
 
             result_text = (
                 f"📢  <b>𝐁𝐑𝐎𝐀𝐃𝐂𝐀𝐒𝐓  𝐂𝐎𝐌𝐏𝐋𝐄𝐓𝐄𝐃</b>\n"
                 f"{LINE}\n\n"
                 f"📬  <b>𝐃𝐄𝐋𝐈𝐕𝐄𝐑𝐘  𝐑𝐄𝐏𝐎𝐑𝐓</b>\n"
-                f"╭──────────────────────────────────────╮\n"
-                f"│  PM Users      ›  <b>{pm_sent}</b>\n"
-                f"│  Groups        ›  <b>{group_sent}</b>\n"
-                f"│  Total Sent    ›  <b>{success_count}</b>\n"
+                f"<blockquote>"
+                f"PM Users      ›  <b>{pm_sent}</b>\n"
+                f"Groups        ›  <b>{group_sent}</b>\n"
+                f"Total Sent    ›  <b>{success_count}</b>\n"
                 f"{extra}"
-                f"╰──────────────────────────────────────╯\n\n"
+                f"</blockquote>\n\n"
                 f"{LINE}\n"
-                f"🗑️  Use /delbroadcast to undo\n"
+                f"🗑️  Undo: Admin Panel → Undo Broadcast\n"
                 f"{LINE}"
             )
 

@@ -325,6 +325,7 @@ def tidy_html(text: str) -> str:
     if not text:
         return text
     text = _GAP_RE.sub("\n\n", text).strip("\n")
+    text = _re.sub(r"\s*\n(</blockquote>)", r"\1", text)      # no blank last line inside a quote
     if not bold_on():
         return text
     text = _re.sub(r"</?b>", "", text)

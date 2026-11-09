@@ -1,5 +1,5 @@
 /**
- * CLAT Vision Admin Panel — JavaScript
+ * Miss Quiz Admin Panel — JavaScript
  * Handles navigation, API calls, and UI interactions.
  */
 

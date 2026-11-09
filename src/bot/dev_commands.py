@@ -578,9 +578,7 @@ class DeveloperCommands(BroadcastCommandsMixin, QuizEditorMixin):
 
                 LINE = "━━━━━━━━━━━━━━━━━━━━━━"
                 dev_text = (
-                    "╔══════════════════════╗\n"
-                    "║  👥  Developer Panel  ║\n"
-                    "╚══════════════════════╝\n\n"
+                    "<b>👥  Developer Panel</b>\n"
                 )
 
                 # Owner
