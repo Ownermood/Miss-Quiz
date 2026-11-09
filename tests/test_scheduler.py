@@ -121,3 +121,57 @@ def test_due_query_excludes_known_non_admin_groups():
     db.groups_col.find.return_value = []
     db.get_groups_due_for_quiz()
     assert db.groups_col.find.call_args.args[0]["bot_is_admin"] == {"$ne": False}
+
+
+# ── topic (forum) groups ───────────────────────────────────────────────────
+
+def _topic_sched(first_error=None):
+    from telegram.error import BadRequest
+    sch, db, calls = make_scheduler()
+    db.get_groups_due_for_quiz.return_value = [{"chat_id": CHAT, "bot_is_admin": True, "message_thread_id": 42}]
+    seen = []
+
+    async def _send(**kw):
+        seen.append(kw.get("message_thread_id"))
+        if kw.get("message_thread_id") == 42 and first_error:
+            raise BadRequest(first_error)
+        m = MagicMock(); m.message_id = 99; m.poll.id = "p-new"
+        return m
+    sch.bot.application.bot.send_poll = AsyncMock(side_effect=_send)
+    return sch, db, seen
+
+
+async def test_quiz_goes_to_the_open_topic():
+    sch, db, seen = _topic_sched()
+    await sch._do_send_auto_quiz()
+    assert seen == [42]
+    db.clear_group_thread.assert_not_called()
+
+
+@pytest.mark.parametrize("err", ["Topic_closed", "Message thread not found", "Topic_deleted"])
+async def test_closed_topic_falls_back_to_main_topic(err):
+    sch, db, seen = _topic_sched(first_error=err)
+    await sch._do_send_auto_quiz()
+    assert seen == [42, None]                                 # retried in General
+    db.clear_group_thread.assert_called_once_with(CHAT, 42)
+    db.groups_col.update_one.assert_not_called()              # group NOT marked inactive
+    db.update_group_quiz_schedule.assert_called_with(CHAT, 60)
+
+
+async def test_other_errors_do_not_trigger_topic_fallback():
+    sch, db, seen = _topic_sched(first_error="Poll options must be non-empty")
+    await sch._do_send_auto_quiz()
+    assert seen == [42]
+    db.clear_group_thread.assert_not_called()
+
+
+def test_clear_group_thread_only_if_still_saved():
+    mongomock = pytest.importorskip("mongomock")
+    from src.core.database import DatabaseManager
+    db = DatabaseManager.__new__(DatabaseManager)
+    db.groups_col = mongomock.MongoClient().db.g
+    db.groups_col.insert_one({"chat_id": 1, "message_thread_id": 7})
+    db.clear_group_thread(1, 99)                # someone already moved to topic 7
+    assert db.groups_col.find_one({"chat_id": 1})["message_thread_id"] == 7
+    db.clear_group_thread(1, 7)
+    assert "message_thread_id" not in db.groups_col.find_one({"chat_id": 1})

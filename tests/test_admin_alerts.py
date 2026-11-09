@@ -77,7 +77,7 @@ async def test_job_alerts_each_group_with_button_and_marks():
     await sch._send_admin_reminders()
     assert tg.send_message.await_count == 2
     first = tg.send_message.await_args_list[0]
-    assert first.args == (-1, ADMIN_ALERT_TEXT)
+    assert first.kwargs["chat_id"] == -1 and first.kwargs["text"] == ADMIN_ALERT_TEXT
     assert "startgroup&admin=" in first.kwargs["reply_markup"].inline_keyboard[0][0].url
     assert tg.send_message.await_args_list[1].kwargs["message_thread_id"] == 9
     assert db.mark_admin_reminder.call_count == 2

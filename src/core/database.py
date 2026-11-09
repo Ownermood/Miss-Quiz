@@ -939,6 +939,11 @@ class DatabaseManager:
             "admin": self.groups_col.count_documents({**base, "bot_is_admin": True}),
         }
 
+    def clear_group_thread(self, chat_id: int, thread_id: int) -> None:
+        """Forget a closed/deleted topic (only if it is still the saved one)."""
+        self.groups_col.update_one({"chat_id": chat_id, "message_thread_id": thread_id},
+                                   {"$unset": {"message_thread_id": ""}})
+
     def mark_admin_reminder(self, chat_id: int) -> None:
         """Record that a 'make me admin' alert was sent to this group."""
         self.groups_col.update_one(

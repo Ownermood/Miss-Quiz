@@ -198,10 +198,31 @@ class AutoQuizScheduler:
         "have no rights",
         "group chat was deactivated",
         "chat has been deleted",
-        "forum topic is closed",
         "user is deactivated",
         "need administrator rights",
     )
+
+    _TOPIC_GONE = ("thread not found", "topic_closed", "topic closed", "topic_deleted",
+                   "topic deleted", "forum topic is closed", "topic_id_invalid")
+
+    async def _send_in_topic(self, send, chat: int, thread_id, **kw):
+        """Topic groups: post in the group's open topic (the last one people
+        wrote in). If that topic was closed or deleted, post in the main
+        (General) topic instead and forget the dead topic.
+        Returns (message, thread_id actually used)."""
+        if thread_id:
+            try:
+                return await send(**kw, message_thread_id=thread_id), thread_id
+            except BadRequest as e:
+                if not any(w in str(e).lower() for w in self._TOPIC_GONE):
+                    raise
+                logger.info(f"[SCHEDULER] topic {thread_id} in {chat} is closed/gone ({e}) — using main topic")
+                if self.db:
+                    try:
+                        self.db.clear_group_thread(chat, thread_id)
+                    except Exception as ex:
+                        logger.warning(f"[SCHEDULER] clear_group_thread failed for {chat}: {ex}")
+        return await send(**kw), None
 
     async def _bot_is_admin(self, chat_id: int, known) -> bool:
         """Auto quiz only runs where the bot is an admin.
@@ -250,11 +271,9 @@ class AutoQuizScheduler:
             chat_id = g.get("chat_id")
             if not chat_id:
                 continue
-            kw = {"parse_mode": "HTML", "reply_markup": kb}
-            if g.get("message_thread_id"):
-                kw["message_thread_id"] = g["message_thread_id"]
+            kw = {"chat_id": chat_id, "text": ADMIN_ALERT_TEXT, "parse_mode": "HTML", "reply_markup": kb}
             try:
-                await tg.send_message(chat_id, ADMIN_ALERT_TEXT, **kw)
+                await self._send_in_topic(tg.send_message, chat_id, g.get("message_thread_id"), **kw)
                 self.db.mark_admin_reminder(chat_id)
                 sent += 1
             except RetryAfter as e:
@@ -364,10 +383,8 @@ class AutoQuizScheduler:
                     explanation       = explanation[:200],
                     is_anonymous      = False,
                 )
-                if thread_id:
-                    send_kwargs["message_thread_id"] = thread_id
-
-                msg = await self.bot.application.bot.send_poll(**send_kwargs)
+                msg, thread_id = await self._send_in_topic(
+                    self.bot.application.bot.send_poll, chat_id, thread_id, **send_kwargs)
                 poll_id_str = str(msg.poll.id)
 
                 # Remove the previous quiz only AFTER the new one is out, so a
