@@ -321,7 +321,7 @@ async def test_timer_choices_and_labels():
     a = user(1, "Amit")
     await app.cmd_battle(group_update(a), ctx)
     b = next(iter(app._bt_state().values()))
-    _, kb = app._bt_setup_view(b, "t")
+    _, kb = app._bt_setup_view(b)
     rows = [[x.text for x in r] for r in kb.inline_keyboard]
     assert ["10s", "15s", "20s"] in rows and ["30s", "1m", "4m"] in rows
     styles = {x.text: x.style for r in kb.inline_keyboard for x in r}
@@ -367,20 +367,29 @@ async def test_rematch_challenges_the_other_player_with_same_settings():
 
 
 
-async def test_setup_main_card_is_three_clear_buttons_and_navigates():
+async def test_setup_one_screen_stepper_summary_and_edit():
     app = FakeBotApp()
     ctx, _ = fake_context()
     a = user(1, "Amit")
     await app.cmd_battle(group_update(a), ctx)
     b = next(iter(app._bt_state().values()))
-    _, kb = app._bt_setup_view(b)
-    labels = [r[0].text for r in kb.inline_keyboard]
-    assert labels == ["🎯 Questions: 10", "⏱ Time: 20s each", "⚔️ Create Challenge", "❌ Cancel"]
-    assert "Topic" not in app._bt_setup_view(b)[0]
-    assert all(r[0].style for r in kb.inline_keyboard)                     # every button coloured
-    await press(app, ctx, a, f"bt_p:{b.id}:q")
-    assert "How many questions" in app._last_edit
-    await press(app, ctx, a, f"bt_q:{b.id}:15")                            # pick → back to main
-    assert b.n_q == 15 and "BATTLE SETUP" in app._last_edit and "Questions › 15" in app._last_edit
-    q = await press(app, ctx, user(2, "B"), f"bt_p:{b.id}:t")              # not challenger
-    assert q.answer.await_args.kwargs.get("show_alert") is True
+    text, kb = app._bt_setup_view(b)
+    flat = [x.text for r in kb.inline_keyboard for x in r]
+    for want in ("🎯 QUESTIONS", "➖1", "➕5", "⏱ TIME PER QUESTION", "1m", "➡️ Next"):
+        assert want in flat                                              # all options on one screen
+    assert "Topic" not in text
+    qmax = app._bt_q_max()
+    await press(app, ctx, a, f"bt_q:{b.id}:{b.n_q + 1}")                 # ➕1 → any number
+    assert b.n_q == 11 and "Questions › 11" in app._last_edit
+    await press(app, ctx, a, f"bt_q:{b.id}:999")                         # clamped to pool / 50
+    assert b.n_q == qmax
+    await press(app, ctx, a, f"bt_q:{b.id}:-4")                          # clamped to minimum
+    assert b.n_q == 3
+    q = await press(app, ctx, a, f"bt_x:{b.id}")                         # label: no change
+    assert b.n_q == 3 and q.answer.await_args.kwargs.get("show_alert") is not True
+    await press(app, ctx, a, f"bt_p:{b.id}:sum")
+    assert "BATTLE SUMMARY" in app._last_edit and "Questions › 3" in app._last_edit
+    await press(app, ctx, a, f"bt_p:{b.id}:main")                        # ✏️ Edit
+    assert "BATTLE SETUP" in app._last_edit and b.state == "setup"
+    q = await press(app, ctx, user(2, "B"), f"bt_q:{b.id}:7")            # not challenger
+    assert q.answer.await_args.kwargs.get("show_alert") is True and b.n_q == 3

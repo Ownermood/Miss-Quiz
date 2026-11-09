@@ -34,7 +34,8 @@ logger = logging.getLogger(__name__)
 
 BATTLE_QUESTIONS = 10     # defaults; the challenger can change them in the setup card
 BATTLE_SECONDS   = 20     # Telegram open_period per question
-Q_CHOICES        = (5, 10, 15, 20)
+Q_CHOICES        = (5, 10, 15, 20, 30)   # quick presets; ➖/➕ pick any count
+Q_MIN, Q_MAX     = 3, 50
 T_CHOICES        = (10, 15, 20, 30, 60, 240)   # Telegram allows up to 600 s
 INVITE_TTL       = 300    # seconds a setup/challenge stays open
 START_DELAY      = 3      # seconds between "battle starts" and first question
@@ -241,33 +242,41 @@ class BattleMixin:
     def _bt_settings_line(self, b: "Battle") -> str:
         return f"<blockquote>🎯 Questions › {b.n_q}\n⏱ Time › {_tlabel(b.secs)} each</blockquote>"
 
+    def _bt_q_max(self) -> int:
+        return max(Q_MIN, min(Q_MAX, len(self._bt_pool())))
+
     def _bt_setup_view(self, b: "Battle", page: str = "main"):
-        """Main card: 3 clear setting buttons. Tapping one opens only that
-        choice (current = green, others = blue); picking returns here."""
+        """One screen with every option (current = green), then a summary
+        screen with Edit / Create Challenge."""
         vs = UI.mention(b.p2, b.p2_name) if b.p2 else "<i>anyone</i>"
         B = lambda text, data, style="primary": InlineKeyboardButton(text, callback_data=data, style=style)
-        if page == "q":
-            title, opts = "🎯 How many questions?", [B(f"{n} questions", f"bt_q:{b.id}:{n}",
-                                                     "success" if b.n_q == n else "primary") for n in Q_CHOICES]
-            per_row = 2
-        elif page == "t":
-            title, opts = "⏱ Time for each question?", [B(_tlabel(t), f"bt_t:{b.id}:{t}",
-                                                         "success" if b.secs == t else "primary") for t in T_CHOICES]
-            per_row = 3
-        else:
-            text = (f"⚔️ <b>BATTLE SETUP</b>\n{UI.mention(b.p1, b.p1_name)}  vs  {vs}\n"
+        go = lambda v: B(v[0], f"bt_q:{b.id}:{v[1]}")
+        if page == "sum":
+            total = b.n_q * b.secs
+            text = (f"⚔️ <b>BATTLE SUMMARY</b>\n{UI.mention(b.p1, b.p1_name)}  vs  {vs}\n"
                     f"{self._bt_settings_line(b)}\n"
-                    f"<i>Tap a setting to change it, then Create Challenge.</i>")
-            kb = InlineKeyboardMarkup([
-                [B(f"🎯 Questions: {b.n_q}", f"bt_p:{b.id}:q")],
-                [B(f"⏱ Time: {_tlabel(b.secs)} each", f"bt_p:{b.id}:t")],
+                    f"⌛ <i>Up to {_tlabel(total) if total < 3600 else f'{total // 60}m'} in total</i>")
+            return text, InlineKeyboardMarkup([
+                [B("✏️ Edit", f"bt_p:{b.id}:main")],
                 [B("⚔️ Create Challenge", f"bt_go:{b.id}", "success")],
                 [B("❌ Cancel", f"bt_dec:{b.id}", "danger")],
             ])
-            return text, kb
-        text = f"⚔️ <b>BATTLE SETUP</b>\n<b>{title}</b>\n<i>Green = current choice.</i>"
-        rows = [opts[k:k + per_row] for k in range(0, len(opts), per_row)]
-        rows.append([B("⬅️ Back", f"bt_p:{b.id}:main", "danger")])
+        qmax, n = self._bt_q_max(), b.n_q
+        text = (f"⚔️ <b>BATTLE SETUP</b>\n{UI.mention(b.p1, b.p1_name)}  vs  {vs}\n"
+                f"{self._bt_settings_line(b)}\n"
+                f"<i>Green = selected. ➖/➕ for any number ({Q_MIN}–{qmax}).</i>")
+        hdr = lambda t: InlineKeyboardButton(t, callback_data=f"bt_x:{b.id}")
+        rows = [[hdr("🎯 QUESTIONS")],
+                [go(("➖5", n - 5)), go(("➖1", n - 1)),
+                 InlineKeyboardButton(str(n), callback_data=f"bt_x:{b.id}", style="success"),
+                 go(("➕1", n + 1)), go(("➕5", n + 5))],
+                [B(str(q), f"bt_q:{b.id}:{q}", "success" if n == q else "primary")
+                 for q in Q_CHOICES if q <= qmax],
+                [hdr("⏱ TIME PER QUESTION")]]
+        tb = [B(_tlabel(t), f"bt_t:{b.id}:{t}", "success" if b.secs == t else "primary") for t in T_CHOICES]
+        rows += [tb[k:k + 3] for k in range(0, len(tb), 3)]
+        rows.append([B("➡️ Next", f"bt_p:{b.id}:sum", "success")])
+        rows.append([B("❌ Cancel", f"bt_dec:{b.id}", "danger")])
         return text, InlineKeyboardMarkup(rows)
 
     def _bt_challenge_view(self, b: "Battle", bot_username: str):
@@ -311,21 +320,24 @@ class BattleMixin:
             await query.answer("This battle is no longer available.", show_alert=True)
             return
 
+        if action == "bt_x":                       # section label / counter
+            await query.answer()
+            return
         if action in ("bt_q", "bt_t", "bt_c", "bt_go", "bt_p"):
             if user.id != b.p1 or b.state != "setup":
                 await query.answer("Only the challenger can change this.", show_alert=True)
                 return
             if action == "bt_p":
                 await query.answer()
-                page = parts[2] if len(parts) > 2 and parts[2] in ("q", "t") else "main"
+                page = parts[2] if len(parts) > 2 and parts[2] == "sum" else "main"
                 await self._bt_edit(query, *self._bt_setup_view(b, page))
                 return
             try:
                 val = int(parts[2]) if action != "bt_go" else 0
             except (IndexError, ValueError):
                 await query.answer(); return
-            if action == "bt_q" and val in Q_CHOICES:
-                b.n_q = val
+            if action == "bt_q":
+                b.n_q = max(Q_MIN, min(val, self._bt_q_max()))
             elif action == "bt_t" and val in T_CHOICES:
                 b.secs = val
             elif action == "bt_c":
