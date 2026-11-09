@@ -181,6 +181,8 @@ class TelegramQuizBot(
         await self._initialize_with_retry()
         await self._set_commands()
         logger.info("✅ Bot initialized — polling mode")
+        from src.bot.premium import premium_on
+        logger.info(f"✨ Premium emoji: {'ON' if premium_on() else 'OFF (set PREMIUM_EMOJI=1 in .env)'}")
 
     async def initialize_webhook(self, token: str, webhook_url: str):
         from src.core.config import webhook_secret

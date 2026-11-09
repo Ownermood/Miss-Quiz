@@ -13,7 +13,9 @@ from typing import Optional
 
 from telegram import InlineKeyboardButton
 
-PREMIUM = os.environ.get("PREMIUM_EMOJI", "0") == "1"
+def premium_on() -> bool:
+    """Read at call time so .env / Render settings always apply."""
+    return os.environ.get("PREMIUM_EMOJI", "0").strip().lower() in ("1", "true", "yes", "on")
 
 EMOJI = {
     # Peach and Goma (cute reactions)
@@ -58,7 +60,7 @@ EMOJI = {
 def e(name: str) -> str:
     """Emoji for HTML messages: premium <tg-emoji> if enabled, else the plain one."""
     fallback, cid = EMOJI[name]
-    return f'<tg-emoji emoji-id="{cid}">{fallback}</tg-emoji>' if PREMIUM else fallback
+    return f'<tg-emoji emoji-id="{cid}">{fallback}</tg-emoji>' if premium_on() else fallback
 
 
 def btn(text: str, emoji: Optional[str] = None, style: Optional[str] = None,
@@ -68,7 +70,7 @@ def btn(text: str, emoji: Optional[str] = None, style: Optional[str] = None,
     Without premium, the plain emoji is put in front of the text instead."""
     icon = None
     if emoji:
-        if PREMIUM:
+        if premium_on():
             icon = EMOJI[emoji][1]
         else:
             text = f"{EMOJI[emoji][0]} {text}"
