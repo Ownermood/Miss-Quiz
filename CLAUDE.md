@@ -164,17 +164,16 @@ Pakke bugs aur sirf "possible risks" alag-alag likho.
 
 ## 7. Import format (`.txt`)
 
-Questions kisi bhi source se aa sakte hain, bas file is format mein ho:
+`quiz_parser.universal_parse()` (SmartQuizParser.parse pehle isse chalata hai, purana engine sirf fallback). Samajhta hai:
+- Numbering: `1.` `1)` `Q1.` `Q1)` `Question 1:` `प्रश्न 1` ya bina number; multi-line question
+- Options: `A)` `(a)` `a.` `A:` `Option A:` `1.` `(i)` `(क)`, ek line mein saare (`A) x B) y`), `* ` / `- ` bullets, markdown `**`
+- Answer: `Answer/Ans/Correct Answer/उत्तर: B`, `(b)`, `Option B`, `2`, option ka text (`Delhi`), `B. Mumbai` (letter-text alag ho to text jeetega), option ke aage ✅ ✔ * (correct)
+- File ke end mein answer key: `Answer Key:` ke neeche `1. A` / `1-a` / `1A 2B`
+- `Explanation:` (multi-line), `Category: X | Difficulty: Y`
+- 2–10 options. Jo samajh na aaye wo skip + report mein "Q12 — answer “E” doesn't match any option" jaisa kaaran
+- Explanation DB mein save hoti hai aur quiz ke 💡 mein dikhti hai; har quiz explanation ke end mein `🆔 Q#id` hamesha
 
-```
-Q1. Question text
-A) option  B) option  C) option  D) option
-Answer: B
-Explanation: max 180 characters
-Category: Polity | Difficulty: Medium | Exam: CLAT
-```
-
-Phase 1 se pehle parser sirf purane fields padhta hai. Explanation/Category/Difficulty/Exam ka support Phase 1 mein aayega.
+**Question dhoondhna:** quiz poll bot ke DM mein forward karo (poll id se exact match) → Edit/Delete; ya Find Question (ID, `Q#12`, shabd question/options mein, typo chalega).
 
 ## 8. Telegram limits jo yaad rakhne hain
 

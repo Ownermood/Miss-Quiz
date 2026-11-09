@@ -349,7 +349,11 @@ class AutoQuizScheduler:
                     _clamped.append(_s)
                 options = _clamped
 
-                explanation = f"✅ {options[correct_idx]}\n📚 {category}  ·  🆔 Q#{q_id}"
+                own = (question.get("explanation") or "").strip()
+                tail = f"\n🆔 Q#{q_id}"   # always keep the ID: admins find/fix questions by it
+                head = (f"✅ {options[correct_idx]}\n💡 {own}" if own
+                        else f"✅ {options[correct_idx]}\n📚 {category}  ·")
+                explanation = head[:200 - len(tail)] + tail
 
                 send_kwargs = dict(
                     chat_id           = chat_id,

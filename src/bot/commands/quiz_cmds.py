@@ -80,8 +80,10 @@ class QuizCommandsMixin(object):
             correct_option_id = correct_idx,
             is_anonymous      = False,
             explanation       = (
-                f"✅ {options[correct_idx]}\n"
-                f"📚 {cat}  ·  🆔 Q#{q_id}"
+                (f"✅ {options[correct_idx]}\n💡 {question['explanation']}"
+                 if question.get("explanation") else
+                 f"✅ {options[correct_idx]}\n📚 {cat}  ·")[:200 - len(f"\n🆔 Q#{q_id}")]
+                + f"\n🆔 Q#{q_id}"
             )
         )
         if thread_id:

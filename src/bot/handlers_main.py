@@ -421,6 +421,10 @@ class TelegramQuizBot(
                 exc_info=True,
             )
 
+        # Admin forwards a quiz poll to the DM → find that question
+        app.add_handler(MessageHandler(
+            filters.ChatType.PRIVATE & filters.POLL, self.handle_forwarded_poll), group=-2)
+
         # Admin input (start photo) runs before every other handler group
         app.add_handler(MessageHandler(
             filters.ChatType.PRIVATE & ~filters.COMMAND,

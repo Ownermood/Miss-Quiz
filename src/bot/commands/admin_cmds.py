@@ -898,7 +898,10 @@ class AdminCommandsMixin(object):
             skipped  = result.get("skipped", 0)
             failed   = result.get("failed", 0)
             errors   = result.get("errors", [])
+            problems = result.get("problems", [])
+            dups     = result.get("duplicates", 0)
             total_q  = self._q_count()
+            detected = max(detected, imported + skipped + failed)
 
             rate = int(imported / max(detected, 1) * 100)
             bar  = UI.bar(rate)
@@ -912,12 +915,17 @@ class AdminCommandsMixin(object):
                 f"{UI.THIN}\n"
                 f"  Detected  ›  <b>{detected}</b>\n"
                 f"  Imported  ›  <b>{imported}</b>\n"
-                f"  Skipped   ›  <b>{skipped}</b>  <i>(duplicates)</i>\n"
+                f"  Duplicates ›  <b>{dups}</b>\n"
+                f"  Not understood ›  <b>{len(problems)}</b>\n"
                 f"  Failed    ›  <b>{failed}</b>\n\n"
                 f"  Success   ›  [{bar}] <b>{rate}%</b>\n\n"
                 f"  📦 Total in DB: <b>{total_q}</b>\n"
                 f"  ⏱ Time      ›  <b>{elapsed:.1f}s</b>\n"
             )
+            if problems:
+                text_out += f"\n<b>⚠️ FIX THESE ({min(len(problems), 10)} of {len(problems)}):</b>\n"
+                for pr in problems[:10]:
+                    text_out += f"  • {html.escape(pr['where'])} — {html.escape(pr['reason'])}\n"
             if errors:
                 text_out += f"\n<b>ERRORS (first {min(len(errors), 3)}):</b>\n"
                 for err in errors[:3]:

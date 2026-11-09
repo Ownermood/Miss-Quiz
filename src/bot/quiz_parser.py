@@ -76,6 +76,14 @@ def _clean_q(raw: str) -> str:
 class SmartQuizParser:
 
     def parse(self, text: str) -> List[Dict]:
+        """Universal parser first; the older strategy parser is only a fallback
+        when the universal one finds nothing."""
+        found, self.problems = universal_parse(text)
+        if found:
+            return found
+        return self._legacy_parse(text)
+
+    def _legacy_parse(self, text: str) -> List[Dict]:
         lines  = [l.rstrip() for l in text.splitlines()]
         blocks = self._make_blocks(lines)
         result = []
@@ -466,29 +474,33 @@ def _clamp_option(opt: str) -> str:
 def bulk_import(text: str, quiz_manager) -> Dict:
     parser   = SmartQuizParser()
     raw      = parser.parse(text)
+    problems = list(getattr(parser, "problems", []) or [])
     if len(raw) > MAX_IMPORT_PER_FILE:
         logger.warning(f"Import truncated: {len(raw)} detected, max={MAX_IMPORT_PER_FILE}")
         raw = raw[:MAX_IMPORT_PER_FILE]
     existing = {q["question"].strip().lower() for q in quiz_manager.questions}
 
-    imported, skipped, failed = 0, 0, 0
+    imported, skipped, failed, duplicates = 0, 0, 0, 0
     errors, batch = [], []
 
     for item in raw:
         q_text  = item.get("question", "").strip()
         options = item.get("options", [])
         correct = item.get("correct_answer")
+        where   = f"“{q_text[:30]}”"
 
-        if not q_text or len(q_text) < 8:
-            skipped += 1; continue
-        if not isinstance(options, list) or len(options) != 4:
-            skipped += 1; continue
+        if not q_text or len(q_text) < 3:
+            skipped += 1; problems.append({"where": where, "reason": "question too short"}); continue
+        if not isinstance(options, list) or not (2 <= len(options) <= 10):   # Telegram: 2–10 options
+            skipped += 1; problems.append({"where": where, "reason": "needs 2–10 options"}); continue
         if not all(o and str(o).strip() for o in options):
-            skipped += 1; continue
-        if correct is None or not (0 <= correct <= 3):
-            skipped += 1; continue
+            skipped += 1; problems.append({"where": where, "reason": "empty option"}); continue
+        if correct is None or not (0 <= correct < len(options)):
+            skipped += 1; problems.append({"where": where, "reason": "answer out of range"}); continue
         if q_text.lower() in existing:
-            skipped += 1; continue
+            skipped += 1; duplicates += 1; continue
+        if item.get("explanation"):
+            item["explanation"] = item["explanation"][:200]
 
         # Enforce Telegram's 100-char poll option limit before saving
         clamped = [_clamp_option(o) for o in options]
@@ -499,7 +511,8 @@ def bulk_import(text: str, quiz_manager) -> Dict:
                 f"(original lengths {over}): {q_text[:60]!r}"
             )
         item["options"]  = clamped
-        item["category"] = guess_category(q_text)
+        if not item.get("category") or item["category"] == "General Knowledge":
+            item["category"] = guess_category(q_text)   # keep a category given in the file
         existing.add(q_text.lower())
         batch.append(item)
 
@@ -508,7 +521,9 @@ def bulk_import(text: str, quiz_manager) -> Dict:
             # Pass existing set so add_questions() skips rebuilding it
             res      = quiz_manager.add_questions(batch, _existing=existing)
             imported = res.get("added", 0)
-            skipped += res.get("rejected", {}).get("duplicates", 0)
+            dup2     = res.get("rejected", {}).get("duplicates", 0)
+            skipped += dup2
+            duplicates += dup2
             errs     = res.get("errors", [])
             failed  += len(errs)
             errors   = errs[:5]
@@ -522,4 +537,273 @@ def bulk_import(text: str, quiz_manager) -> Dict:
         "skipped":        skipped,
         "failed":         failed,
         "errors":         errors,
+        "duplicates":     duplicates,
+        "problems":       problems,          # [{where, reason}] — why things were skipped
     }
+
+
+# ══════════════════════════════════════════════════════════════════════════
+#  UNIVERSAL PARSER  (any common .txt layout, from any AI / book / PYQ)
+# ══════════════════════════════════════════════════════════════════════════
+#  universal_parse(text) -> (questions, problems)
+#  questions: [{question, options, correct_answer, category, explanation?}]
+#  problems:  [{"where": "Q12" / first words, "reason": "..."}]
+
+_HI_LETTERS = "कखगघङचछजझ"
+_ROMAN = ["i", "ii", "iii", "iv", "v", "vi", "vii", "viii", "ix", "x"]
+
+_U_Q = re.compile(
+    r"^(?:(?:q(?:uestion|ues|n)?|प्रश्न|प्र)\s*[\.\-:#]?\s*(\d+)\s*[\.\):\-–]?|(\d+)\s*[\.\):–]|(\d+)\s+-|q\s*[\.\):\-–])\s*(.*)$",
+    re.IGNORECASE)
+_U_OPT = re.compile(
+    r"^(?:option\s*)?[\(\[]?\s*([A-Ja-j]|[1-9]|10|i{1,3}|iv|v|vi{0,3}|ix|x|[" + _HI_LETTERS + r"])\s*[\)\]\.:\-–]\s*(.*)$",
+    re.IGNORECASE)
+_U_ANS = re.compile(
+    r"^(?:correct\s*(?:answer|option|ans)?|right\s*answer|ans(?:wer)?s?|उत्तर|सही\s*उत्तर|key)\s*(?:is)?\s*[:\-–=\.\)]*\s*(.+)$",
+    re.IGNORECASE)
+_U_EXP = re.compile(
+    r"^(?:explanation|explain|exp|solution|sol|reason|hint|व्याख्या|हल|स्पष्टीकरण)\s*[:\-–\.]\s*(.*)$",
+    re.IGNORECASE)
+_U_META = re.compile(r"^(category|subject|topic|difficulty|level|exam|source)\s*[:\-]\s*(.*)$", re.IGNORECASE)
+_U_KEY_HDR = re.compile(
+    r"^(?:answer\s*key|answers|ans(?:wer)?\s*sheet|उत्तर\s*(?:कुंजी|माला))\s*[:\-]?\s*(.*)$|^(?:answer|ans)\s*[:\-]?\s*$",
+    re.IGNORECASE)
+_U_KEY_ITEM = re.compile(r"(?:q\s*)?(\d+)\s*[\.\):\-–=]?\s*\(?([A-Ja-j]|\d{1,2}|[" + _HI_LETTERS + r"])\)?(?=[\s,;|]|$)",
+                         re.IGNORECASE)
+_U_MARK = re.compile(r"(\s*(?:\*{1,2}|✅|✔️?|☑️?|✓|\(correct\)|\[correct\]|\(ans\)|\[ans\]|←\s*correct|<-+\s*correct))\s*$",
+                     re.IGNORECASE)
+_U_INLINE_OPT = re.compile(r"(?:^|\s)[\(\[]?([A-Ja-j])[\)\]\.]\s+")
+_U_INLINE_ANS = re.compile(
+    r"(?<![Cc]orrect)(?<!CORRECT)(?<![Rr]ight)(?<!RIGHT)\s(?=(?:correct\s*answer|right\s*answer|answer|ans)\s*[:\-–])",
+    re.IGNORECASE)
+
+
+def _u_clean_line(line: str) -> str:
+    line = line.replace("​", "").replace(" ", " ").strip()
+    line = re.sub(r"^[>\-•●▪◦·*]+\s+(?=\S)", "", line)            # quote / bullet marks (incl. '* ')
+    line = re.sub(r"(\*\*|__|`)", "", line)                         # markdown bold/code
+    return line.strip()
+
+
+def _u_split_inline(line: str) -> List[str]:
+    """'Q? A) x B) y C) z Answer: B' → separate lines (only when the labels
+    really are a sequence a, b, c… so 'Vitamin A. Is…' isn't split)."""
+    line = _U_INLINE_ANS.sub("\n", line)
+    out = []
+    for part in line.split("\n"):
+        ms = list(_U_INLINE_OPT.finditer(part))
+        letters = [m.group(1).lower() for m in ms]
+        seq_start = next((i for i, l in enumerate(letters) if l == "a"), None)
+        if seq_start is None:
+            out.append(part); continue
+        seq = [ms[seq_start]]
+        for m in ms[seq_start + 1:]:
+            if ord(m.group(1).lower()) == ord(seq[-1].group(1).lower()) + 1:
+                seq.append(m)
+        if len(seq) < 2:
+            out.append(part); continue
+        cuts = [m.start() for m in seq] + [len(part)]
+        head = part[:cuts[0]].strip()
+        if head:
+            out.append(head)
+        out += [part[cuts[i]:cuts[i + 1]].strip() for i in range(len(seq))]
+    return [p for p in out if p.strip()]
+
+
+def _u_label_index(label: str, kind: str) -> Optional[int]:
+    l = label.strip().lower()
+    if kind == "num" and l.isdigit():
+        return int(l) - 1
+    if kind == "roman" and l in _ROMAN:
+        return _ROMAN.index(l)
+    if kind == "hindi" and l in _HI_LETTERS:
+        return _HI_LETTERS.index(l)
+    if len(l) == 1 and "a" <= l <= "j":
+        return ord(l) - ord("a")
+    return None
+
+
+def _u_kind(label: str) -> str:
+    l = label.lower()
+    if l.isdigit():
+        return "num"
+    if l in _HI_LETTERS:
+        return "hindi"
+    if l in _ROMAN and l not in ("i", "v", "x"):   # i/v/x alone are ambiguous letters
+        return "roman"
+    return "letter"
+
+
+def _u_resolve_answer(raw: str, opts: List[str], kind: str) -> Optional[int]:
+    """'(b)', 'B', 'Option B', '2', 'b. Mumbai', 'Mumbai' → option index."""
+    if raw is None:
+        return None
+    r = _u_clean_line(raw)
+    r = re.sub(r"^(?:option|opt)\s*", "", r, flags=re.IGNORECASE).strip()
+    m = re.match(r"^[\(\[]?\s*([A-Ja-j]|\d{1,2}|i{1,3}|iv|vi{0,3}|ix|[" + _HI_LETTERS + r"])\s*[\)\]]?(?:[\s\.\):\-–,]|$)", r)
+    if m:
+        lab = m.group(1)
+        k = "num" if lab.isdigit() else ("hindi" if lab in _HI_LETTERS else
+                                         ("roman" if kind == "roman" else "letter"))
+        idx = _u_label_index(lab, k)
+        if idx is not None and 0 <= idx < len(opts):
+            rest = r[m.end():].strip(" .:-–)")
+            # 'B. Mumbai' where B and the text disagree → trust the text
+            if rest:
+                t = _u_text_match(rest, opts)
+                if t is not None:
+                    return t
+            return idx
+    return _u_text_match(r, opts)
+
+
+def _u_norm(s: str) -> str:
+    return re.sub(r"[\s\.\,;:'\"\(\)]+", " ", s.lower()).strip()
+
+
+def _u_text_match(text: str, opts: List[str]) -> Optional[int]:
+    t = _u_norm(text)
+    if not t:
+        return None
+    norm = [_u_norm(o) for o in opts]
+    if t in norm:
+        return norm.index(t)
+    hits = [i for i, o in enumerate(norm) if o and (t in o or o in t)]
+    return hits[0] if len(hits) == 1 else None
+
+
+def _u_answer_key(lines: List[str]) -> Tuple[List[str], Dict[int, str]]:
+    """Find an 'Answer Key' section (usually at the end) → (other lines, {num: answer})."""
+    key: Dict[int, str] = {}
+    for i, line in enumerate(lines):
+        m = _U_KEY_HDR.match(line)
+        if m:
+            body = " ".join(([m.group(1)] if m.group(1) else []) + lines[i + 1:])
+            items = _U_KEY_ITEM.findall(body)
+            if len(items) >= 1:
+                key = {int(n): a for n, a in items}
+                return lines[:i], key
+    return lines, key
+
+
+def universal_parse(text: str) -> Tuple[List[Dict], List[Dict]]:
+    text = (text or "").replace("﻿", "").replace("\r\n", "\n").replace("\r", "\n")
+    raw_lines: List[str] = []
+    for ln in text.split("\n"):
+        c = _u_clean_line(ln)
+        raw_lines.extend(_u_split_inline(c) if c else [""])
+    lines, key = _u_answer_key(raw_lines)
+
+    blocks: List[Dict] = []
+    cur: Optional[Dict] = None
+    blank_before = True
+
+    def new_q(num, qtext):
+        nonlocal cur
+        cur = {"num": num, "q": [qtext] if qtext else [], "opts": [], "kind": None,
+               "marked": None, "ans": None, "exp": [], "meta": {}, "in_exp": False}
+        blocks.append(cur)
+
+    for line in lines:
+        if not line:
+            blank_before = True
+            if cur:
+                cur["in_exp"] = False
+            continue
+
+        m_ans = _U_ANS.match(line)
+        if cur and m_ans and cur["opts"]:
+            cur["ans"] = m_ans.group(1); cur["in_exp"] = False
+            blank_before = False; continue
+        m_exp = _U_EXP.match(line)
+        if cur and m_exp:
+            cur["exp"] = [m_exp.group(1)] if m_exp.group(1) else []
+            cur["in_exp"] = True; blank_before = False; continue
+        m_meta = _U_META.match(line)
+        if cur and m_meta:
+            cur["meta"][m_meta.group(1).lower()] = m_meta.group(2).strip()
+            for part in re.split(r"\s*\|\s*", m_meta.group(2)):      # 'Polity | Difficulty: Easy'
+                mm = _U_META.match(part)
+                if mm:
+                    cur["meta"][mm.group(1).lower()] = mm.group(2).strip()
+                elif part and m_meta.group(1).lower() == "category":
+                    cur["meta"]["category"] = part.strip()
+            blank_before = False; continue
+
+        m_opt = _U_OPT.match(line)
+        m_q = _U_Q.match(line)
+        is_opt, kind = False, None
+        if m_opt and cur is not None and m_opt.group(2).strip():
+            lab, kind = m_opt.group(1), _u_kind(m_opt.group(1))
+            expected = len(cur["opts"])
+            # roman lists: '(i)' starts one; afterwards i/v/x keep the roman meaning
+            if lab.lower() in _ROMAN and (cur["kind"] == "roman" or (expected == 0 and lab.lower() == "i")):
+                kind = "roman"
+            idx = _u_label_index(lab, kind if cur["kind"] in (None, kind) else cur["kind"])
+            if kind == "num":
+                # a numbered line is an option only while this question is
+                # collecting numbered options in order and has no answer yet
+                is_opt = (cur["kind"] in (None, "num") and idx == expected and cur["ans"] is None
+                          and (cur["q"] or cur["kind"] == "num") and not (cur["kind"] is None and m_q and m_q.group(2) and expected == 0 and not cur["q"]))
+            else:
+                is_opt = (idx == expected) or (expected == 0 and idx == 0)
+        if is_opt:
+            body = m_opt.group(2).strip()
+            mk = _U_MARK.search(body)
+            if mk:
+                body = body[:mk.start()].strip()
+                cur["marked"] = len(cur["opts"])
+            cur["kind"] = cur["kind"] or kind
+            cur["opts"].append(body)
+            cur["in_exp"] = False; blank_before = False; continue
+
+        if m_q and (m_q.group(4) or "").strip():
+            num = m_q.group(1) or m_q.group(2) or m_q.group(3)
+            new_q(int(num) if num else None, m_q.group(4).strip())
+            blank_before = False; continue
+
+        # plain text line
+        if cur and cur["in_exp"]:
+            cur["exp"].append(line)
+        elif cur is None or (cur["opts"] and (blank_before or line.rstrip().endswith("?"))):
+            new_q(None, line)                       # unnumbered question
+        elif not cur["opts"]:
+            cur["q"].append(line)                   # multi-line question text
+        else:
+            cur["opts"][-1] += " " + line           # wrapped option text
+        blank_before = False
+
+    questions, problems = [], []
+    for n, b in enumerate(blocks, 1):
+        where = f"Q{b['num']}" if b["num"] else f"#{n} “{' '.join(b['q'])[:30]}”"
+        qtext = re.sub(r"\s+", " ", " ".join(b["q"])).strip()
+        opts = [re.sub(r"\s+", " ", o).strip() for o in b["opts"] if o.strip()]
+        if not qtext:
+            problems.append({"where": where, "reason": "question text missing"}); continue
+        if len(opts) < 2:
+            problems.append({"where": where, "reason": f"found {len(opts)} option(s), need at least 2"}); continue
+        if len(opts) > 10:
+            problems.append({"where": where, "reason": "more than 10 options"}); continue
+        correct = None
+        if b["ans"] is not None:
+            correct = _u_resolve_answer(b["ans"], opts, b["kind"] or "letter")
+            if correct is None:
+                problems.append({"where": where, "reason": f"answer “{b['ans'][:20]}” doesn't match any option"}); continue
+        elif b["marked"] is not None:
+            correct = b["marked"]
+        elif key:
+            k = key.get(b["num"]) if b["num"] else None
+            k = k if k is not None else key.get(n)
+            if k is not None:
+                correct = _u_resolve_answer(k, opts, b["kind"] or "letter")
+        if correct is None:
+            problems.append({"where": where, "reason": "no answer found (add 'Answer: B', mark ✅, or an answer key)"})
+            continue
+        item = _make(qtext, opts, correct)
+        exp = re.sub(r"\s+", " ", " ".join(b["exp"])).strip()
+        if exp:
+            item["explanation"] = exp
+        if b["meta"].get("category"):
+            item["category"] = b["meta"]["category"][:40]
+        questions.append(item)
+    return questions, problems

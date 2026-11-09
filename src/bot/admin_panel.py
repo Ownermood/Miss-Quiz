@@ -362,16 +362,48 @@ class AdminPanelMixin:
 
     # ── find question ────────────────────────────────────────────────────
 
+    async def handle_forwarded_poll(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Admin forwards any quiz poll to the bot's DM → Edit / Delete buttons
+        for that exact question. A forwarded poll keeps its poll id, so the
+        saved poll→question mapping identifies it; text match is the fallback."""
+        user, msg = update.effective_user, update.effective_message
+        if not user or not msg or not msg.poll or not await self._is_authorized(user.id):
+            return
+        poll = msg.poll
+        qid = (context.bot_data.get(f"poll_{poll.id}", {}) or {}).get("question_id")
+        if qid is None and self.db:
+            try:
+                qid = await asyncio.to_thread(self.db.get_quiz_id_from_poll, str(poll.id))
+            except Exception:
+                qid = None
+        if qid is not None:
+            text, kb = self._find_results(str(qid), user.id)
+        else:
+            # strip prefixes the bot adds ('📚 ', '⚔️ 1/5  ') and match the text
+            ptxt = re.sub(r"^\W*(?:\d+/\d+)?\W*", "", poll.question or "").strip()
+            text, kb = self._find_results(ptxt, user.id)
+        await self._reply(update, text, reply_markup=kb)
+        raise ApplicationHandlerStop
+
     def _find_results(self, query: str, user_id: int, limit: int = 8):
         """Questions matching an ID or words → (text, keyboard with Edit/Delete per hit)."""
         import html as _h
         qs = list(getattr(self.quiz_manager, "questions", []) or [])
-        q = query.lstrip("#").strip()
+        q = re.sub(r"^(?:q#|#|q)\s*", "", query.strip(), flags=re.IGNORECASE).strip()
         if q.isdigit():
             hits = [x for x in qs if x.get("id") == int(q)]
         else:
             words = [w for w in q.lower().split() if w]
-            hits = [x for x in qs if words and all(w in (x.get("question") or "").lower() for w in words)]
+
+            def blob(x):
+                return ((x.get("question") or "") + " " + " ".join(map(str, x.get("options") or []))).lower()
+            hits = [x for x in qs if words and all(w in blob(x) for w in words)]
+            if not hits and words:
+                # typo-tolerant fallback: closest question texts
+                import difflib
+                texts = {(x.get("question") or "").lower(): x for x in qs}
+                close = difflib.get_close_matches(q.lower(), list(texts), n=limit, cutoff=0.55)
+                hits = [texts[c] for c in close]
         again = [btn("Search again", "bolt", BLUE, callback_data="ap:find")]
         back = [btn("Back", "back", RED, callback_data="ap:home")]
         if not hits:

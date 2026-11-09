@@ -43,6 +43,7 @@ def _fmt_question(q: Dict) -> Dict:
         "options":        [_sanitize_option(o) for o in options],
         "correct_answer": q.get("correct_answer", 0),
         "category":       q.get("category", "General"),  # ← BUG FIX: was missing
+        "explanation":    q.get("explanation", ""),
     }
 
 
@@ -262,6 +263,7 @@ class QuizManager:
                     "options":        q.get("options", []),
                     "correct_answer": q.get("correct_answer", 0),
                     "category":       q.get("category", "General"),
+                    "explanation":    (q.get("explanation") or "")[:200],
                 })
                 existing.add(q_lower)   # block intra-batch duplicates
 
@@ -280,6 +282,7 @@ class QuizManager:
                             "options":        batch[i]["options"],
                             "correct_answer": batch[i]["correct_answer"],
                             "category":       batch[i]["category"],
+                            "explanation":    batch[i]["explanation"],
                         }))
                 added    = count
                 db_saved = count

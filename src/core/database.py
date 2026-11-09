@@ -213,6 +213,8 @@ class DatabaseManager:
                 "category":       q.get("category", "General"),
                 "created_at":     now,
             })
+            if q.get("explanation"):
+                docs[-1]["explanation"] = q["explanation"]
             new_ids.append((i, qid))
 
         try:
