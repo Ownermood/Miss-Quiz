@@ -25,7 +25,7 @@ MAX_FILE      = 20 * 1024 * 1024    # Telegram: bots can't download files over 2
 PER_PAGE      = 8                   # quizzes per list page
 
 HELP = ("<blockquote>📄 Paste questions as text\n"
-        "📎 Send a file: PDF, DOCX, PPTX, TXT, CSV, XLSX…\n"
+        "📎 Send any file: PDF, DOCX, PPTX, TXT, CSV, XLSX, JSON, HTML, ZIP…\n"
         "🗳 Forward quiz polls</blockquote>\n"
         "<i>Each question needs its options and the answer. Send as many as you like, then tap Done.</i>")
 EXAMPLE = ("<blockquote>1. Capital of India?\nA) Mumbai\nB) Delhi\nC) Pune\nAnswer: B</blockquote>")
@@ -150,8 +150,7 @@ class MyQuizMixin:
                 f"📅 Created › {str(qs.get('created_at', ''))[:10]}</blockquote>")
         kb = InlineKeyboardMarkup([
             [_btn("⚔️ Battle with this quiz", f"mq_bt:{qs['id']}", "success")],
-            [_btn("🗑 Delete", f"mq_del:{qs['id']}", "danger")],
-            [_btn("⬅️ Back", "mq_list", "danger")],
+            [_btn("🗑 Delete", f"mq_del:{qs['id']}", "danger"), _btn("⬅️ Back", "mq_list", "danger")],
         ])
         return text, kb
 
@@ -207,16 +206,25 @@ class MyQuizMixin:
     # ── input: text / file / forwarded poll ──────────────────────────────
 
     async def handle_myquiz_input(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Group -4 (DM only): feeds the open draft. Does nothing without one."""
+        """Group -4 (DM only): feeds the open draft. Does nothing without one.
+        Files sent together are handled one after another (one lock per draft)."""
         d = self._mq_draft(context)
         msg, user = update.effective_message, update.effective_user
         if not d or not msg or not user:
             return
+        lock = d.setdefault("lock", asyncio.Lock())
+        async with lock:
+            if self._mq_draft(context) is d:            # still the same draft after waiting
+                await self._mq_take(context, user, d, msg)
+        raise ApplicationHandlerStop
+
+    async def _mq_take(self, context, user, d: Dict, msg) -> None:
         if d["stage"] == "name":
-            title = " ".join((msg.text or "").split())[:40]
-            if title:
-                await self._mq_save(context, user, d, title)
-            raise ApplicationHandlerStop
+            plain = (msg.text or "").strip()
+            if plain and "\n" not in plain and not msg.document and not msg.poll and not msg.photo:
+                await self._mq_save(context, user, d, " ".join(plain.split())[:40])
+                return
+            d["stage"] = "collect"                      # more questions while naming → keep adding
 
         items, text, note = [], "", ""
         if msg.poll:
@@ -226,8 +234,9 @@ class MyQuizMixin:
                           "correct_answer": p.correct_option_id, "explanation": p.explanation or ""}]
             else:
                 note = "Only quiz polls with a visible answer can be added."
-        elif msg.document:
-            doc = msg.document
+        elif msg.document or msg.photo:
+            doc = msg.document or msg.photo[-1]                 # biggest photo size
+            fname = getattr(doc, "file_name", None) or "photo.jpg"
             if doc.file_size and doc.file_size > MAX_FILE:
                 note = "File is too big — Telegram lets bots read files up to 20 MB. Split it and send the parts."
             else:
@@ -235,12 +244,14 @@ class MyQuizMixin:
                     from src.bot.file_extract import extract
                     f = await context.bot.get_file(doc.file_id, read_timeout=60)
                     data = bytes(await f.download_as_bytearray(read_timeout=60))
-                    items, text, note = await asyncio.to_thread(extract, doc.file_name or "", data)
-                    if not d.get("fname") and doc.file_name:
+                    items, text, note = await asyncio.to_thread(extract, fname, data)
+                    if not d.get("fname") and msg.document and doc.file_name:
                         d["fname"] = doc.file_name.rsplit(".", 1)[0].replace("_", " ")[:40]
                 except Exception as e:
                     logger.warning(f"[MYQUIZ] file read failed: {e}")
-                    note = "Couldn't read that file. Try another format (TXT, DOCX, PDF)."
+                    note = "Couldn't download that file. Please send it again."
+            if msg.caption and not (text or items):
+                text = msg.caption
         elif msg.text:
             text = msg.text
         else:
@@ -262,12 +273,11 @@ class MyQuizMixin:
         if not added and not note:
             note = ("No new questions in that (already added)." if qs else
                     "No questions found in that. Use a layout like the example below.")
-        d["note"] = note
+        d["note"] = (f"Last file: +{added}. " if added and (msg.document or msg.photo) else "") + note
         text_out, kb = self._mq_collect_view(d)
         if note.startswith("No questions found"):
             text_out += "\n" + EXAMPLE
         await self._mq_show(context, d, text_out, kb)
-        raise ApplicationHandlerStop
 
     async def _mq_save(self, context, user, d: Dict, title: str) -> None:
         sid = await self._mq_db("create_quiz_set", user.id, title, d["qs"], 20)
@@ -340,8 +350,8 @@ class MyQuizMixin:
             await query.answer()
             await self._bt_edit(
                 query, f"🗑 <b>Delete “{html.escape(qs.get('title', 'Quiz'))}”?</b>\n<i>This can't be undone.</i>",
-                InlineKeyboardMarkup([[_btn("🗑 Yes, delete", f"mq_delok:{qs['id']}", "danger")],
-                                      [_btn("⬅️ Back", f"mq_open:{qs['id']}", "danger")]]))
+                InlineKeyboardMarkup([[_btn("🗑 Yes, delete", f"mq_delok:{qs['id']}", "danger"),
+                                       _btn("⬅️ Back", f"mq_open:{qs['id']}", "danger")]]))
         elif action == "mq_delok":
             await self._mq_db("delete_quiz_set", qs["id"], user.id)
             await query.answer("Deleted.")

@@ -628,7 +628,8 @@ B) y
 
 
 def dm_update(u, **msg):
-    m = SimpleNamespace(text=None, poll=None, document=None, reply_to_message=None, delete=AsyncMock())
+    m = SimpleNamespace(text=None, poll=None, document=None, photo=None, caption=None,
+                        reply_to_message=None, delete=AsyncMock())
     for k, v in msg.items():
         setattr(m, k, v)
     return SimpleNamespace(effective_user=u, effective_chat=SimpleNamespace(id=u.id, type="private"),
@@ -804,3 +805,59 @@ async def test_create_own_quiz_from_file_and_too_big_file():
     await press_mq(app, ctx, a, "mq_done")
     await press_mq(app, ctx, a, "mq_name")                              # use the file name
     assert real.list_quiz_sets(1)[0]["title"] == "Polity Set"
+
+
+
+async def test_two_files_at_once_both_added_and_file_while_naming():
+    from telegram.ext import ApplicationHandlerStop
+    app, real = _quiz_app()
+    ctx, _ = fake_context()
+    ctx.bot.send_message = AsyncMock(return_value=SimpleNamespace(message_id=900))
+    ctx.bot.delete_message = AsyncMock()
+    t2 = QTEXT.replace("Capital of India", "Capital of France").replace("2+2", "3+3") \
+              .replace("Largest planet", "Smallest planet")
+    files = {"a": QTEXT, "b": t2}
+
+    async def get_file(fid, **kw):
+        await asyncio.sleep(0.05 if fid == "a" else 0)                 # 'a' slower: real overlap
+        return SimpleNamespace(download_as_bytearray=AsyncMock(return_value=bytearray(files[fid].encode())))
+    ctx.bot.get_file = get_file
+    a = user(1, "Amit")
+    await app.mq_start_draft(None, ctx, a, dm_update(a))
+
+    async def send(fid):
+        doc = SimpleNamespace(file_id=fid, file_name=f"{fid}.txt", file_size=100)
+        with pytest.raises(ApplicationHandlerStop):
+            await app.handle_myquiz_input(dm_update(a, document=doc), ctx)
+    await asyncio.gather(send("a"), send("b"))
+    d = ctx.user_data["mq_draft"]
+    assert len(d["qs"]) == 6                                          # nothing lost
+
+    await press_mq(app, ctx, a, "mq_done")
+    assert d["stage"] == "name"
+    files["c"] = "1. Fastest animal?\n(a) Cheetah\n(b) Cow\nAnswer: a\n"
+    with pytest.raises(ApplicationHandlerStop):                         # file during naming → added
+        await app.handle_myquiz_input(dm_update(a, document=SimpleNamespace(
+            file_id="c", file_name="c.txt", file_size=50)), ctx)
+    assert d["stage"] == "collect" and len(d["qs"]) == 7
+
+
+async def test_photo_question_via_ocr_and_card_buttons_side_by_side(monkeypatch):
+    from telegram.ext import ApplicationHandlerStop
+    import src.bot.file_extract as fe
+    monkeypatch.setattr(fe, "_ocr_image_bytes", lambda data: QTEXT)
+    app, real = _quiz_app()
+    ctx, _ = fake_context()
+    ctx.bot.send_message = AsyncMock(return_value=SimpleNamespace(message_id=900))
+    ctx.bot.delete_message = AsyncMock()
+    ctx.bot.get_file = AsyncMock(return_value=SimpleNamespace(
+        download_as_bytearray=AsyncMock(return_value=bytearray(b"jpg"))))
+    a = user(1, "Amit")
+    await app.mq_start_draft(None, ctx, a, dm_update(a))
+    photo = [SimpleNamespace(file_id="s", file_size=10), SimpleNamespace(file_id="big", file_size=99)]
+    with pytest.raises(ApplicationHandlerStop):
+        await app.handle_myquiz_input(dm_update(a, photo=photo), ctx)
+    assert len(ctx.user_data["mq_draft"]["qs"]) == 3
+    assert ctx.bot.get_file.await_args.args[0] == "big"                # largest size used
+    _, kb = app._mq_card_view({"id": "x1", "title": "T", "count": 3, "secs": 20})
+    assert [b.text for b in kb.inline_keyboard[1]] == ["🗑 Delete", "⬅️ Back"]

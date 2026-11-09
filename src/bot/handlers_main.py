@@ -429,7 +429,8 @@ class TelegramQuizBot(
 
         # Create Own Quiz: questions sent while a draft is open (DM) — before everything else
         app.add_handler(MessageHandler(
-            filters.ChatType.PRIVATE & ((filters.TEXT & ~filters.COMMAND) | filters.Document.ALL | filters.POLL),
+            filters.ChatType.PRIVATE & ((filters.TEXT & ~filters.COMMAND) | filters.Document.ALL
+                                        | filters.POLL | filters.PHOTO),
             self.handle_myquiz_input), group=-4)
 
         # Battle setup: challenger types a question count / time
