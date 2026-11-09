@@ -307,19 +307,20 @@ class TelegramQuizBot(
         from src.bot.premium import e
         q_display = UI.fmt_num(self._q_count())
         return (
-            f"🎓 <b>MISS QUIZ STUDIO</b>\n\n"
-            f"{e('hi')} Welcome, {user_mention}!\n\n"
-            f"<blockquote>1. <b>Custom Quiz Studio</b>\n"
-            f"• Create from PDF, DOCX, TXT &amp; Polls\n"
-            f"• Study Material, Flashcards &amp; Question Paper\n"
-            f"• /myquiz · /clone · /mix · /mywords</blockquote>\n"
-            f"<blockquote>2. <b>1v1 Battle &amp; Solo Practice</b>\n"
-            f"• {q_display} Questions · Live Duel &amp; Practice\n"
-            f"• /battle · /quiz · /categories</blockquote>\n"
-            f"<blockquote>3. <b>Group Tournaments &amp; Review</b>\n"
-            f"• Ready Lobby · Negative Marking · Certificates\n"
-            f"• /startquiz · /schedule · /result · /compare</blockquote>\n"
-            f"<i>Choose an option below to get started:</i>"
+            f"<b>╭──── ❨ {e('cap')} MISS QUIZ STUDIO ❩ ────╮</b>\n\n"
+            f"<b>{e('hi')} Welcome, {user_mention}!</b>\n\n"
+            f"<blockquote><b>1️⃣ CUSTOM QUIZ STUDIO\n"
+            f"• Create quizzes from PDF, DOCX, TXT &amp; Polls\n"
+            f"• Attach Study Material, Flashcards &amp; Exam Paper\n"
+            f"• Commands: /myquiz · /clone · /mix · /mywords</b></blockquote>\n"
+            f"<blockquote><b>2️⃣ LIVE 1v1 BATTLE &amp; PRACTICE\n"
+            f"• {q_display} Questions · Instant 1v1 Duel &amp; Solo Practice\n"
+            f"• Commands: /battle · /quiz · /categories</b></blockquote>\n"
+            f"<blockquote><b>3️⃣ GROUP TOURNAMENTS &amp; ANALYTICS\n"
+            f"• Live I'm Ready! Lobby · Top-3 Winner Certificates\n"
+            f"• Commands: /startquiz · /schedule · /result · /compare</b></blockquote>\n"
+            f"<b>╰──────────────────────────╯</b>\n"
+            f"<b>{e('play')} <i>Choose an option below to get started:</i></b>"
         )
 
     async def _cb_start_battle(self, update: Update, context):
