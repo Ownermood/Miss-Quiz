@@ -126,10 +126,10 @@ class TelegramQuizBot(
 
     @staticmethod
     def _nav_row(back_screen: str = None) -> list:
-        """Returns [Home, Back] button row with primary styling."""
+        """Returns [Home (Blue), Back (Red)] button row."""
         row = [InlineKeyboardButton("🏠 Home", callback_data="nav_home", style="primary")]
         if back_screen:
-            row.append(InlineKeyboardButton("⬅️ Back", callback_data="nav_back", style="primary"))
+            row.append(InlineKeyboardButton("⬅️ Back", callback_data="nav_back", style="danger"))
         return row
 
     async def _render_screen(self, update, context, screen: str, edit_msg=None):
@@ -307,20 +307,19 @@ class TelegramQuizBot(
         from src.bot.premium import e
         q_display = UI.fmt_num(self._q_count())
         return (
-            f"<b>╭──── ❨ 🎓 MISS QUIZ STUDIO ❩ ────╮</b>\n\n"
-            f"{e('hi')} <b>Welcome, {user_mention}!</b>\n\n"
-            f"<blockquote><b>1️⃣ CUSTOM QUIZ STUDIO</b>\n"
-            f"• Create quizzes from <b>PDF, DOCX, TXT &amp; Polls</b>\n"
-            f"• Attach <b>Study Material</b>, <b>Flashcards</b> &amp; <b>Exam Paper</b>\n"
-            f"• Commands: /myquiz · /clone · /mix · /mywords</blockquote>\n"
-            f"<blockquote><b>2️⃣ LIVE 1v1 BATTLE &amp; PRACTICE</b>\n"
-            f"• <b>{q_display}</b> Questions · Instant 1v1 Duel &amp; Solo Practice\n"
-            f"• Commands: /battle · /quiz · /categories</blockquote>\n"
-            f"<blockquote><b>3️⃣ GROUP TOURNAMENTS &amp; ANALYTICS</b>\n"
-            f"• Live <b>I'm Ready!</b> Lobby · <b>Top-3 Winner Certificates</b>\n"
-            f"• Commands: /startquiz · /schedule · /result · /compare</blockquote>\n"
-            f"<b>╰──────────────────────────╯</b>\n"
-            f"{e('play')} <i>Choose an option below to get started:</i>"
+            f"🎓 <b>MISS QUIZ STUDIO</b>\n\n"
+            f"{e('hi')} Welcome, {user_mention}!\n\n"
+            f"<blockquote>1. <b>Custom Quiz Studio</b>\n"
+            f"• Create from PDF, DOCX, TXT &amp; Polls\n"
+            f"• Study Material, Flashcards &amp; Question Paper\n"
+            f"• /myquiz · /clone · /mix · /mywords</blockquote>\n"
+            f"<blockquote>2. <b>1v1 Battle &amp; Solo Practice</b>\n"
+            f"• {q_display} Questions · Live Duel &amp; Practice\n"
+            f"• /battle · /quiz · /categories</blockquote>\n"
+            f"<blockquote>3. <b>Group Tournaments &amp; Review</b>\n"
+            f"• Ready Lobby · Negative Marking · Certificates\n"
+            f"• /startquiz · /schedule · /result · /compare</blockquote>\n"
+            f"<i>Choose an option below to get started:</i>"
         )
 
     async def _cb_start_battle(self, update: Update, context):
@@ -329,31 +328,31 @@ class TelegramQuizBot(
         await self.cmd_battle(update, context)
 
     def _start_kb(self, show_admin: bool = False) -> InlineKeyboardMarkup:
-        """Start-screen buttons. Admin Panel (red) only for admins in their DM —
-        inline keyboards in groups are visible to everyone."""
+        """Start-screen buttons using focal-point color psychology:
+        Green = Primary CTA (Create Quiz, Host in Group), Red = Admin Panel,
+        Default dark glass (None) = middle menu items."""
         from src.bot.premium import btn
         from src.bot.ui import COMMUNITY_URL
-        blue, green = "primary", "success"
         username = getattr(getattr(self.application, "bot", None), "username", "") or ""
         rows = [
-            # Row 1: Primary Creator Action (Green)
-            [btn("Create New Quiz", "plus", green, callback_data="mq_new")],
+            # Row 1: Primary Creator CTA (Green)
+            [btn("Create New Quiz", "plus", "success", callback_data="mq_new")],
 
-            # Row 2: Custom Quizzes & Live 1v1 Battle
-            [btn("My Quizzes", "folder", blue, callback_data="mq_list"),
-             btn("1v1 Battle", "fight", green, callback_data="start_battle")],
+            # Row 2: Custom Quizzes & Live 1v1 Battle (Clean Dark Glass)
+            [btn("My Quizzes", "folder", None, callback_data="mq_list"),
+             btn("1v1 Battle", "fight", None, callback_data="start_battle")],
 
-            # Row 3: Quick Practice Quiz & Topic Categories
-            [btn("Start Quiz", "play", green, callback_data="play_quiz"),
-             btn("Categories", "book", blue, callback_data="categories")],
+            # Row 3: Quick Practice Quiz & Topic Categories (Clean Dark Glass)
+            [btn("Start Quiz", "play", None, callback_data="play_quiz"),
+             btn("Categories", "book", None, callback_data="categories")],
 
-            # Row 4: Profile/Analytics & All Commands Guide
-            [btn("My Profile", "medal", blue, callback_data="my_profile"),
-             btn("All Commands", "question", blue, callback_data="help")],
+            # Row 4: Profile/Analytics & All Commands Guide (Clean Dark Glass)
+            [btn("My Profile", "medal", None, callback_data="my_profile"),
+             btn("All Commands", "question", None, callback_data="help")],
 
-            # Row 5: Community & Add to Group
-            [btn("Community", "users", blue, url=COMMUNITY_URL)]
-            + ([btn("Host in Group", "plus", green,
+            # Row 5: Community (Dark Glass) & Host in Group (Green CTA)
+            [btn("Community", "users", None, url=COMMUNITY_URL)]
+            + ([btn("Host in Group", "plus", "success",
                     url=f"https://t.me/{username}?startgroup&admin=delete_messages+pin_messages")]
                if username else []),
         ]

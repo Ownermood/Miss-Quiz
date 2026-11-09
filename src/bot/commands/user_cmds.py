@@ -124,37 +124,36 @@ class UserCommandsMixin(object):
         ) if is_admin_dm else ""
 
         text = (
-            f"{e('question')} <b>ALL COMMANDS &amp; FEATURES · MISS QUIZ STUDIO</b>\n"
-            f"{UI.LINE}\n\n"
-            f"<blockquote><b>1️⃣ CUSTOM QUIZ STUDIO</b>\n"
+            f"{e('question')}  <b>ALL COMMANDS &amp; FEATURES · MISS QUIZ STUDIO</b>\n\n"
+            f"<blockquote><b>1️⃣ CUSTOM QUIZ STUDIO\n"
             f"• /myquiz — Create quiz (PDF/DOCX/Text/Polls), Flashcards, Study Material &amp; Exam Paper\n"
             f"• /clone <code>&lt;id&gt;</code> — Copy any quiz to your collection\n"
             f"• /mix <code>&lt;id1&gt; &lt;id2&gt;</code> — Combine quizzes into one Mega Quiz\n"
-            f"• /mywords — Manage Safai auto-clean filter words</blockquote>\n"
-            f"<blockquote><b>2️⃣ 1v1 BATTLE &amp; SOLO PRACTICE</b>\n"
+            f"• /mywords — Manage Safai auto-clean filter words</b></blockquote>\n"
+            f"<blockquote><b>2️⃣ 1v1 BATTLE &amp; SOLO PRACTICE\n"
             f"• /battle — 1v1 Live Quiz Duel with friends\n"
             f"• /quiz — Instant practice question\n"
-            f"• /categories — Browse all subject categories</blockquote>\n"
-            f"<blockquote><b>3️⃣ GROUP TOURNAMENTS</b>\n"
+            f"• /categories — Browse all subject categories</b></blockquote>\n"
+            f"<blockquote><b>3️⃣ GROUP TOURNAMENTS\n"
             f"• /startquiz — Live 'I'm Ready!' Lobby + Top-3 Winner Certificates\n"
             f"• /schedule <code>15m</code> — Schedule group tournament\n"
             f"• /slow · /normal · /fast — Adjust question speed\n"
-            f"• /stopquiz — End active group quiz &amp; show podium</blockquote>\n"
-            f"<blockquote><b>4️⃣ ANALYTICS, REVIEW &amp; RANKING</b>\n"
+            f"• /stopquiz — End active group quiz &amp; show podium</b></blockquote>\n"
+            f"<blockquote><b>4️⃣ ANALYTICS, REVIEW &amp; RANKING\n"
             f"• /result — Personal wrong-answer review sheet in DM\n"
             f"• /compare — Reply to a player to compare head-to-head stats\n"
             f"• /score — Your XP, Level &amp; Scorecard\n"
-            f"• /stats — Subject-wise accuracy · /achievements — Badges</blockquote>\n"
+            f"• /stats — Subject-wise accuracy · /achievements — Badges</b></blockquote>\n"
             f"{admin_block}"
             f"<b>{e('signal')} Support &amp; Updates: {COMMUNITY}</b>"
         )
         from src.bot.ui import COMMUNITY_URL
         rows = [
             [btn("Create New Quiz", "plus", "success", callback_data="mq_new"),
-             btn("My Quizzes", "folder", "primary", callback_data="mq_list")],
-            [btn("Play Quiz", "play", "success", callback_data="play_quiz"),
-             btn("1v1 Battle", "fight", "success", callback_data="start_battle")],
-            [btn("Community", "users", "primary", url=COMMUNITY_URL)],
+             btn("My Quizzes", "folder", None, callback_data="mq_list")],
+            [btn("Play Quiz", "play", None, callback_data="play_quiz"),
+             btn("1v1 Battle", "fight", None, callback_data="start_battle")],
+            [btn("Community", "users", None, url=COMMUNITY_URL)],
         ]
         if is_admin_dm:
             rows.append([btn("Admin Panel", "key", "danger", callback_data="ap:open")])
@@ -170,16 +169,15 @@ class UserCommandsMixin(object):
             f"•  {emoji}  <b>{html.escape(name)}</b>" for name, emoji in UI.QUIZ_CATEGORIES
         )
         text = (
-            f"📖  <b>QUIZ SUBJECT CATEGORIES</b>\n"
-            f"{UI.LINE}\n\n"
+            f"📖  <b>QUIZ SUBJECT CATEGORIES</b>\n\n"
             f"<blockquote>{cat_lines}</blockquote>\n"
             f"🎯 <i>Tap <b>Start Quiz</b> to practice from our question bank, or <b>Create New Quiz</b> to build your own topic set!</i>"
         )
         kb = InlineKeyboardMarkup([
             [InlineKeyboardButton("▶️ Start Quiz", callback_data="play_quiz", style="success"),
              InlineKeyboardButton("➕ Create New Quiz", callback_data="mq_new", style="success")],
-            [InlineKeyboardButton("📚 My Quizzes", callback_data="mq_list", style="primary"),
-             InlineKeyboardButton("❓ All Commands", callback_data="help", style="primary")],
+            [InlineKeyboardButton("📚 My Quizzes", callback_data="mq_list"),
+             InlineKeyboardButton("❓ All Commands", callback_data="help")],
             self._nav_row(back_screen="home"),
         ])
         await self._smart_edit(update, text, kb, edit_msg=edit_msg)

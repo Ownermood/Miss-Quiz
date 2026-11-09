@@ -39,7 +39,7 @@ HELP = ("<blockquote>📄 Paste questions as text\n"
 EXAMPLE = ("<blockquote>1. Capital of India?\nA) Mumbai\nB) Delhi\nC) Pune\nAnswer: B</blockquote>")
 
 
-def _btn(text: str, data: str, style: Optional[str] = "primary") -> InlineKeyboardButton:
+def _btn(text: str, data: str, style: Optional[str] = None) -> InlineKeyboardButton:
     return InlineKeyboardButton(text, callback_data=data, style=style)
 
 
@@ -57,7 +57,7 @@ def page_rows(pages: int, current: int, data) -> List[List[InlineKeyboardButton]
         return []
     start = max(1, min(current - 4, pages - 9))
     nums = list(range(start, min(pages, start + 9) + 1))
-    btns = [_btn(f"·{n}·" if n == current else str(n), data(n), "success" if n == current else "primary")
+    btns = [_btn(f"·{n}·" if n == current else str(n), data(n), "success" if n == current else None)
             for n in nums]
     return [btns[k:k + 5] for k in range(0, len(btns), 5)]
 
@@ -309,16 +309,16 @@ class MyQuizMixin:
             body += HELP + "\n\n"
         ready = q_count >= MIN_Q
         done = _btn(f"✅ Done · Save {q_count} Questions" if ready else f"➕ Add {MIN_Q - q_count} more to save",
-                    "mq_done", "success" if ready else "primary")
+                    "mq_done", "success" if ready else None)
         return body, InlineKeyboardMarkup([
             [done],
-            [_btn("📚 My Quizzes", "mq_list", "primary"), _btn("❌ Cancel", "mq_cancel", "danger")],
+            [_btn("📚 My Quizzes", "mq_list", None), _btn("❌ Cancel", "mq_cancel", "danger")],
         ])
 
     @staticmethod
     def _mq_list_view(sets: List[Dict], page: int, pages: int, total: int = 0) -> Tuple[str, InlineKeyboardMarkup]:
         from src.bot.battle import _tlabel
-        head = (f"📚 <b>YOUR QUIZZES</b>" + (f" · page {page}/{pages}" if pages > 1 else "") + f"  ·  Total Created: <b>{total or len(sets)}</b>\n")
+        head = (f"📚 <b>YOUR QUIZZES</b>" + (f" · Page {page}/{pages}" if pages > 1 else "") + f"  ·  Total: <b>{total or len(sets)}</b>\n")
         if not sets:
             body = head + "\n<i>You haven't created any quizzes yet. Tap below to build your first quiz!</i>"
             return body, InlineKeyboardMarkup([[_btn("➕ Create New Quiz", "mq_new", "success")],
@@ -328,19 +328,19 @@ class MyQuizMixin:
             q_cnt = s.get("count") or (len(s["questions"]) if "questions" in s else 0)
             t_lbl = _tlabel(int(s.get("secs") or 20))
             plays = int(s.get("plays") or 0)
-            has_file = "📎" if s.get("source_files") else ""
+            has_file = " · 📎" if s.get("source_files") else ""
             lines.append(
-                f"{i}. <b>{html.escape(s.get('title', 'Quiz')[:28])}</b> · {q_cnt}Q · {t_lbl} · 👥 {plays} {has_file}"
+                f"{i}. <b>{html.escape(s.get('title', 'Quiz')[:28])}</b>  ›  {q_cnt}Q · {t_lbl} · {plays} plays{has_file}"
             )
         body = (
             head +
             "<blockquote>" + "\n".join(lines) + "</blockquote>\n"
-            "<i>Tap a quiz to play, edit, battle, study or share it.</i>"
+            "<i>Select a quiz below to play, edit, battle, study, or share:</i>"
         )
         item_rows = []
         for s in sets:
             q_cnt = s.get("count") or 0
-            item_rows.append([_btn(f"📝 {s.get('title', 'Quiz')[:26]} · {q_cnt}Q", f"mq_open:{s['id']}", "primary")])
+            item_rows.append([_btn(f"📝 {s.get('title', 'Quiz')[:26]} · {q_cnt}Q", f"mq_open:{s['id']}", None)])
         nav_rows = page_rows(pages, page, lambda p: f"mq_list:{p}")
         foot = [_btn("➕ Create New", "mq_new", "success"), _btn("🏠 Home", "nav_home", "primary")]
         return body, InlineKeyboardMarkup(item_rows + nav_rows + [foot])
@@ -356,32 +356,31 @@ class MyQuizMixin:
         q_count = int(qs.get("count") or len(qs.get("questions") or []))
         secs = int(qs.get("secs") or 20)
         total_time = _fmt_total_time(q_count * secs)
-        shuffle_str = "ON 🔀" if qs.get("shuffle") else "OFF"
+        shuffle_str = "ON" if qs.get("shuffle") else "OFF"
         neg_val = float(qs.get("negative_rate") if qs.get("negative_rate") is not None else 0.25)
         neg_str = f"-{neg_val} marks" if neg_val > 0 else "No Negative"
-        created_str = str(qs.get("created_at") or datetime.datetime.utcnow().isoformat())[:10]
         attempts = int(qs.get("plays") or 0)
         files_cnt = len(qs.get("source_files") or [])
         share_link = f"https://t.me/{bot_username}?start=shared_{sid}" if bot_username else f"Code: {sid}"
 
         text = (
-            ("🎉 <b>Saved! Quiz Published &amp; Ready!</b>\n" if saved else "") +
+            ("🎉 <b>Saved! Quiz Published &amp; Ready!</b>\n\n" if saved else "") +
             f"🎓 <b>{title}</b>\n"
-            f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
             f"<blockquote>"
-            f"❓ <b>Questions:</b> <code>{q_count} Qs</code>\n"
-            f"⏱ <b>Timer:</b> <code>{secs}s / Q</code>  ·  🕒 <b>Duration:</b> <code>{total_time}</code>\n"
-            f"⚖️ <b>Marking:</b> <code>+1.0 / {neg_str}</code>  ·  🔀 <b>Shuffle:</b> <code>{shuffle_str}</code>\n"
-            f"👥 <b>Total Plays:</b> <code>{attempts}</code>  ·  📅 <b>Created:</b> <code>{created_str}</code>\n"
-            f"📚 <b>Study Files:</b> <code>{files_cnt} Attached</code>  ·  🆔 <b>Code:</b> <code>{html.escape(sid)}</code>"
+            f"• <b>Questions</b>  ›  {q_count} Qs  ({total_time})\n"
+            f"• <b>Timer</b>  ›  {secs} sec per question\n"
+            f"• <b>Marking</b>  ›  +1.0  /  {neg_str}\n"
+            f"• <b>Shuffle</b>  ›  {shuffle_str}  ·  <b>Plays</b>  ›  {attempts}\n"
+            f"• <b>Study Files</b>  ›  {files_cnt} attached\n"
+            f"• <b>Quiz Code</b>  ›  <code>{html.escape(sid)}</code>"
             f"</blockquote>\n"
-            f"🔗 <b>Direct Quiz Link:</b>\n{share_link}\n\n"
-            f"⚡ <i>Choose a mode below to launch, study, or share:</i>"
+            f"🔗 <b>Share Link:</b>\n{share_link}\n\n"
+            f"<i>Choose a mode below to launch, study, edit, or share:</i>"
         )
 
         rows: List[List[InlineKeyboardButton]] = []
 
-        # Row 1: Primary Play Modes (Green)
+        # Row 1: Primary Launch Modes (Green CTA)
         if bot_username:
             rows.append([
                 _btn("▶️ Play Solo (DM)", f"mq_prac:{sid}", "success"),
@@ -391,41 +390,41 @@ class MyQuizMixin:
         else:
             rows.append([_btn("▶️ Play Solo (DM)", f"mq_prac:{sid}", "success")])
 
-        # Row 2: 1v1 Battle (Green) & Interactive Flashcards (Blue)
+        # Row 2: 1v1 Battle & Interactive Flashcards (Clean Dark Glass)
         rows.append([
-            _btn("⚔️ 1v1 Live Battle", f"mq_bt:{sid}", "success"),
-            _btn("🎴 Study Flashcards", f"mq_flash:{sid}:0:0", "primary"),
+            _btn("⚔️ 1v1 Live Battle", f"mq_bt:{sid}", None),
+            _btn("🎴 Study Flashcards", f"mq_flash:{sid}:0:0", None),
         ])
 
-        # Row 3: Real Study Materials File & Printable Question Paper (Blue)
-        sm_label = f"📚 Study Material ({files_cnt} File)" if files_cnt else "📚 Study Material"
+        # Row 3: Real Study Materials File & Printable Question Paper (Clean Dark Glass)
+        sm_label = f"📚 Study Material ({files_cnt})" if files_cnt else "📚 Study Material"
         rows.append([
-            _btn(sm_label, f"mq_mat:{sid}", "primary"),
-            _btn("📄 Question Paper", f"mq_pdf:{sid}", "primary"),
+            _btn(sm_label, f"mq_mat:{sid}", None),
+            _btn("📄 Question Paper", f"mq_pdf:{sid}", None),
         ])
 
-        # Row 4: Edit (owner) & Stats
+        # Row 4: Edit (owner) & Stats (Clean Dark Glass)
         if is_owner:
             rows.append([
-                _btn("✏️ Edit Quiz", f"mq_edit:{sid}", "success"),
-                _btn("📊 Quiz Stats", f"mq_stats:{sid}", "primary"),
+                _btn("✏️ Edit Quiz", f"mq_edit:{sid}", None),
+                _btn("📊 Quiz Stats", f"mq_stats:{sid}", None),
             ])
         else:
-            rows.append([_btn("📊 Quiz Stats", f"mq_stats:{sid}", "primary")])
+            rows.append([_btn("📊 Quiz Stats", f"mq_stats:{sid}", None)])
 
-        # Row 5: Channel/Group & Share Link (Blue)
+        # Row 5: Channel/Group & Share Link (Clean Dark Glass)
         if bot_username:
             share_text = urllib.parse.quote(f"🎯 Challenge yourself on \"{qs.get('title', 'Quiz')}\" ({q_count} Questions) on Miss Quiz Bot!")
             share_url = f"https://t.me/share/url?url={urllib.parse.quote(share_link)}&text={share_text}"
             rows.append([
-                _btn("📢 Channel / Group", f"mq_ch:{sid}", "primary"),
-                InlineKeyboardButton("📩 Share Quiz", url=share_url, style="primary"),
+                _btn("📢 Channel / Group", f"mq_ch:{sid}", None),
+                InlineKeyboardButton("📩 Share Quiz", url=share_url, style=None),
             ])
         else:
-            rows.append([_btn("📢 Channel / Group", f"mq_ch:{sid}", "primary")])
+            rows.append([_btn("📢 Channel / Group", f"mq_ch:{sid}", None)])
 
-        # Row 6: navigation
-        rows.append([_btn("⬅️ My Quizzes", "mq_list", "primary"), _btn("🏠 Home", "nav_home", "primary")])
+        # Row 6: Navigation (Red Back + Blue Home)
+        rows.append([_btn("⬅️ My Quizzes", "mq_list", "danger"), _btn("🏠 Home", "nav_home", "primary")])
 
         return text, InlineKeyboardMarkup(rows)
 
@@ -659,22 +658,25 @@ class MyQuizMixin:
         shuffle_on = bool(qs.get("shuffle"))
         text = (
             (f"{html.escape(note)}\n\n" if note else "") +
-            f"✏️ <b>EDIT QUIZ</b>\n"
-            f"<blockquote>📝 <b>{html.escape(str(qs.get('title', 'Quiz')))}</b>\n"
-            f"❓ {q_count} questions  ·  ⏱ {qs.get('secs', 20)}s each\n"
-            f"🔀 Shuffle {'on' if shuffle_on else 'off'}  ·  📎 {files_cnt} study file{'s' if files_cnt != 1 else ''}</blockquote>\n"
-            f"<i>Fix a question, add more, or change settings.</i>"
+            f"✏️  <b>EDIT QUIZ STUDIO</b>\n"
+            f"<blockquote><b>📝 {html.escape(str(qs.get('title', 'Quiz')))}\n"
+            f"• Questions  ›  {q_count} Qs\n"
+            f"• Timer      ›  {qs.get('secs', 20)}s / Q\n"
+            f"• Shuffle    ›  {'ON' if shuffle_on else 'OFF'}\n"
+            f"• Files      ›  {files_cnt} Attached</b></blockquote>\n"
+            f"<i>Select an option below to modify questions or settings:</i>"
         )
         kb = InlineKeyboardMarkup([
             [_btn("📝 Edit Questions", f"mq_ql:{sid}:1", "success"),
              _btn("➕ Add Questions", f"mq_add:{sid}", "success")],
-            [_btn("🏷 Rename", f"mq_rename:{sid}", "primary"),
-             _btn("⏱ Timer", f"mq_timer:{sid}", "primary")],
+            [_btn("🏷 Rename", f"mq_rename:{sid}", None),
+             _btn("⏱ Timer", f"mq_timer:{sid}", None)],
             [_btn("🔀 Shuffle: ON" if shuffle_on else "🔀 Shuffle: OFF", f"mq_shuffle:{sid}",
-                  "success" if shuffle_on else "primary"),
-             _btn("📎 Attach File", f"mq_attach:{sid}", "primary")],
+                  "success" if shuffle_on else None),
+             _btn("📎 Attach File", f"mq_attach:{sid}", None)],
             [_btn("🗑 Delete Quiz", f"mq_del:{sid}", "danger")],
-            [_btn("⬅️ Back to Quiz", f"mq_open:{sid}", "primary")],
+            [_btn("⬅️ Back to Quiz", f"mq_open:{sid}", "danger"),
+             _btn("🏠 Home", "nav_home", "primary")],
         ])
         return text, kb
 
@@ -690,14 +692,14 @@ class MyQuizMixin:
         for i, q in enumerate(questions[start:start + per], start):
             label = " ".join(str(q.get("question") or "").split())
             label = (label[:38] + "…") if len(label) > 39 else label
-            rows.append([_btn(f"{i + 1}. {label}", f"mq_qv:{sid}:{i}", "primary")])
+            rows.append([_btn(f"{i + 1}. {label}", f"mq_qv:{sid}:{i}", None)])
         rows += page_rows(pages, page, lambda p: f"mq_ql:{sid}:{p}")
         rows.append([_btn("➕ Add Questions", f"mq_add:{sid}", "success"),
-                     _btn("⬅️ Back", f"mq_edit:{sid}", "primary")])
+                     _btn("⬅️ Back", f"mq_edit:{sid}", "danger")])
         text = (
-            f"📝 <b>EDIT QUESTIONS</b>" + (f" · page {page}/{pages}" if pages > 1 else "") + "\n"
-            f"<blockquote>{html.escape(str(qs.get('title', 'Quiz')))} · {len(questions)} questions</blockquote>\n"
-            f"<i>Tap a question to fix its text, options or answer — or delete it.</i>"
+            f"📝  <b>EDIT QUESTIONS</b>" + (f"  ·  Page {page}/{pages}" if pages > 1 else "") + "\n"
+            f"<blockquote><b>{html.escape(str(qs.get('title', 'Quiz')))}  ·  {len(questions)} Questions</b></blockquote>\n"
+            f"<i>Tap a question below to edit its text, options, answer, or delete it:</i>"
         )
         return text, InlineKeyboardMarkup(rows)
 
@@ -715,23 +717,23 @@ class MyQuizMixin:
         exp = str(q.get("explanation") or "").strip()
         text = (
             (f"{html.escape(note)}\n\n" if note else "") +
-            f"📝 <b>QUESTION {idx + 1} of {total}</b>\n"
+            f"📝  <b>QUESTION {idx + 1} of {total}</b>\n"
             f"<blockquote><b>{html.escape(str(q.get('question') or ''))}</b></blockquote>\n"
             + "\n".join(lines)
             + (f"\n\n💡 <i>{html.escape(exp)}</i>" if exp else "")
         )
         nav = []
         if idx > 0:
-            nav.append(_btn("⬅️ Prev", f"mq_qv:{sid}:{idx - 1}", "primary"))
+            nav.append(_btn("⬅️ Prev", f"mq_qv:{sid}:{idx - 1}", None))
         if idx < total - 1:
-            nav.append(_btn("Next ➡️", f"mq_qv:{sid}:{idx + 1}", "primary"))
+            nav.append(_btn("Next ➡️", f"mq_qv:{sid}:{idx + 1}", None))
         rows = [nav] if nav else []
         rows += [
             [_btn("✏️ Rewrite", f"mq_qe:{sid}:{idx}", "success"),
-             _btn("🔑 Change Answer", f"mq_qa:{sid}:{idx}", "primary")],
+             _btn("🔑 Change Answer", f"mq_qa:{sid}:{idx}", None)],
             [_btn("🗑 Delete Question", f"mq_qd:{sid}:{idx}", "danger")],
-            [_btn("📋 All Questions", f"mq_ql:{sid}:{idx // 8 + 1}", "primary"),
-             _btn("⬅️ Editor", f"mq_edit:{sid}", "primary")],
+            [_btn("📋 All Questions", f"mq_ql:{sid}:{idx // 8 + 1}", None),
+             _btn("⬅️ Back", f"mq_edit:{sid}", "danger")],
         ]
         return text, InlineKeyboardMarkup(rows)
 
@@ -875,7 +877,7 @@ class MyQuizMixin:
                 await self._bt_edit(query, "❌ <b>Quiz draft cancelled.</b>\n<i>Nothing was saved.</i>",
                                     InlineKeyboardMarkup([
                                         [_btn("➕ Start Again", "mq_new", "success"),
-                                         _btn("📚 My Quizzes", "mq_list", "primary")],
+                                         _btn("📚 My Quizzes", "mq_list", None)],
                                         [_btn("🏠 Home", "nav_home", "primary")]]))
                 return
             if action == "mq_back":
@@ -896,10 +898,10 @@ class MyQuizMixin:
                 await query.answer()
                 await self._bt_edit(
                     query,
-                    f"🏷 <b>NAME YOUR QUIZ</b>\n<blockquote>✅ {len(d['qs'])} questions ready</blockquote>\n"
-                    f"<i>Type a name in chat, or use the suggested one:</i>",
+                    f"🏷  <b>NAME YOUR QUIZ</b>\n<blockquote><b>✅ {len(d['qs'])} questions ready</b></blockquote>\n"
+                    f"<i>Type a name in chat, or tap the suggested title below:</i>",
                     InlineKeyboardMarkup([[_btn(f"✅ Use “{d['default'][:28]}”", "mq_name", "success")],
-                                          [_btn("⬅️ Add More", "mq_back", "primary"),
+                                          [_btn("⬅️ Add More", "mq_back", "danger"),
                                            _btn("❌ Cancel", "mq_cancel", "danger")]]))
                 return
             await query.answer()
@@ -918,7 +920,7 @@ class MyQuizMixin:
                         "📚 <b>Your custom quizzes &amp; study materials are in my DM:</b>",
                         parse_mode=ParseMode.HTML,
                         reply_markup=InlineKeyboardMarkup([[
-                            InlineKeyboardButton("📚 Open My Quizzes", url=f"https://t.me/{bot_user}?start=mq", style="primary"),
+                            InlineKeyboardButton("📚 Open My Quizzes", url=f"https://t.me/{bot_user}?start=mq"),
                             InlineKeyboardButton("➕ Create New Quiz", url=f"https://t.me/{bot_user}?start=mq_new", style="success"),
                         ]])
                     )
@@ -1015,8 +1017,8 @@ class MyQuizMixin:
             opts = [str(o) for o in (q.get("options") or [])]
             cor = int(q.get("correct_answer", 0))
             rows = [[_btn(("✅ " if k == cor else "") + f"{chr(65 + k)}) {o[:40]}", f"mq_qas:{sid}:{idx}:{k}",
-                          "success" if k == cor else "primary")] for k, o in enumerate(opts)]
-            rows.append([_btn("⬅️ Back", f"mq_qv:{sid}:{idx}", "primary")])
+                          "success" if k == cor else None)] for k, o in enumerate(opts)]
+            rows.append([_btn("⬅️ Back", f"mq_qv:{sid}:{idx}", "danger")])
             await self._bt_edit(
                 query,
                 f"🔑 <b>CORRECT ANSWER · Q{idx + 1}</b>\n"
@@ -1050,7 +1052,7 @@ class MyQuizMixin:
                 f"🗑 <b>Delete question {idx + 1}?</b>\n"
                 f"<blockquote>{html.escape(str(questions[idx].get('question') or ''))}</blockquote>",
                 InlineKeyboardMarkup([[_btn("🗑 Yes, delete", f"mq_qdok:{sid}:{idx}", "danger"),
-                                       _btn("⬅️ Keep it", f"mq_qv:{sid}:{idx}", "primary")]]),
+                                       _btn("⬅️ Keep it", f"mq_qv:{sid}:{idx}", None)]]),
             )
 
         elif action == "mq_qdok":
@@ -1073,7 +1075,8 @@ class MyQuizMixin:
                 query,
                 f"➕ <b>ADD QUESTIONS</b> · {html.escape(str(qs.get('title', 'Quiz')))}\n"
                 f"<blockquote>Now {len(questions)} questions</blockquote>\n" + HELP,
-                InlineKeyboardMarkup([[_btn("✅ Done", f"mq_adddone:{sid}", "success")]]),
+                InlineKeyboardMarkup([[_btn("✅ Done", f"mq_adddone:{sid}", "success"),
+                                       _btn("⬅️ Cancel", f"mq_edit:{sid}", "danger")]]),
             )
 
         elif action == "mq_adddone":
@@ -1090,20 +1093,19 @@ class MyQuizMixin:
             avg_acc = round(100 * tot_cor / tot_ans, 1) if tot_ans > 0 else 0.0
             files_cnt = len(qs.get("source_files") or [])
             st_text = (
-                f"📊 <b>QUIZ ANALYTICS &amp; STATS</b>\n"
-                f"━━━━━━━━━━━━━━━━━━\n"
-                f"📝 <b>Title:</b> {html.escape(qs.get('title', 'Quiz'))}\n"
-                f"🆔 <b>ID:</b> <code>{html.escape(sid)}</code>\n"
-                f"❓ <b>Questions:</b> <b>{q_cnt}</b>\n"
-                f"⏱ <b>Timer:</b> <b>{qs.get('secs', 20)}s / question</b>\n"
-                f"🔀 <b>Shuffle:</b> <b>{'On' if qs.get('shuffle') else 'Off'}</b>\n"
-                f"👥 <b>Total Attempts:</b> <b>{plays}</b>\n"
-                f"🎯 <b>Avg Accuracy:</b> <b>{avg_acc}%</b> ({tot_cor}/{tot_ans})\n"
-                f"📚 <b>Study Files Attached:</b> <b>{files_cnt}</b>\n"
-                f"📅 <b>Created:</b> <b>{str(qs.get('created_at', ''))[:10]}</b>\n"
-                f"━━━━━━━━━━━━━━━━━━"
+                f"📊  <b>QUIZ ANALYTICS &amp; STATS</b>\n"
+                f"<blockquote><b>📝 {html.escape(qs.get('title', 'Quiz'))}\n"
+                f"• Quiz ID      ›  <code>{html.escape(sid)}</code>\n"
+                f"• Questions    ›  {q_cnt} Qs\n"
+                f"• Timer        ›  {qs.get('secs', 20)}s / question\n"
+                f"• Shuffle      ›  {'ON' if qs.get('shuffle') else 'OFF'}\n"
+                f"• Total Plays  ›  {plays}\n"
+                f"• Avg Accuracy ›  {avg_acc}% ({tot_cor}/{tot_ans})\n"
+                f"• Study Files  ›  {files_cnt} Attached\n"
+                f"• Created      ›  {str(qs.get('created_at', ''))[:10]}</b></blockquote>"
             )
-            kb = InlineKeyboardMarkup([[_btn("⬅️ Back to Quiz", f"mq_open:{sid}", "primary")]])
+            kb = InlineKeyboardMarkup([[_btn("⬅️ Back to Quiz", f"mq_open:{sid}", "danger"),
+                                        _btn("🏠 Home", "nav_home", "primary")]])
             await self._bt_edit(query, st_text, kb)
 
         elif action == "mq_edit":
@@ -1151,9 +1153,9 @@ class MyQuizMixin:
             await query.answer()
             cur = int(qs.get("secs") or 20)
             t = lambda s: _btn(("✅ " if s == cur else "") + f"{s} sec", f"mq_settimer:{sid}:{s}",
-                               "success" if s == cur else "primary")
+                               "success" if s == cur else None)
             rows = [[t(10), t(15)], [t(20), t(30)], [t(45), t(60)],
-                    [_btn("⬅️ Back", f"mq_edit:{sid}", "primary")]]
+                    [_btn("⬅️ Back", f"mq_edit:{sid}", "danger")]]
             await self._bt_edit(
                 query,
                 f"⏱ <b>TIME PER QUESTION</b>\n"
@@ -1242,10 +1244,10 @@ class MyQuizMixin:
             bot_user = getattr(context.bot, "username", "")
             share_link = f"https://t.me/{bot_user}?start=shared_{sid}" if bot_user else sid
             ch_text = (
-                f"📢 <b>SHARE TO A GROUP OR CHANNEL</b>\n"
-                f"<blockquote>{html.escape(qs.get('title', 'Quiz'))} · {qs.get('count', 0)} questions</blockquote>\n"
-                f"👥 <b>Start Live in Group</b> — pick a group, I'll host the quiz there with a ready-lobby.\n\n"
-                f"📩 <b>Post Quiz Link</b> — share a link anyone can tap to play in my DM."
+                f"📢  <b>SHARE TO A GROUP OR CHANNEL</b>\n"
+                f"<blockquote><b>📝 {html.escape(qs.get('title', 'Quiz'))}  ·  {qs.get('count', 0)} Questions</b></blockquote>\n"
+                f"• <b>Start Live in Group</b> — Host this quiz directly inside any group with a live lobby.\n"
+                f"• <b>Post Quiz Link</b> — Forward an invite card to a channel or chat."
             )
             ch_rows = []
             if bot_user:
@@ -1256,9 +1258,10 @@ class MyQuizMixin:
                     f"❓ Questions: {qs.get('count', 0)}  •  ⏱ {qs.get('secs', 20)}s/Q\n"
                     f"👇 Tap below to start the quiz!"
                 )
-                ch_rows.append([InlineKeyboardButton("📩 Post Quiz Link", style="primary",
+                ch_rows.append([InlineKeyboardButton("📩 Post Quiz Link",
                                                      url=f"https://t.me/share/url?url={urllib.parse.quote(share_link)}&text={post_text}")])
-            ch_rows.append([_btn("⬅️ Back to Quiz", f"mq_open:{sid}", "primary")])
+            ch_rows.append([_btn("⬅️ Back to Quiz", f"mq_open:{sid}", "danger"),
+                            _btn("🏠 Home", "nav_home", "primary")])
             await self._bt_edit(query, ch_text, InlineKeyboardMarkup(ch_rows))
 
         elif action == "mq_del":
@@ -1267,7 +1270,7 @@ class MyQuizMixin:
                 query, f"🗑 <b>Delete “{html.escape(qs.get('title', 'Quiz'))}”?</b>\n"
                        f"<i>All {len(questions)} questions will be removed. This can't be undone.</i>",
                 InlineKeyboardMarkup([[_btn("🗑 Yes, delete", f"mq_delok:{sid}", "danger"),
-                                       _btn("⬅️ Keep it", f"mq_edit:{sid}", "primary")]]))
+                                       _btn("⬅️ Keep it", f"mq_edit:{sid}", None)]]))
 
         elif action == "mq_delok":
             await self._mq_db("delete_quiz_set", sid, user.id)
@@ -1305,9 +1308,8 @@ class MyQuizMixin:
                 opt_lines.append(f"▫️ {letter}) {html.escape(o)}")
 
         text = (
-            f"🎴 <b>FLASHCARDS (STUDY MODE)</b>  ·  Card <b>{idx + 1}/{total}</b>\n"
-            f"📝 <b>{html.escape(qs.get('title', 'Quiz'))}</b>\n"
-            f"━━━━━━━━━━━━━━━━━━\n\n"
+            f"🎴  <b>FLASHCARDS  ·  Card {idx + 1} of {total}</b>\n"
+            f"<blockquote><b>📝 {html.escape(qs.get('title', 'Quiz'))}</b></blockquote>\n"
             f"❓ <b>{qtext}</b>\n\n"
             + "\n".join(opt_lines)
         )
@@ -1320,15 +1322,15 @@ class MyQuizMixin:
             text += "</blockquote>"
 
         toggle_btn = (
-            _btn("🙈 Hide Answer", f"mq_flash:{sid}:{idx}:0", "primary")
+            _btn("🙈 Hide Answer", f"mq_flash:{sid}:{idx}:0", None)
             if revealed else
             _btn("👁 Show Answer", f"mq_flash:{sid}:{idx}:1", "success")
         )
         kb = InlineKeyboardMarkup([
             [toggle_btn],
-            [_btn("⬅️ Prev", f"mq_flash:{sid}:{(idx - 1) % total}:0", "primary"),
-             _btn("Next ➡️", f"mq_flash:{sid}:{(idx + 1) % total}:0", "primary")],
-            [_btn("⬅️ Back to Quiz", f"mq_open:{sid}", "primary")],
+            [_btn("⬅️ Prev", f"mq_flash:{sid}:{(idx - 1) % total}:0", None),
+             _btn("Next ➡️", f"mq_flash:{sid}:{(idx + 1) % total}:0", None)],
+            [_btn("⬅️ Back to Quiz", f"mq_open:{sid}", "danger")],
         ])
         await query.answer()
         await self._bt_edit(query, text, kb)
@@ -1364,19 +1366,17 @@ class MyQuizMixin:
             # Increment attempts count in DB
             await self._mq_db("inc_quiz_set_plays", prac["set_id"], cor, total)
             text = (
-                f"🎉 <b>QUIZ COMPLETED!</b>\n"
-                f"<b>Quiz:</b> {html.escape(prac['title'])}\n"
-                f"━━━━━━━━━━━━━━━━━━\n"
-                f"✅ Correct: <b>{cor}</b>\n"
-                f"❌ Wrong: <b>{wrg}</b>\n"
-                f"📊 Accuracy: <b>{acc}%</b>\n"
-                f"━━━━━━━━━━━━━━━━━━\n"
-                f"Great session! Keep going."
+                f"🎉  <b>QUIZ COMPLETED!</b>\n"
+                f"<blockquote><b>📝 {html.escape(prac['title'])}\n"
+                f"• Correct  ›  {cor} ✅\n"
+                f"• Wrong    ›  {wrg} ❌\n"
+                f"• Accuracy ›  {acc}% 📊</b></blockquote>\n"
+                f"<i>Great session! Keep practicing to boost your score.</i>"
             )
             kb = InlineKeyboardMarkup([
                 [_btn("🔁 Play Again", f"mq_prac:{prac['set_id']}", "success")],
-                [_btn("⬅️ Back to Quiz", f"mq_open:{prac['set_id']}", "primary"),
-                 _btn("📚 My Quizzes", "mq_list", "primary")],
+                [_btn("⬅️ Back to Quiz", f"mq_open:{prac['set_id']}", "danger"),
+                 _btn("📚 My Quizzes", "mq_list", None)],
             ])
             context.user_data.pop("mq_prac", None)
             if hasattr(query_or_update, "edit_message_text"):
@@ -1392,7 +1392,7 @@ class MyQuizMixin:
         q_text = html.escape(str(q.get("question") or ""))
         opts = [str(o) for o in (q.get("options") or [])]
 
-        head = f"▶️ <b>PRIVATE QUIZ</b> [Q{idx+1}/{total}]\n<b>{html.escape(prac['title'])}</b>\n━━━━━━━━━━━━━━━━━━\n"
+        head = f"▶️  <b>SOLO PRACTICE  ·  Q{idx+1} of {total}</b>\n<blockquote><b>📝 {html.escape(prac['title'])}</b></blockquote>\n"
         body = f"❓ <b>{q_text}</b>\n\n"
         if explanation_note:
             body += explanation_note + "\n\n"
@@ -1400,7 +1400,7 @@ class MyQuizMixin:
         rows = []
         for i, opt in enumerate(opts):
             label = f"{chr(65+i)}) {opt[:40]}"
-            rows.append([_btn(label, f"mq_p_ans:{prac['set_id']}:{idx}:{i}", "primary")])
+            rows.append([_btn(label, f"mq_p_ans:{prac['set_id']}:{idx}:{i}", None)])
         rows.append([_btn("❌ Exit Quiz", f"mq_open:{prac['set_id']}", "danger")])
 
         kb = InlineKeyboardMarkup(rows)

@@ -180,29 +180,26 @@ class QuizCommandsMixin(object):
         xp_bar          = UI.mini_bar(xp_pct)
 
         text = (
-            f"🏆  <b>𝐒𝐂𝐎𝐑𝐄𝐂𝐀𝐑𝐃</b>\n"
-            f"{UI.LINE}\n\n"
-            f"👤  {mention}\n\n"
-            f"{UI.LINE}\n\n"
-            f"📈  Accuracy    ›  {accuracy}%\n"
-            f"🎯  Avg Score   ›  {avg_score}\n\n"
-            f"🔥  Streak      ›  {streak} days\n"
-            f"⚡  XP          ›  {xp}\n"
-            f"🏅  Level       ›  {level}\n\n"
-            f"{xp_bar}  {xp_pct}% to next level\n\n"
-            f"{UI.LINE}\n\n"
-            f"📚  Questions   ›  {total_q}\n"
-            f"✅  Correct     ›  {correct}\n"
-            f"❌  Wrong       ›  {wrong}\n\n"
-            f"🏆  Best Score  ›  {best_score}\n"
-            f"📝  Total Marks ›  {total_marks}\n\n"
-            f"{UI.LINE}"
+            f"🏆  <b>PLAYER SCORECARD</b>\n\n"
+            f"👤  {mention}\n"
+            f"<blockquote><b>1️⃣ PERFORMANCE &amp; LEVEL\n"
+            f"• Level      ›  Level {level}  ({xp} XP)\n"
+            f"• Progress   ›  {xp_bar}  {xp_pct}%\n"
+            f"• Streak     ›  {streak} days 🔥\n"
+            f"• Accuracy   ›  {accuracy}%\n"
+            f"• Avg Score  ›  {avg_score}</b></blockquote>\n"
+            f"<blockquote><b>2️⃣ QUESTION STATS\n"
+            f"• Attempted  ›  {total_q}\n"
+            f"• Correct    ›  {correct} ✅\n"
+            f"• Wrong      ›  {wrong} ❌\n"
+            f"• Best Score ›  {best_score}\n"
+            f"• Total Marks›  {total_marks}</b></blockquote>"
         )
         kb = InlineKeyboardMarkup([
             [InlineKeyboardButton("▶️ Play Quiz", callback_data="play_quiz", style="success"),
-             InlineKeyboardButton("📊 My Profile", callback_data="my_profile", style="primary")],
-            [InlineKeyboardButton("🏅 Achievements", callback_data="achievements", style="primary"),
-             InlineKeyboardButton("📚 My Quizzes", callback_data="mq_list", style="primary")],
+             InlineKeyboardButton("📊 My Profile", callback_data="my_profile")],
+            [InlineKeyboardButton("🏅 Achievements", callback_data="achievements"),
+             InlineKeyboardButton("📚 My Quizzes", callback_data="mq_list")],
             self._nav_row(back_screen="home"),
         ])
         await self._smart_edit(update, text, kb, edit_msg=edit_msg)
@@ -312,9 +309,9 @@ class QuizCommandsMixin(object):
 
         kb = InlineKeyboardMarkup([
             [InlineKeyboardButton("▶️ Play Quiz", callback_data="play_quiz", style="success"),
-             InlineKeyboardButton("📚 My Quizzes", callback_data="mq_list", style="primary")],
-            [InlineKeyboardButton("📊 Scorecard", callback_data="score", style="primary"),
-             InlineKeyboardButton("🏅 Achievements", callback_data="achievements", style="primary")],
+             InlineKeyboardButton("📚 My Quizzes", callback_data="mq_list")],
+            [InlineKeyboardButton("📊 Scorecard", callback_data="score"),
+             InlineKeyboardButton("🏅 Achievements", callback_data="achievements")],
             self._nav_row(back_screen="home"),
         ])
         if edit_msg:
@@ -382,7 +379,7 @@ class QuizCommandsMixin(object):
         )
         kb = InlineKeyboardMarkup([
             [InlineKeyboardButton("▶️ Play Quiz", callback_data="play_quiz", style="success"),
-             InlineKeyboardButton("📊 My Profile", callback_data="my_profile", style="primary")],
+             InlineKeyboardButton("📊 My Profile", callback_data="my_profile")],
             self._nav_row(back_screen="home"),
         ])
         await self._smart_edit(update, text, kb, edit_msg=edit_msg)

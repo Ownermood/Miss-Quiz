@@ -351,22 +351,21 @@ class BattleMixin:
         """mode: main card · set: selected custom quiz · bot: one-tap modes ·
         cust: timer + questions · q: question count."""
         vs = UI.mention(b.p2, b.p2_name) if b.p2 else "<i>anyone</i>"
-        B = lambda text, data, style="primary": InlineKeyboardButton(text, callback_data=data, style=style)
-        P = lambda text, data: InlineKeyboardButton(text, callback_data=data)          # plain
+        B = lambda text, data, style=None: InlineKeyboardButton(text, callback_data=data, style=style)
         lab = lambda k: f"{MODES[k][0]} · {MODES[k][1]}Q · {_tlabel(MODES[k][2])}"
         head = f"{UI.mention(b.p1, b.p1_name)}  vs  {vs}\n"
-        back = lambda to: B("⬅️ Back", f"bt_p:{b.id}:{to}", "primary")
+        back = lambda to: B("⬅️ Back", f"bt_p:{b.id}:{to}", "danger")
         cancel = B("❌ Cancel", f"bt_dec:{b.id}", "danger")
         if page == "set" and b.set_id:
             text = (
-                f"⚔️ <b>CUSTOM QUIZ BATTLE</b>\n{head}"
+                f"⚔️  <b>CUSTOM QUIZ BATTLE</b>\n{head}"
                 f"{self._bt_settings_line(b)}\n"
                 f"<i>Launch a 1v1 battle with this quiz, customize timer/questions, or open full quiz options:</i>"
             )
             rows = [
                 [B("⚔️ Create 1v1 Challenge", f"bt_go:{b.id}", "success")],
-                [B("⏱ Timer & Questions", f"bt_p:{b.id}:cust", "primary")]
-                + ([B("📖 Full Quiz Menu", f"mq_open:{b.set_id}", "primary")] if b.mode == "dm" else []),
+                [B("⏱ Timer & Questions", f"bt_p:{b.id}:cust", None)]
+                + ([B("📖 Full Quiz Menu", f"mq_open:{b.set_id}", None)] if b.mode == "dm" else []),
             ]
             if b.mode == "dm":
                 play_row = [B("▶️ Play Solo", f"mq_prac:{b.set_id}", "success")]
@@ -375,36 +374,36 @@ class BattleMixin:
                         "👥 Host in Group", url=f"https://t.me/{bot_username}?startgroup=gq_{b.set_id}", style="success"
                     ))
                 rows.append(play_row)
-            rows.append([B("⬅️ My Quizzes", f"bt_my:{b.id}", "primary"), cancel])
+            rows.append([B("⬅️ My Quizzes", f"bt_my:{b.id}", "danger"), cancel])
             return text, InlineKeyboardMarkup(rows)
         if page == "bot":
-            text = f"🤖 <b>BOT QUIZ</b>\n{head}<i>Pick a mode — the challenge is created right away.</i>"
+            text = f"🤖  <b>BOT QUIZ</b>\n{head}<i>Pick a mode — the challenge is created right away.</i>"
             rows = [[B(lab("classic"), f"bt_m:{b.id}:classic", "success")],
-                    [B(lab("quick"), f"bt_m:{b.id}:quick"), B(lab("marathon"), f"bt_m:{b.id}:marathon")]]
+                    [B(lab("quick"), f"bt_m:{b.id}:quick", None), B(lab("marathon"), f"bt_m:{b.id}:marathon", None)]]
             if b.last:
-                rows.append([B(f"🔁 Last · {b.last[0]}Q · {_tlabel(b.last[1])}", f"bt_m:{b.id}:last")])
+                rows.append([B(f"🔁 Last · {b.last[0]}Q · {_tlabel(b.last[1])}", f"bt_m:{b.id}:last", None)])
             rows.append([back("mode"), cancel])
             return text, InlineKeyboardMarkup(rows)
         if page == "q":
             qmax = self._bt_q_max()
-            text = (f"🎯 <b>HOW MANY QUESTIONS?</b>\n{head}"
+            text = (f"🎯  <b>HOW MANY QUESTIONS?</b>\n{head}"
                     f"<i>Tap one, or type any number ({Q_MIN}–{qmax}).</i>")
             opts = [B(("✅ " if b.n_q == n else "") + f"{n} Questions", f"bt_q:{b.id}:{n}",
-                      "success" if b.n_q == n else "primary") for n in Q_CHOICES if n <= qmax]
+                      "success" if b.n_q == n else None) for n in Q_CHOICES if n <= qmax]
             rows = [opts[k:k + 2] for k in range(0, len(opts), 2)] + [[back("cust"), cancel]]
             return text, InlineKeyboardMarkup(rows)
         if page == "cust":
-            text = (f"⚙️ <b>CUSTOMIZE BATTLE</b>\n{head}{self._bt_settings_line(b)}\n"
+            text = (f"⚙️  <b>CUSTOMIZE BATTLE</b>\n{head}{self._bt_settings_line(b)}\n"
                     f"<i>Pick a timer (or type one: 45, 2m). Tap Questions to change the count.</i>")
             opts = [B(("✅ " if b.secs == t else "") + _tlabel(t), f"bt_t:{b.id}:{t}",
-                      "success" if b.secs == t else "primary") for t in T_CHOICES]
+                      "success" if b.secs == t else None) for t in T_CHOICES]
             rows = [opts[k:k + 2] for k in range(0, len(opts), 2)]
             back_target = "set" if b.set_id else "mode"
-            rows += [[B(f"🎯 Questions: {b.n_q}", f"bt_p:{b.id}:q", "primary")],
+            rows += [[B(f"🎯 Questions: {b.n_q}", f"bt_p:{b.id}:q", None)],
                      [B("⚔️ Create Challenge", f"bt_go:{b.id}", "success")],
                      [back(back_target), cancel]]
             return text, InlineKeyboardMarkup(rows)
-        text = f"⚔️ <b>1v1 BATTLE</b>\n{head}<i>Make your own quiz, pick from My Quizzes, or play with the bot's questions.</i>"
+        text = f"⚔️  <b>1v1 BATTLE</b>\n{head}<i>Make your own quiz, pick from My Quizzes, or play with the bot's questions.</i>"
         if b.mode == "group" and bot_username:      # quizzes are made in the bot's DM
             create = InlineKeyboardButton("➕ Create Own Quiz", url=f"https://t.me/{bot_username}?start=mq_new",
                                           style="success")
@@ -412,25 +411,25 @@ class BattleMixin:
             create = B("➕ Create Own Quiz", f"bt_new:{b.id}", "success")
         foot = [B("🏠 Home", "nav_home", "primary"), cancel] if b.mode == "dm" else [cancel]
         rows = [[create],
-                [B("📚 My Quizzes", f"bt_my:{b.id}"), B("🤖 Bot Quiz", f"bt_p:{b.id}:bot")],
-                [B("⚙️ Customize", f"bt_p:{b.id}:cust")],
+                [B("📚 My Quizzes", f"bt_my:{b.id}", None), B("🤖 Bot Quiz", f"bt_p:{b.id}:bot", None)],
+                [B("⚙️ Customize", f"bt_p:{b.id}:cust", None)],
                 foot]
         return text, InlineKeyboardMarkup(rows)
 
     def _bt_my_view(self, b: "Battle", sets: List[Dict], page: int = 1, pages: int = 1):
-        B = lambda text, data, style="primary": InlineKeyboardButton(text, callback_data=data, style=style)
+        B = lambda text, data, style=None: InlineKeyboardButton(text, callback_data=data, style=style)
         if not sets:
-            text = ("📚 <b>MY QUIZZES</b>\n<i>No quizzes yet. Create one from your questions — "
+            text = ("📚  <b>MY QUIZZES</b>\n<i>No quizzes yet. Create one from your questions — "
                     "text, a file or forwarded quiz polls.</i>")
             rows = [[B("➕ Create Own Quiz", f"bt_new:{b.id}", "success")]]
         else:
             from src.bot.my_quiz import page_rows
-            text = ("📚 <b>MY QUIZZES · 1v1 BATTLE</b>" + (f" · page {page}/{pages}" if pages > 1 else "") +
+            text = ("📚  <b>MY QUIZZES · 1v1 BATTLE</b>" + (f" · page {page}/{pages}" if pages > 1 else "") +
                     "\n<i>Select any quiz below to battle, customize, or open its options:</i>")
-            rows = [[B(f"📝 {s.get('title', 'Quiz')[:28]} · {s.get('count', 0)}Q", f"bt_s:{b.id}:{s['id']}")]
+            rows = [[B(f"📝 {s.get('title', 'Quiz')[:28]} · {s.get('count', 0)}Q", f"bt_s:{b.id}:{s['id']}", None)]
                     for s in sets]
             rows += page_rows(pages, page, lambda n: f"bt_my:{b.id}:{n}")
-        rows.append([B("⬅️ Back", f"bt_p:{b.id}:mode", "primary"), B("❌ Cancel", f"bt_dec:{b.id}", "danger")])
+        rows.append([B("⬅️ Back", f"bt_p:{b.id}:mode", "danger"), B("❌ Cancel", f"bt_dec:{b.id}", "danger")])
         return text, InlineKeyboardMarkup(rows)
 
     @staticmethod

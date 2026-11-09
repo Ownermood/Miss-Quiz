@@ -133,7 +133,7 @@ class AdminPanelMixin:
     # ── screens ──────────────────────────────────────────────────────────
 
     def _panel_kb(self, is_owner: bool) -> InlineKeyboardMarkup:
-        admin_row = [btn("Admins List", "users", GREEN, callback_data="ap:team")]
+        admin_row = [btn("Admins List", "users", None, callback_data="ap:team")]
         if is_owner:
             admin_row.append(btn("Restart Bot", "warn", RED, callback_data="ap:restart"))
 
@@ -141,30 +141,30 @@ class AdminPanelMixin:
             # 1. Primary Question Bank Action (Green)
             [btn("Add Questions to Bank", "plus", GREEN, callback_data="ap:addq")],
 
-            # 2. Question Bank Management (Blue)
-            [btn("Edit Quiz Bank", "edit", BLUE, callback_data="ap:edit"),
-             btn("Find Question", "search", BLUE, callback_data="ap:find")],
+            # 2. Question Bank Management (Clean Dark Glass)
+            [btn("Edit Quiz Bank", "edit", None, callback_data="ap:edit"),
+             btn("Find Question", "search", None, callback_data="ap:find")],
 
-            # 3. Analytics & Live Health Monitor (Blue)
-            [btn("Bot Stats", "stats", BLUE, callback_data="ap:stats"),
-             btn("Health Check", "gear", BLUE, callback_data="ap:check")],
+            # 3. Analytics & Live Health Monitor (Clean Dark Glass)
+            [btn("Bot Stats", "stats", None, callback_data="ap:stats"),
+             btn("Health Check", "gear", None, callback_data="ap:check")],
 
-            # 4. DB Sanitizer & Reload (Green / Blue)
-            [btn("Clean & Sanitize DB", "check", GREEN, callback_data="ap:cleanup"),
-             btn("Reload Cache", "bolt", BLUE, callback_data="ap:reload")],
+            # 4. DB Sanitizer & Reload (Clean Dark Glass)
+            [btn("Clean & Sanitize DB", "check", None, callback_data="ap:cleanup"),
+             btn("Reload Cache", "bolt", None, callback_data="ap:reload")],
 
-            # 5. Broadcast Tools (Blue)
-            [btn("Broadcast", "signal", BLUE, callback_data="ap:bc"),
-             btn("Undo Broadcast", "back", BLUE, callback_data="ap:dbc")],
+            # 5. Broadcast Tools (Clean Dark Glass)
+            [btn("Broadcast", "signal", None, callback_data="ap:bc"),
+             btn("Undo Broadcast", "back", None, callback_data="ap:dbc")],
 
-            # 6. Media & Emoji Testing (Blue)
-            [btn("Start Photo", "folder", BLUE, callback_data="ap:photo"),
-             btn("Emoji Test", "star", BLUE, callback_data="ap:emoji:0")],
+            # 6. Media & Emoji Testing (Clean Dark Glass)
+            [btn("Start Photo", "folder", None, callback_data="ap:photo"),
+             btn("Emoji Test", "star", None, callback_data="ap:emoji:0")],
 
-            # 7. Team Management & Restart
+            # 7. Team Management & Restart (Red for Restart)
             admin_row,
 
-            # 8. Delete Question & Exit to Home
+            # 8. Delete Question (Red) & Exit to Home (Blue)
             [btn("Delete Question", "trash", RED, callback_data="ap:delquiz"),
              btn("Home", "door", BLUE, callback_data="ap:close")],
         ]
@@ -186,14 +186,14 @@ class AdminPanelMixin:
             except Exception as ex:
                 logger.warning(f"[ADMIN PANEL] stats failed: {ex}")
         return (
-            f"{e('key')} <b>ADMIN CONTROL PANEL</b>\n{UI.LINE}\n\n"
+            f"{e('key')}  <b>ADMIN CONTROL PANEL</b>\n\n"
             f"<blockquote><b>1️⃣ LIVE SYSTEM OVERVIEW\n"
-            f"{e('edit')} Question Bank  ›  {q:,}\n"
-            f"{e('users')} Total Users    ›  {users:,}\n"
-            f"{e('signal')} Total Groups   ›  {groups:,}  (Active: {admin_g} · Paused: {groups - admin_g})</b></blockquote>\n"
+            f"• Question Bank  ›  {q:,}\n"
+            f"• Total Users    ›  {users:,}\n"
+            f"• Total Groups   ›  {groups:,}  (Active: {admin_g} · Paused: {groups - admin_g})</b></blockquote>\n"
             f"<blockquote><b>2️⃣ ADMIN COMMAND SHORTCUTS\n"
             f"• /check — Live RAM, CPU &amp; Uptime Health\n"
-            f"• /cleanup — Sanitize Polluted Questions &amp; Stale Loops\n"
+            f"• /cleanup — Sanitize DB &amp; Clear Stale Loops\n"
             f"• /addadmin — 1-Line Admin Grant (Name Emoji ID)\n"
             f"• /addquiz · /editquiz · /delquiz · /reload\n"
             f"• /broadcast · /delbroadcast · /restart</b></blockquote>\n"

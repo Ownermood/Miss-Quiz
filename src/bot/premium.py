@@ -355,9 +355,12 @@ def tidy_html(text: str) -> str:
 
 
 def style_request(data: dict, endpoint: str) -> dict:
-    """Always on (premium or not): bold + tidy HTML text, red Back buttons."""
+    """Always on (premium or not): bold + tidy HTML text, red Back buttons, no link preview."""
     if not isinstance(data, dict):
         return data
+    if endpoint in ("sendMessage", "editMessageText"):
+        if "link_preview_options" not in data and "disable_web_page_preview" not in data:
+            data["link_preview_options"] = {"is_disabled": True}
     if "reply_markup" in data:
         data["reply_markup"] = style_markup(data["reply_markup"])
     if endpoint in _HTML_ENDPOINTS:
