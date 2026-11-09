@@ -199,9 +199,10 @@ class QuizCommandsMixin(object):
             f"{UI.LINE}"
         )
         kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🎓 Play Quiz",      callback_data="play_quiz"),
-             InlineKeyboardButton("🎓 My Profile",     callback_data="my_profile")],
-            [InlineKeyboardButton("🎓 Achievements",   callback_data="achievements")],
+            [InlineKeyboardButton("▶️ Play Quiz", callback_data="play_quiz", style="success"),
+             InlineKeyboardButton("📊 My Profile", callback_data="my_profile", style="primary")],
+            [InlineKeyboardButton("🏅 Achievements", callback_data="achievements", style="primary"),
+             InlineKeyboardButton("📚 My Quizzes", callback_data="mq_list", style="primary")],
             self._nav_row(back_screen="home"),
         ])
         await self._smart_edit(update, text, kb, edit_msg=edit_msg)
@@ -380,8 +381,8 @@ class QuizCommandsMixin(object):
             f"Keep playing to unlock more! 🎓"
         )
         kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🎓 Play Quiz",  callback_data="play_quiz"),
-             InlineKeyboardButton("🎓 My Profile",   callback_data="my_profile")],
+            [InlineKeyboardButton("▶️ Play Quiz", callback_data="play_quiz", style="success"),
+             InlineKeyboardButton("📊 My Profile", callback_data="my_profile", style="primary")],
             self._nav_row(back_screen="home"),
         ])
         await self._smart_edit(update, text, kb, edit_msg=edit_msg)
@@ -453,7 +454,7 @@ class QuizCommandsMixin(object):
 
         kb = InlineKeyboardMarkup([
             [InlineKeyboardButton("🔄 Refresh", callback_data="bs_refresh", style="primary"),
-             InlineKeyboardButton("⬅️ Back", callback_data="ap:home")],   # back to Admin Panel
+             InlineKeyboardButton("⬅️ Back", callback_data="ap:home", style="danger")],   # back to Admin Panel
         ])
 
         await self._edit(wait, text, kb)

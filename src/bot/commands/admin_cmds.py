@@ -213,7 +213,7 @@ class AdminCommandsMixin(object):
         """'Are you sure?' screen: full question, options and the right answer."""
         q = next((x for x in self.quiz_manager.questions if x.get("id") == qid), None)
         page = self._del_page.get(user_id, 0)
-        back = InlineKeyboardButton("⬅️ Back", callback_data=f"dq_page_{page}_{user_id}")
+        back = InlineKeyboardButton("⬅️ Back", callback_data=f"dq_page_{page}_{user_id}", style="primary")
         if not q:
             return (f"❌ <b>Question #{qid} not found.</b>", InlineKeyboardMarkup([[back]]))
         opts = "\n".join(
@@ -270,20 +270,21 @@ class AdminCommandsMixin(object):
                 qtext = q.get("question", "")[:18]
                 row.append(InlineKeyboardButton(
                     f"🗑 #{qid} {qtext}…",
-                    callback_data=f"dq_ask_{qid}_{user_id}"
+                    callback_data=f"dq_ask_{qid}_{user_id}",
+                    style="danger",
                 ))
             rows.append(row)
 
         nav = []
         if page > 0:
-            nav.append(InlineKeyboardButton("◀️ Prev", callback_data=f"dq_page_{page-1}_{user_id}"))
+            nav.append(InlineKeyboardButton("◀️ Prev", callback_data=f"dq_page_{page-1}_{user_id}", style="primary"))
         if page < pages - 1:
-            nav.append(InlineKeyboardButton("Next ▶️", callback_data=f"dq_page_{page+1}_{user_id}"))
+            nav.append(InlineKeyboardButton("Next ▶️", callback_data=f"dq_page_{page+1}_{user_id}", style="primary"))
         if nav:
             rows.append(nav)
 
-        rows.append([InlineKeyboardButton("🔎 Find by ID / word", callback_data="ap:find"),
-                     InlineKeyboardButton("⬅️ Back", callback_data=f"dq_cancel_{user_id}")])
+        rows.append([InlineKeyboardButton("🔎 Find by ID / word", callback_data="ap:find", style="primary"),
+                     InlineKeyboardButton("⬅️ Back", callback_data=f"dq_cancel_{user_id}", style="danger")])
         return InlineKeyboardMarkup(rows)
 
     async def _cb_delquiz(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -390,8 +391,8 @@ class AdminCommandsMixin(object):
                 if page * 8 >= len(self.quiz_manager.questions):
                     page = max(0, (len(self.quiz_manager.questions) - 1) // 8)
                 kb = InlineKeyboardMarkup([
-                    [InlineKeyboardButton("🗑 Delete another", callback_data=f"dq_page_{page}_{actor.id}")],
-                    [InlineKeyboardButton("⬅️ Back", callback_data=f"dq_cancel_{actor.id}")],
+                    [InlineKeyboardButton("🗑 Delete another", callback_data=f"dq_page_{page}_{actor.id}", style="primary")],
+                    [InlineKeyboardButton("⬅️ Back", callback_data=f"dq_cancel_{actor.id}", style="danger")],
                 ])
                 try:
                     await query.message.edit_text(text, parse_mode=ParseMode.HTML, reply_markup=kb)

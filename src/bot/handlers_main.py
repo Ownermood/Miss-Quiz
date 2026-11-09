@@ -126,10 +126,10 @@ class TelegramQuizBot(
 
     @staticmethod
     def _nav_row(back_screen: str = None) -> list:
-        """Returns [Home, Back] button row."""
-        row = [InlineKeyboardButton("🏠 Home", callback_data="nav_home")]
+        """Returns [Home, Back] button row with primary styling."""
+        row = [InlineKeyboardButton("🏠 Home", callback_data="nav_home", style="primary")]
         if back_screen:
-            row.append(InlineKeyboardButton("⬅️ Back", callback_data="nav_back"))
+            row.append(InlineKeyboardButton("⬅️ Back", callback_data="nav_back", style="primary"))
         return row
 
     async def _render_screen(self, update, context, screen: str, edit_msg=None):
@@ -308,12 +308,19 @@ class TelegramQuizBot(
         q_display = UI.fmt_num(self._q_count())
         return (
             f"<b>╭──── ❨ 🎓 MISS QUIZ STUDIO ❩ ────╮</b>\n\n"
-            f"{e('hi')} <b>Hey {user_mention}!</b>\n"
-            f"<blockquote><b>{e('cool')} Create your own Quizzes from PDF, DOCX, Text &amp; Polls, "
-            f"attach Study Materials &amp; Flashcards, play 1v1 Battles &amp; host Group Tournaments with Winner Certificates!</b></blockquote>\n"
-            f"<blockquote><b>{e('bolt')} {q_display} Live Questions · Hourly Group Quiz · Negative Marking · Instant Scorecard</b></blockquote>\n"
-            f"<b>╰──────────────────────────╯</b>\n\n"
-            f"{e('play')} <b>CREATE • BATTLE • TOURNAMENT • WIN!</b>"
+            f"{e('hi')} <b>Welcome, {user_mention}!</b>\n\n"
+            f"<blockquote><b>1️⃣ CUSTOM QUIZ STUDIO</b>\n"
+            f"• Create quizzes from <b>PDF, DOCX, TXT &amp; Polls</b>\n"
+            f"• Attach <b>Study Material</b>, <b>Flashcards</b> &amp; <b>Exam Paper</b>\n"
+            f"• Commands: /myquiz · /clone · /mix · /mywords</blockquote>\n"
+            f"<blockquote><b>2️⃣ LIVE 1v1 BATTLE &amp; PRACTICE</b>\n"
+            f"• <b>{q_display}</b> Questions · Instant 1v1 Duel &amp; Solo Practice\n"
+            f"• Commands: /battle · /quiz · /categories</blockquote>\n"
+            f"<blockquote><b>3️⃣ GROUP TOURNAMENTS &amp; ANALYTICS</b>\n"
+            f"• Live <b>I'm Ready!</b> Lobby · <b>Top-3 Winner Certificates</b>\n"
+            f"• Commands: /startquiz · /schedule · /result · /compare</blockquote>\n"
+            f"<b>╰──────────────────────────╯</b>\n"
+            f"{e('play')} <i>Choose an option below to get started:</i>"
         )
 
     async def _cb_start_battle(self, update: Update, context):
@@ -329,23 +336,23 @@ class TelegramQuizBot(
         blue, green = "primary", "success"
         username = getattr(getattr(self.application, "bot", None), "username", "") or ""
         rows = [
-            # 🌟 TOP BUTTON: Create New Quiz (Full-width, Green with Premium Emoji)
+            # Row 1: Primary Creator Action (Green)
             [btn("Create New Quiz", "plus", green, callback_data="mq_new")],
 
-            # Row 2: My Quizzes (Custom Quizzes + Study Materials) & 1v1 Battle
+            # Row 2: Custom Quizzes & Live 1v1 Battle
             [btn("My Quizzes", "folder", blue, callback_data="mq_list"),
-             btn("1v1 Battle", "fight", blue, callback_data="start_battle")],
+             btn("1v1 Battle", "fight", green, callback_data="start_battle")],
 
             # Row 3: Quick Practice Quiz & Topic Categories
-            [btn("Start Quiz", "play", blue, callback_data="play_quiz"),
+            [btn("Start Quiz", "play", green, callback_data="play_quiz"),
              btn("Categories", "book", blue, callback_data="categories")],
 
-            # Row 4: Profile/Analytics & Help
+            # Row 4: Profile/Analytics & All Commands Guide
             [btn("My Profile", "medal", blue, callback_data="my_profile"),
-             btn("Help & Features", "question", blue, callback_data="help")],
+             btn("All Commands", "question", blue, callback_data="help")],
 
             # Row 5: Community & Add to Group
-            [btn("Community", "users", green, url=COMMUNITY_URL)]
+            [btn("Community", "users", blue, url=COMMUNITY_URL)]
             + ([btn("Host in Group", "plus", green,
                     url=f"https://t.me/{username}?startgroup&admin=delete_messages+pin_messages")]
                if username else []),
@@ -479,26 +486,43 @@ class TelegramQuizBot(
 
     async def _set_commands(self):
         user_cmds = [
-            BotCommand("start",        "🏠 Home"),
-            BotCommand("quiz",         "🎯 Get a quiz question"),
-            BotCommand("battle",       "⚔️ 1v1 quiz battle"),
-            BotCommand("myquiz",       "📝 Your own quizzes"),
-            BotCommand("startquiz",    "👥 Run a quiz in this group"),
-            BotCommand("score",        "🏆 Your score & rank"),
-            BotCommand("stats",        "📈 Your detailed stats"),
-            BotCommand("achievements", "🏅 Badges & milestones"),
-            BotCommand("categories",   "📚 Quiz topics"),
-            BotCommand("help",         "❓ Help"),
+            BotCommand("start",        "🏠 Home & Main Studio"),
+            BotCommand("myquiz",       "📚 Create & Manage Your Quizzes"),
+            BotCommand("battle",       "⚔️ 1v1 Live Quiz Battle"),
+            BotCommand("quiz",         "▶️ Instant Practice Question"),
+            BotCommand("startquiz",    "👥 Start Group Tournament"),
+            BotCommand("stopquiz",     "⏹ Stop Group Tournament"),
+            BotCommand("schedule",     "⏰ Schedule Group Quiz"),
+            BotCommand("result",       "📩 Wrong-Answer Review in DM"),
+            BotCommand("compare",      "🆚 Compare Stats with a Player"),
+            BotCommand("score",        "🏆 Your XP, Level & Rank"),
+            BotCommand("stats",        "📊 Subject-wise Analytics"),
+            BotCommand("achievements", "🏅 Badges & Milestones"),
+            BotCommand("categories",   "📖 Browse Quiz Topics"),
+            BotCommand("clone",        "📋 Copy a Quiz by ID"),
+            BotCommand("mix",          "🔀 Combine Quizzes into One"),
+            BotCommand("mywords",      "🧹 Safai Auto-Clean Filter"),
+            BotCommand("help",         "❓ Full Commands & Features Guide"),
         ]
         try:
             await self.application.bot.set_my_commands(user_cmds)
         except Exception as e:
             logger.warning(f"set_my_commands: {e}")
 
-        # Admins use the red Admin Panel button on /start, not the menu.
-        # Remove admin menus set by older versions (per-chat scopes persist).
         from telegram import BotCommandScopeChat
         from src.core.config import AUTHORIZED_USERS
+        admin_cmds = user_cmds + [
+            BotCommand("admin",        "🔑 Open Admin Control Panel"),
+            BotCommand("check",        "🩺 Bot & System Health Monitor"),
+            BotCommand("cleanup",      "🧹 Sanitize DB & Clear Stale Quizzes"),
+            BotCommand("addadmin",     "👑 Quick 1-Line Admin Promotion"),
+            BotCommand("addquiz",      "➕ Add Questions to Bot Bank"),
+            BotCommand("editquiz",     "✏️ Edit Bot Question Bank"),
+            BotCommand("delquiz",      "🗑 Delete Question from Bank"),
+            BotCommand("broadcast",    "📡 Broadcast Message to All"),
+            BotCommand("reload",       "🔄 Reload Questions from DB"),
+            BotCommand("restart",      "♻️ Restart Bot Process"),
+        ]
         admin_ids = set(AUTHORIZED_USERS)
         if self.db:
             try:
@@ -508,9 +532,9 @@ class TelegramQuizBot(
                 logger.warning(f"set_my_commands: developers lookup failed: {e}")
         for uid in admin_ids:
             try:
-                await self.application.bot.delete_my_commands(scope=BotCommandScopeChat(chat_id=uid))
-            except Exception as e:   # never opened the bot's DM / nothing set
-                logger.debug(f"delete_my_commands for {uid}: {e}")
+                await self.application.bot.set_my_commands(admin_cmds, scope=BotCommandScopeChat(chat_id=uid))
+            except Exception as e:
+                logger.debug(f"set_my_commands for admin {uid}: {e}")
 
     # ─── Core helpers ─────────────────────────────────────────
 

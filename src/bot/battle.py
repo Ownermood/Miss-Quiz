@@ -369,10 +369,10 @@ class BattleMixin:
                 + ([B("📖 Full Quiz Menu", f"mq_open:{b.set_id}", "primary")] if b.mode == "dm" else []),
             ]
             if b.mode == "dm":
-                play_row = [B("▶️ Play Solo", f"mq_prac:{b.set_id}", "primary")]
+                play_row = [B("▶️ Play Solo", f"mq_prac:{b.set_id}", "success")]
                 if bot_username:
                     play_row.append(InlineKeyboardButton(
-                        "👥 Host in Group", url=f"https://t.me/{bot_username}?startgroup=gq_{b.set_id}", style="primary"
+                        "👥 Host in Group", url=f"https://t.me/{bot_username}?startgroup=gq_{b.set_id}", style="success"
                     ))
                 rows.append(play_row)
             rows.append([B("⬅️ My Quizzes", f"bt_my:{b.id}", "primary"), cancel])
@@ -389,13 +389,15 @@ class BattleMixin:
             qmax = self._bt_q_max()
             text = (f"🎯 <b>HOW MANY QUESTIONS?</b>\n{head}"
                     f"<i>Tap one, or type any number ({Q_MIN}–{qmax}).</i>")
-            opts = [P(("✅ " if b.n_q == n else "") + f"{n} Questions", f"bt_q:{b.id}:{n}") for n in Q_CHOICES if n <= qmax]
+            opts = [B(("✅ " if b.n_q == n else "") + f"{n} Questions", f"bt_q:{b.id}:{n}",
+                      "success" if b.n_q == n else "primary") for n in Q_CHOICES if n <= qmax]
             rows = [opts[k:k + 2] for k in range(0, len(opts), 2)] + [[back("cust"), cancel]]
             return text, InlineKeyboardMarkup(rows)
         if page == "cust":
             text = (f"⚙️ <b>CUSTOMIZE BATTLE</b>\n{head}{self._bt_settings_line(b)}\n"
                     f"<i>Pick a timer (or type one: 45, 2m). Tap Questions to change the count.</i>")
-            opts = [P(("✅ " if b.secs == t else "") + _tlabel(t), f"bt_t:{b.id}:{t}") for t in T_CHOICES]
+            opts = [B(("✅ " if b.secs == t else "") + _tlabel(t), f"bt_t:{b.id}:{t}",
+                      "success" if b.secs == t else "primary") for t in T_CHOICES]
             rows = [opts[k:k + 2] for k in range(0, len(opts), 2)]
             back_target = "set" if b.set_id else "mode"
             rows += [[B(f"🎯 Questions: {b.n_q}", f"bt_p:{b.id}:q", "primary")],

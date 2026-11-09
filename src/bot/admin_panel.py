@@ -135,36 +135,38 @@ class AdminPanelMixin:
     def _panel_kb(self, is_owner: bool) -> InlineKeyboardMarkup:
         admin_row = [btn("Admins List", "users", GREEN, callback_data="ap:team")]
         if is_owner:
-            admin_row.append(btn("Restart Bot", "warn", GREEN, callback_data="ap:restart"))
+            admin_row.append(btn("Restart Bot", "warn", RED, callback_data="ap:restart"))
 
         rows = [
-            # 1. Main positive action (Green)
-            [btn("Add Questions", "plus", GREEN, callback_data="ap:addq")],
+            # 1. Primary Question Bank Action (Green)
+            [btn("Add Questions to Bank", "plus", GREEN, callback_data="ap:addq")],
 
-            # 2. Editing & Searching (Blue)
-            [btn("Edit Quiz", "edit", BLUE, callback_data="ap:edit"),
+            # 2. Question Bank Management (Blue)
+            [btn("Edit Quiz Bank", "edit", BLUE, callback_data="ap:edit"),
              btn("Find Question", "search", BLUE, callback_data="ap:find")],
 
-            # 3. System stats (Blue)
+            # 3. Analytics & Live Health Monitor (Blue)
             [btn("Bot Stats", "stats", BLUE, callback_data="ap:stats"),
-             btn("Reload", "bolt", BLUE, callback_data="ap:reload")],
+             btn("Health Check", "gear", BLUE, callback_data="ap:check")],
 
-            # 4. Messaging tools (Blue)
+            # 4. DB Sanitizer & Reload (Green / Blue)
+            [btn("Clean & Sanitize DB", "check", GREEN, callback_data="ap:cleanup"),
+             btn("Reload Cache", "bolt", BLUE, callback_data="ap:reload")],
+
+            # 5. Broadcast Tools (Blue)
             [btn("Broadcast", "signal", BLUE, callback_data="ap:bc"),
              btn("Undo Broadcast", "back", BLUE, callback_data="ap:dbc")],
 
-            # 5. Media & Testing (Blue)
+            # 6. Media & Emoji Testing (Blue)
             [btn("Start Photo", "folder", BLUE, callback_data="ap:photo"),
              btn("Emoji Test", "star", BLUE, callback_data="ap:emoji:0")],
 
-            # 6. Management & Power (Green)
+            # 7. Team Management & Restart
             admin_row,
 
-            # 7. Danger/Warning (Red - Akela rahega)
-            [btn("Delete Quiz", "trash", RED, callback_data="ap:delquiz")],
-
-            # 8. Normal/Default soft exit (Bina color ke)
-            [btn("Home", "cross", None, callback_data="ap:close")],
+            # 8. Delete Question & Exit to Home
+            [btn("Delete Question", "trash", RED, callback_data="ap:delquiz"),
+             btn("Home", "door", BLUE, callback_data="ap:close")],
         ]
         return InlineKeyboardMarkup(rows)
 
@@ -184,13 +186,18 @@ class AdminPanelMixin:
             except Exception as ex:
                 logger.warning(f"[ADMIN PANEL] stats failed: {ex}")
         return (
-            f"{e('key')} <b>ADMIN PANEL</b>\n{UI.LINE}\n\n"
-            f"<blockquote><b>{e('edit')} Questions  ›  {q}\n"
-            f"{e('users')} Users  ›  {users}\n"
-            f"{e('signal')} Groups  ›  {groups}</b></blockquote>\n"
-            f"<blockquote><b>{e('check')} Auto quiz ON (bot admin)  ›  {admin_g}\n"
-            f"{e('warn')} Paused (not admin)  ›  {groups - admin_g}</b></blockquote>\n"
-            f"<b><i>Only you can see this. Tap a button.</i></b>"
+            f"{e('key')} <b>ADMIN CONTROL PANEL</b>\n{UI.LINE}\n\n"
+            f"<blockquote><b>1️⃣ LIVE SYSTEM OVERVIEW\n"
+            f"{e('edit')} Question Bank  ›  {q:,}\n"
+            f"{e('users')} Total Users    ›  {users:,}\n"
+            f"{e('signal')} Total Groups   ›  {groups:,}  (Active: {admin_g} · Paused: {groups - admin_g})</b></blockquote>\n"
+            f"<blockquote><b>2️⃣ ADMIN COMMAND SHORTCUTS\n"
+            f"• /check — Live RAM, CPU &amp; Uptime Health\n"
+            f"• /cleanup — Sanitize Polluted Questions &amp; Stale Loops\n"
+            f"• /addadmin — 1-Line Admin Grant (Name Emoji ID)\n"
+            f"• /addquiz · /editquiz · /delquiz · /reload\n"
+            f"• /broadcast · /delbroadcast · /restart</b></blockquote>\n"
+            f"<i>Select an action below (visible only in your DM):</i>"
         )
 
     def _proxy(self, update, text=""):
@@ -244,7 +251,7 @@ class AdminPanelMixin:
 
         if data == "ap:open":            # red button on /start (message may be a photo)
             await q.answer()
-            await self._reply(update, await self._panel_text(), reply_markup=self._panel_kb(owner))
+            await self._edit(q.message, await self._panel_text(), self._panel_kb(owner))
         elif data == "ap:home":
             ud.pop("ap_await", None)
             await q.answer()
@@ -257,6 +264,12 @@ class AdminPanelMixin:
         elif data == "ap:stats":
             await q.answer()
             await self.cmd_botstats(update, context, edit_msg=q.message)
+        elif data == "ap:check":
+            await q.answer("Checking system health… 🩺")
+            await self.cmd_check(self._proxy(update, "/check"), context)
+        elif data == "ap:cleanup":
+            await q.answer("Sanitizing DB & cleaning stale sessions… 🧹")
+            await self.cmd_cleanup(self._proxy(update, "/cleanup"), context)
         elif data == "ap:reload":
             await q.answer("Reloading…")
             await self.cmd_reload(self._proxy(update, "/reload"), context)

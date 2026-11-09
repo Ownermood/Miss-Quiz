@@ -110,56 +110,76 @@ class UserCommandsMixin(object):
     async def cmd_help(self, update: Update, context: ContextTypes.DEFAULT_TYPE,
                        edit_msg=None):
         from src.bot.premium import btn, e
+        user = update.effective_user
+        chat = update.effective_chat
+        is_admin_dm = bool(chat and chat.type == "private" and user and await self._is_authorized(user.id))
+
+        admin_block = (
+            f"<blockquote><b>5️⃣ ADMIN &amp; OWNER TOOLS</b>\n"
+            f"• /admin — Open Full Admin Control Panel\n"
+            f"• /check — Live RAM, CPU &amp; Uptime Health\n"
+            f"• /cleanup — Sanitize DB &amp; Clear Stale Sessions\n"
+            f"• /addadmin — 1-Line Admin Grant (Name Emoji ID)\n"
+            f"• /addquiz · /editquiz · /delquiz · /reload · /broadcast</blockquote>\n"
+        ) if is_admin_dm else ""
+
         text = (
-            f"{e('question')} <b>HELP &amp; FEATURES · MISS QUIZ STUDIO</b>\n\n"
-            f"<blockquote><b>{e('play')} CREATE &amp; PLAY\n"
-            f"/myquiz — Create quiz (PDF/DOCX/Text/Polls), Flashcards &amp; Study Material\n"
-            f"/battle — 1v1 Live Quiz Battle with friends\n"
-            f"/quiz — Instant practice question\n"
-            f"/categories — Browse topics · /clone &amp; /mix quizzes</b></blockquote>\n"
-            f"<blockquote><b>{e('stats')} PROGRESS &amp; REVIEW\n"
-            f"/score — Your XP, Level &amp; Scorecard\n"
-            f"/stats — Subject-wise accuracy &amp; insights\n"
-            f"/result — Personal wrong-answer review in DM\n"
-            f"/compare — Head-to-head stats · /mywords — Safai filter</b></blockquote>\n"
-            f"<blockquote><b>{e('users')} GROUP TOURNAMENTS\n"
-            f"/startquiz — Live 'I'm Ready!' Lobby + Top-3 Winner Certificates\n"
-            f"/schedule — Schedule group quiz · /slow /fast /stopquiz\n"
-            f"Make me admin → automatic hourly group quizzes!</b></blockquote>\n"
-            f"<b>{e('signal')} Need help? {COMMUNITY}</b>"
+            f"{e('question')} <b>ALL COMMANDS &amp; FEATURES · MISS QUIZ STUDIO</b>\n"
+            f"{UI.LINE}\n\n"
+            f"<blockquote><b>1️⃣ CUSTOM QUIZ STUDIO</b>\n"
+            f"• /myquiz — Create quiz (PDF/DOCX/Text/Polls), Flashcards, Study Material &amp; Exam Paper\n"
+            f"• /clone <code>&lt;id&gt;</code> — Copy any quiz to your collection\n"
+            f"• /mix <code>&lt;id1&gt; &lt;id2&gt;</code> — Combine quizzes into one Mega Quiz\n"
+            f"• /mywords — Manage Safai auto-clean filter words</blockquote>\n"
+            f"<blockquote><b>2️⃣ 1v1 BATTLE &amp; SOLO PRACTICE</b>\n"
+            f"• /battle — 1v1 Live Quiz Duel with friends\n"
+            f"• /quiz — Instant practice question\n"
+            f"• /categories — Browse all subject categories</blockquote>\n"
+            f"<blockquote><b>3️⃣ GROUP TOURNAMENTS</b>\n"
+            f"• /startquiz — Live 'I'm Ready!' Lobby + Top-3 Winner Certificates\n"
+            f"• /schedule <code>15m</code> — Schedule group tournament\n"
+            f"• /slow · /normal · /fast — Adjust question speed\n"
+            f"• /stopquiz — End active group quiz &amp; show podium</blockquote>\n"
+            f"<blockquote><b>4️⃣ ANALYTICS, REVIEW &amp; RANKING</b>\n"
+            f"• /result — Personal wrong-answer review sheet in DM\n"
+            f"• /compare — Reply to a player to compare head-to-head stats\n"
+            f"• /score — Your XP, Level &amp; Scorecard\n"
+            f"• /stats — Subject-wise accuracy · /achievements — Badges</blockquote>\n"
+            f"{admin_block}"
+            f"<b>{e('signal')} Support &amp; Updates: {COMMUNITY}</b>"
         )
         from src.bot.ui import COMMUNITY_URL
-        kb = InlineKeyboardMarkup([
+        rows = [
             [btn("Create New Quiz", "plus", "success", callback_data="mq_new"),
              btn("My Quizzes", "folder", "primary", callback_data="mq_list")],
-            [btn("Play Quiz", "play", "primary", callback_data="play_quiz"),
-             btn("1v1 Battle", "fight", "primary", callback_data="start_battle")],
-            [btn("Community", "users", "success", url=COMMUNITY_URL)],
-            self._nav_row(back_screen="home"),
-        ])
+            [btn("Play Quiz", "play", "success", callback_data="play_quiz"),
+             btn("1v1 Battle", "fight", "success", callback_data="start_battle")],
+            [btn("Community", "users", "primary", url=COMMUNITY_URL)],
+        ]
+        if is_admin_dm:
+            rows.append([btn("Admin Panel", "key", "danger", callback_data="ap:open")])
+        rows.append(self._nav_row(back_screen="home"))
+        kb = InlineKeyboardMarkup(rows)
         await self._smart_edit(update, text, kb, edit_msg=edit_msg)
 
     # ─── /categories ─────────────────────────────────────────
 
     async def cmd_categories(self, update: Update, context: ContextTypes.DEFAULT_TYPE,
                               edit_msg=None):
-        DIV = "═" * 32
         cat_lines = "\n".join(
-            f"•  {html.escape(name)}  {emoji}" for name, emoji in UI.QUIZ_CATEGORIES
+            f"•  {emoji}  <b>{html.escape(name)}</b>" for name, emoji in UI.QUIZ_CATEGORIES
         )
         text = (
-            f"📚  <b>𝗩𝗜𝗘𝗪  𝗖𝗔𝗧𝗘𝗚𝗢𝗥𝗜𝗘𝗦</b>\n"
-            f"{DIV}\n\n"
-            f"📑  <b>𝗔𝗩𝗔𝗜𝗟𝗔𝗕𝗟𝗘  𝗤𝗨𝗜𝗭  𝗖𝗔𝗧𝗘𝗚𝗢𝗥𝗜𝗘𝗦</b>\n\n"
-            f"{cat_lines}\n\n"
-            f"{DIV}\n"
-            f"🎯  Stay tuned!  More quizzes coming soon!\n"
-            f"🛠  Need help?  Use /help for more commands!\n"
-            f"{DIV}"
+            f"📖  <b>QUIZ SUBJECT CATEGORIES</b>\n"
+            f"{UI.LINE}\n\n"
+            f"<blockquote>{cat_lines}</blockquote>\n"
+            f"🎯 <i>Tap <b>Start Quiz</b> to practice from our question bank, or <b>Create New Quiz</b> to build your own topic set!</i>"
         )
         kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🎓 Start Quiz", callback_data="play_quiz"),
-             InlineKeyboardButton("🎓 Commands",   callback_data="help")],
+            [InlineKeyboardButton("▶️ Start Quiz", callback_data="play_quiz", style="success"),
+             InlineKeyboardButton("➕ Create New Quiz", callback_data="mq_new", style="success")],
+            [InlineKeyboardButton("📚 My Quizzes", callback_data="mq_list", style="primary"),
+             InlineKeyboardButton("❓ All Commands", callback_data="help", style="primary")],
             self._nav_row(back_screen="home"),
         ])
         await self._smart_edit(update, text, kb, edit_msg=edit_msg)
