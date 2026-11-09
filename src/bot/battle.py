@@ -24,8 +24,8 @@ from typing import Dict, List, Optional, Tuple
 from urllib.parse import quote
 
 from telegram import (
-    CopyTextButton,
-    InlineKeyboardButton, InlineKeyboardMarkup, Poll, Update,
+    CopyTextButton, InlineQueryResultArticle, InputTextMessageContent, LinkPreviewOptions,
+    InlineKeyboardButton, InlineKeyboardMarkup, Poll, SwitchInlineQueryChosenChat, Update,
 )
 from telegram.constants import ParseMode
 from telegram.ext import ApplicationHandlerStop, ContextTypes
@@ -412,7 +412,7 @@ class BattleMixin:
             ud.pop("bt_await", None)
             err = await self._bt_create(b, save_pref=True)
             text, kb = (self._bt_setup_view(b, "t") if err
-                        else self._bt_challenge_view(b, context.bot.username))
+                        else self._bt_challenge_view(b, context.bot.username, self._bt_inline_on(context)))
         try:
             await context.bot.edit_message_text(text, chat_id=chat.id, message_id=b.msg_id,
                                                 parse_mode=ParseMode.HTML, reply_markup=kb)
@@ -426,7 +426,7 @@ class BattleMixin:
             pass
         raise ApplicationHandlerStop
 
-    def _bt_challenge_view(self, b: "Battle", bot_username: str):
+    def _bt_challenge_view(self, b: "Battle", bot_username: str, inline: bool = False):
         if b.mode == "group":
             vs = UI.mention(b.p2, b.p2_name) if b.p2 else "<i>anyone</i>"
             text = (f"⚔️ <b>1v1 BATTLE</b>\n{UI.mention(b.p1, b.p1_name)}  vs  {vs}\n"
@@ -444,8 +444,13 @@ class BattleMixin:
         msg = (f"⚔️ {b.p1_name} challenged you to a 1v1 quiz battle! "
                f"{b.n_q} questions · {_tlabel(b.secs)} each. Tap to accept 👇")
         share = "https://t.me/share/url?url=" + quote(link, safe="") + "&text=" + quote(msg)
+        send = (InlineKeyboardButton(       # bold + premium invite card via inline mode
+                    "📤 Send to a friend", style="success",
+                    switch_inline_query_chosen_chat=SwitchInlineQueryChosenChat(
+                        query=f"bt_{b.id}", allow_user_chats=True, allow_group_chats=True))
+                if inline else InlineKeyboardButton("📤 Send to a friend", url=share, style="success"))
         kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("📤 Send to a friend", url=share, style="success")],
+            [send],
             [InlineKeyboardButton("📋 Copy link", copy_text=CopyTextButton(link), style="primary")],
             [InlineKeyboardButton("✏️ Change", callback_data=f"bt_ch:{b.id}", style="primary"),
              InlineKeyboardButton("❌ Cancel", callback_data=f"bt_dec:{b.id}", style="danger")],
@@ -534,7 +539,7 @@ class BattleMixin:
                 await query.answer(err, show_alert=True)
                 return
             await query.answer("Challenge created! ⚔️")
-            await self._bt_edit(query, *self._bt_challenge_view(b, context.bot.username))
+            await self._bt_edit(query, *self._bt_challenge_view(b, context.bot.username, self._bt_inline_on(context)))
             return
 
         if action == "bt_dec":
@@ -586,18 +591,7 @@ class BattleMixin:
                 except Exception:
                     pass
             if b.mode == "dm":   # tell the challenger: edit their invite card, else a new message
-                note = (f"✅ {UI.mention(b.p2, b.p2_name)} accepted your battle!\n"
-                        f"{self._bt_settings_line(b)}\nFirst question in {START_DELAY}s…")
-                try:
-                    if not b.msg_id:
-                        raise ValueError("no invite card")
-                    await context.bot.edit_message_text(note, chat_id=b.p1, message_id=b.msg_id,
-                                                        parse_mode=ParseMode.HTML)
-                except Exception:
-                    try:
-                        await context.bot.send_message(b.p1, note, parse_mode=ParseMode.HTML)
-                    except Exception:
-                        pass
+                await self._bt_tell_challenger(b, context)
             asyncio.create_task(self._bt_run(b, context))
 
     async def _bt_rematch(self, query, user, old_bid: str, context) -> None:
@@ -635,11 +629,71 @@ class BattleMixin:
             await self._bt_save(b)
             logger.warning(f"[BATTLE] rematch {bid} could not be sent: {e}")
 
+    @staticmethod
+    def _bt_inline_on(context) -> bool:
+        """True when inline mode is enabled for the bot (@BotFather /setinline)."""
+        return bool(getattr(getattr(context.bot, "bot", None), "supports_inline_queries", False))
+
+    def _bt_inline_result(self, b: "Battle", bot_username: str, premium: bool):
+        from src.bot.premium import premiumize_html, premiumize_markup, style_markup, tidy_html
+        text = (f"⚔️ <b>1v1 QUIZ BATTLE</b>\n{UI.mention(b.p1, b.p1_name)} challenged you!\n"
+                f"{self._bt_settings_line(b)}\n"
+                f"<i>Tap Accept — the battle starts in both your DMs.</i>")
+        kb = InlineKeyboardMarkup([[InlineKeyboardButton(
+            "⚔️ Accept Battle", url=f"https://t.me/{bot_username}?start=bt_{b.id}_go", style="success")]])
+        text, kb = tidy_html(text), style_markup(kb)
+        if premium:
+            text, kb = premiumize_html(text), premiumize_markup(kb)
+        return InlineQueryResultArticle(
+            id=b.id, title="⚔️ Send battle invite",
+            description=f"{b.n_q} questions · {_tlabel(b.secs)} each",
+            input_message_content=InputTextMessageContent(
+                text, parse_mode=ParseMode.HTML, link_preview_options=LinkPreviewOptions(is_disabled=True)),
+            reply_markup=kb)
+
+    async def handle_battle_inline(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Inline query 'bt_<id>' from the challenger → a bold, premium invite
+        card with an Accept button. Anything else → no results."""
+        from src.bot.premium import premium_on
+        iq = update.inline_query
+        if not iq:
+            return
+        q = (iq.query or "").strip()
+        b = await self._bt_get(q[3:]) if q.startswith("bt_") else None
+        ok = bool(b and b.mode == "dm" and b.state == "pending" and not b.expired()
+                  and iq.from_user and iq.from_user.id == b.p1)
+        tries = ([premium_on(), False] if premium_on() else [False]) if ok else [None]
+        for premium in tries:
+            try:
+                res = [self._bt_inline_result(b, context.bot.username, premium)] if ok else []
+                await iq.answer(res, cache_time=0, is_personal=True)
+                return
+            except Exception as e:
+                logger.debug(f"[BATTLE] inline answer failed (premium={premium}): {e}")
+
+    async def _bt_tell_challenger(self, b: "Battle", context) -> None:
+        """DM battle accepted: edit the challenger's invite card, else send a message."""
+        note = (f"✅ {UI.mention(b.p2, b.p2_name)} accepted your battle!\n"
+                f"{self._bt_settings_line(b)}\nFirst question in {START_DELAY}s…")
+        try:
+            if not b.msg_id:
+                raise ValueError("no invite card")
+            await context.bot.edit_message_text(note, chat_id=b.p1, message_id=b.msg_id,
+                                                parse_mode=ParseMode.HTML)
+        except Exception:
+            try:
+                await context.bot.send_message(b.p1, note, parse_mode=ParseMode.HTML)
+            except Exception:
+                pass
+
     async def battle_join_from_link(self, update: Update, context: ContextTypes.DEFAULT_TYPE,
                                     bid: str) -> None:
-        """Called from /start bt_<id> in a DM."""
+        """Called from /start bt_<id> in a DM. 'bt_<id>_go' (Accept button on
+        the shared invite card) accepts right away; a plain link shows the card."""
         user = update.effective_user
         self._bt_cleanup()
+        go = bid.endswith("_go")
+        bid = bid[:-3] if go else bid
         b = await self._bt_get(bid)
         if not b or b.mode != "dm" or b.expired() or b.state not in ("pending", "running"):
             await self._reply(update, "⚔️ This battle invite has ended.", reply_markup=_ENDED_KB)
@@ -650,6 +704,23 @@ class BattleMixin:
         ok, why = b.can_accept(user.id)
         if not ok:
             await self._reply(update, f"⚔️ {why}", reply_markup=_ENDED_KB)
+            return
+        if go:
+            if self._bt_busy(user.id):
+                await self._reply(update, "⚔️ You're already in a battle — finish it first.")
+                return
+            await self._bt_drop_open(user.id, context)
+            ok, why = b.can_accept(user.id)            # re-check after the await
+            if not ok:
+                await self._reply(update, f"⚔️ {why}", reply_markup=_ENDED_KB)
+                return
+            b.start(user.id, self._bt_name(user))
+            await self._bt_save(b)
+            await self._reply(update, f"⚔️ <b>BATTLE STARTED</b>\n"
+                                      f"{UI.mention(b.p1, b.p1_name)}  vs  {UI.mention(b.p2, b.p2_name)}\n"
+                                      f"{self._bt_settings_line(b)}\nFirst question in {START_DELAY}s…")
+            await self._bt_tell_challenger(b, context)
+            asyncio.create_task(self._bt_run(b, context))
             return
         text = (f"⚔️ <b>BATTLE INVITE</b>\n{UI.mention(b.p1, b.p1_name)} challenged you!\n"
                 f"{self._bt_settings_line(b)}\n"

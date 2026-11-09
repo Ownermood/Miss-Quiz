@@ -14,7 +14,7 @@ from telegram import (
 )
 from telegram.ext import (
     Application, CommandHandler, PollAnswerHandler,
-    CallbackQueryHandler, MessageHandler, ChatMemberHandler,
+    CallbackQueryHandler, MessageHandler, ChatMemberHandler, InlineQueryHandler,
     filters, ContextTypes
 )
 from telegram.constants import ParseMode
@@ -383,6 +383,7 @@ class TelegramQuizBot(
 
         # Poll + Callbacks
         app.add_handler(PollAnswerHandler(self.handle_poll_answer))
+        app.add_handler(InlineQueryHandler(self.handle_battle_inline))   # battle invite card
         app.add_handler(CallbackQueryHandler(
             self._cb_delquiz, pattern=r"^dq_"))
         app.add_handler(CallbackQueryHandler(

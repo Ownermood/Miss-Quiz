@@ -545,3 +545,71 @@ async def test_dm_accept_updates_challenger_card_and_only_one_can_accept():
     q = await press(app, ctx, c, f"bt_acc:{bid}")                           # too late
     assert q.answer.await_args.kwargs.get("show_alert") is True
     app._bt_state()[bid].state = "done"
+
+
+async def test_inline_invite_card_is_bold_with_accept_and_only_for_challenger(monkeypatch):
+    monkeypatch.setenv("PREMIUM_EMOJI", "0")
+    app = FakeBotApp()
+    ctx, _ = fake_context()
+    a = user(1, "Amit")
+    dm = lambda u: SimpleNamespace(effective_user=u, effective_chat=SimpleNamespace(id=u.id, type="private"),
+                                   effective_message=SimpleNamespace(reply_to_message=None))
+    await app.cmd_battle(dm(a), ctx)
+    bid = await setup_and_create(app, ctx, a)
+    b = app._bt_state()[bid]
+    _, kb = app._bt_challenge_view(b, "MissQuizBot", inline=True)
+    sw = kb.inline_keyboard[0][0].switch_inline_query_chosen_chat
+    assert sw.query == f"bt_{bid}" and sw.allow_user_chats
+
+    def iq_update(uid, query):
+        iq = SimpleNamespace(query=query, from_user=SimpleNamespace(id=uid), answer=AsyncMock())
+        return SimpleNamespace(inline_query=iq), iq
+
+    upd, iq = iq_update(1, f"bt_{bid}")
+    await app.handle_battle_inline(upd, ctx)
+    res = iq.answer.await_args.args[0]
+    assert len(res) == 1
+    text = res[0].input_message_content.message_text
+    assert text.startswith("<b>") and "challenged you" in text                 # bold
+    assert res[0].reply_markup.inline_keyboard[0][0].url.endswith(f"start=bt_{bid}_go")
+    upd, iq = iq_update(2, f"bt_{bid}")                                       # not the challenger
+    await app.handle_battle_inline(upd, ctx)
+    assert iq.answer.await_args.args[0] == []
+
+
+async def test_inline_premium_rejected_falls_back_to_plain(monkeypatch):
+    monkeypatch.setenv("PREMIUM_EMOJI", "1")
+    import src.bot.premium as pm
+    monkeypatch.setattr(pm, "premium_on", lambda: True)
+    app = FakeBotApp()
+    ctx, _ = fake_context()
+    a = user(1, "Amit")
+    dm = lambda u: SimpleNamespace(effective_user=u, effective_chat=SimpleNamespace(id=u.id, type="private"),
+                                   effective_message=SimpleNamespace(reply_to_message=None))
+    await app.cmd_battle(dm(a), ctx)
+    bid = await setup_and_create(app, ctx, a)
+    iq = SimpleNamespace(query=f"bt_{bid}", from_user=SimpleNamespace(id=1),
+                         answer=AsyncMock(side_effect=[Exception("custom emoji not allowed"), None]))
+    await app.handle_battle_inline(SimpleNamespace(inline_query=iq), ctx)
+    assert iq.answer.await_count == 2
+    first = iq.answer.await_args_list[0].args[0][0].input_message_content.message_text
+    second = iq.answer.await_args_list[1].args[0][0].input_message_content.message_text
+    assert "tg-emoji" in first and "tg-emoji" not in second
+
+
+async def test_accept_button_on_shared_card_starts_battle_directly():
+    app = FakeBotApp()
+    ctx, polls = fake_context()
+    a, b = user(1, "Amit"), user(2, "Bina")
+    dm = lambda u: SimpleNamespace(effective_user=u, effective_chat=SimpleNamespace(id=u.id, type="private"),
+                                   effective_message=SimpleNamespace(reply_to_message=None))
+    await app.cmd_battle(dm(a), ctx)
+    bid = await setup_and_create(app, ctx, a)
+    await app.battle_join_from_link(dm(b), ctx, f"{bid}_go")
+    bt_ = app._bt_state()[bid]
+    assert bt_.state == "running" and bt_.p2 == 2
+    assert "BATTLE STARTED" in app.replies[-1][0]
+    assert "accepted your battle" in ctx.bot.edit_message_text.await_args.args[0]
+    await app.battle_join_from_link(dm(user(3, "C")), ctx, f"{bid}_go")      # too late
+    assert "no longer open" in app.replies[-1][0]
+    bt_.state = "done"
