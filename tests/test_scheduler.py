@@ -175,3 +175,40 @@ def test_clear_group_thread_only_if_still_saved():
     assert db.groups_col.find_one({"chat_id": 1})["message_thread_id"] == 7
     db.clear_group_thread(1, 7)
     assert "message_thread_id" not in db.groups_col.find_one({"chat_id": 1})
+
+
+async def test_housekeeping_purges_db_and_old_polls_in_memory():
+    import time as _t
+    sch, db, _ = make_scheduler()
+    db.purge_old_data.return_value = {"activities": 5, "poll_map": 2}
+    bd = sch.bot.application.bot_data = {
+        "poll_old": {"ts": _t.time() - 10 * 86400}, "poll_new": {"ts": _t.time()},
+        "poll_nots": {}, "other_key": 1}
+    await sch._housekeeping()
+    db.purge_old_data.assert_called_once_with(30, 7)
+    assert "poll_old" not in bd and {"poll_new", "poll_nots", "other_key"} <= set(bd)
+
+
+def test_purge_old_data_semantics():
+    mongomock = pytest.importorskip("mongomock")
+    from datetime import datetime, timedelta
+    from src.core.database import DatabaseManager
+    db = DatabaseManager.__new__(DatabaseManager)
+    c = mongomock.MongoClient().db
+    db.activities_col, db.poll_map_col = c.a, c.p
+    iso = lambda d: (datetime.utcnow() - timedelta(days=d)).isoformat()
+    db.activities_col.insert_many([{"timestamp": iso(40)}, {"timestamp": iso(1)}])
+    db.poll_map_col.insert_many([{"created_at": iso(8)}, {"created_at": iso(1)}])
+    assert db.purge_old_data(30, 7) == {"activities": 1, "poll_map": 1}
+    assert db.activities_col.count_documents({}) == 1 and db.poll_map_col.count_documents({}) == 1
+
+
+def test_blocked_user_keeps_data():
+    mongomock = pytest.importorskip("mongomock")
+    from src.core.database import DatabaseManager
+    db = DatabaseManager.__new__(DatabaseManager)
+    db.users_col = mongomock.MongoClient().db.u
+    db.users_col.insert_one({"user_id": 1, "pm_accessible": True, "xp": 500})
+    assert db.remove_inactive_user(1) is True
+    doc = db.users_col.find_one({"user_id": 1})
+    assert doc["xp"] == 500 and doc["pm_accessible"] is False

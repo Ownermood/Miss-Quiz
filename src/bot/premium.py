@@ -403,3 +403,10 @@ def make_premium_bot_class():
                     return await super()._do_post(endpoint, plain, *args, **kwargs)
 
     return PremiumExtBot
+
+
+def make_rate_limiter():
+    """Keeps every send under Telegram's limits (~30 msg/s overall, 20/min per
+    group) and automatically waits + retries on 429 'Flood control'."""
+    from telegram.ext import AIORateLimiter
+    return AIORateLimiter(max_retries=3)

@@ -84,6 +84,8 @@ class DatabaseManager:
             ])
             self.auto_quiz_state_col.create_index("chat_id", unique=True)
             self.poll_map_col.create_index("poll_id", unique=True)
+            self.poll_map_col.create_index("created_at")      # daily purge
+            self.activities_col.create_index("timestamp")     # daily purge
             # Compound indexes for time-based activity queries
             self.activities_col.create_index([("type", ASCENDING), ("timestamp", DESCENDING)])
             self.activities_col.create_index([("type", ASCENDING), ("is_correct", ASCENDING), ("timestamp", DESCENDING)])
@@ -516,9 +518,26 @@ class DatabaseManager:
     def get_pm_accessible_users(self) -> List[Dict]:
         return list(self.users_col.find({"pm_accessible": True}, {"_id": 0}))
 
+    def purge_old_data(self, activity_days: int = 30, poll_days: int = 7) -> Dict[str, int]:
+        """Delete answer logs and poll mappings that are no longer needed, so
+        storage doesn't grow forever (~1 log per answer). Timestamps are ISO
+        strings, which compare correctly as text (a TTL index needs Date)."""
+        now = datetime.utcnow()
+        a_cut = (now - timedelta(days=activity_days)).isoformat()
+        p_cut = (now - timedelta(days=poll_days)).isoformat()
+        return {
+            "activities": self.activities_col.delete_many({"timestamp": {"$lt": a_cut}}).deleted_count,
+            "poll_map":   self.poll_map_col.delete_many({"created_at": {"$lt": p_cut}}).deleted_count,
+        }
+
     def remove_inactive_user(self, user_id: int) -> bool:
-        result = self.users_col.delete_one({"user_id": user_id})
-        return result.deleted_count > 0
+        """User blocked the bot / deleted account: stop DMing them but KEEP
+        their scores and history (used to delete the whole user record).
+        pm_accessible turns True again when they /start the bot in DM."""
+        result = self.users_col.update_one(
+            {"user_id": user_id},
+            {"$set": {"pm_accessible": False, "dm_blocked_at": datetime.utcnow().isoformat()}})
+        return result.matched_count > 0
 
     # ── Groups ────────────────────────────────────────────────────────────────
 

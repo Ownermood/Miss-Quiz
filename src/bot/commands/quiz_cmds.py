@@ -5,6 +5,7 @@ QuizCommandsMixin — /quiz /score /stats /achievements /botstats
 import asyncio
 import html
 import logging
+import time
 
 from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, Poll
@@ -102,6 +103,7 @@ class QuizCommandsMixin(object):
                 "thread_id":         thread_id,
                 "tracking_id":       track_id,
                 "category":          cat,
+                "ts":                time.time(),
             }
             context.bot_data[f"poll_{poll_id}"] = poll_entry
 

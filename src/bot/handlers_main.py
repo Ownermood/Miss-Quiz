@@ -156,7 +156,7 @@ class TelegramQuizBot(
         """Longer timeouts than PTB's defaults (5s connect) so slow or flaky
         networks (WSL, mobile hotspot, far-away servers) don't kill startup."""
         from telegram.request import HTTPXRequest
-        from src.bot.premium import make_premium_bot_class
+        from src.bot.premium import make_premium_bot_class, make_rate_limiter
         # PremiumExtBot turns every emoji in outgoing messages/buttons into
         # premium emoji when PREMIUM_EMOJI=1 (no-op otherwise).
         bot = make_premium_bot_class()(
@@ -164,8 +164,11 @@ class TelegramQuizBot(
             request=HTTPXRequest(connect_timeout=20, read_timeout=30,
                                  write_timeout=30, pool_timeout=30),
             get_updates_request=HTTPXRequest(connect_timeout=20, read_timeout=40),
+            rate_limiter=make_rate_limiter(),
         )
-        return Application.builder().bot(bot).build()
+        # Process up to 16 updates at once: a slow handler (DB, Telegram API)
+        # no longer makes everyone else wait in line.
+        return Application.builder().bot(bot).concurrent_updates(16).build()
 
     async def _initialize_with_retry(self, attempts: int = 3) -> None:
         from telegram.error import NetworkError, TimedOut

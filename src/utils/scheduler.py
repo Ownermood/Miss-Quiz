@@ -20,6 +20,7 @@ next_quiz_due_at is advanced by `interval` minutes.  This means:
 
 import asyncio
 import logging
+import time
 from datetime import datetime, timedelta
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from telegram.error import RetryAfter, NetworkError, BadRequest
@@ -109,6 +110,16 @@ class AutoQuizScheduler:
             replace_existing=True,
             next_run_time=datetime.now(),   # first poll fires immediately
         )
+        # Daily housekeeping: old answer logs, poll mappings, in-memory polls
+        self.scheduler.add_job(
+            self._housekeeping,
+            trigger="interval",
+            hours=24,
+            id="housekeeping",
+            replace_existing=True,
+            next_run_time=datetime.now() + timedelta(minutes=10),
+        )
+
         # "Make me admin" alerts for groups where auto quiz is paused
         self.scheduler.add_job(
             self._send_admin_reminders,
@@ -139,7 +150,7 @@ class AutoQuizScheduler:
         state = self._active_quiz.get(chat_id)
         if not state and self.db:
             try:
-                state = self.db.get_active_quiz_state(chat_id) or {}
+                state = await asyncio.to_thread(self.db.get_active_quiz_state, chat_id) or {}
             except Exception:
                 state = {}
 
@@ -250,6 +261,26 @@ class AutoQuizScheduler:
                 logger.warning(f"[SCHEDULER] could not store admin status for {chat_id}: {e}")
         return is_admin
 
+    POLL_KEEP_DAYS = 7
+    ACTIVITY_KEEP_DAYS = 30
+
+    async def _housekeeping(self):
+        """Keep storage and RAM flat: purge old DB rows, forget old polls."""
+        try:
+            if self.db:
+                n = await asyncio.to_thread(self.db.purge_old_data,
+                                            self.ACTIVITY_KEEP_DAYS, self.POLL_KEEP_DAYS)
+                logger.info(f"[HOUSEKEEPING] purged {n}")
+            bd = self.bot.application.bot_data
+            cutoff = time.time() - self.POLL_KEEP_DAYS * 86400
+            old = [k for k, v in list(bd.items())
+                   if k.startswith("poll_") and isinstance(v, dict) and v.get("ts", cutoff + 1) < cutoff]
+            for k in old:
+                bd.pop(k, None)
+            logger.info(f"[HOUSEKEEPING] dropped {len(old)} old polls from memory")
+        except Exception as e:
+            logger.error(f"[HOUSEKEEPING] failed: {e}", exc_info=True)
+
     async def _send_admin_reminders(self):
         """Ask non-admin groups to promote the bot: one alert every
         ADMIN_ALERT_GAP_H hours (ADMIN_ALERT_MAX caps it if set); reset when promoted."""
@@ -305,7 +336,7 @@ class AutoQuizScheduler:
         """Query groups whose time has come, send one quiz to each."""
         if self.db:
             try:
-                groups = self.db.get_groups_due_for_quiz()
+                groups = await asyncio.to_thread(self.db.get_groups_due_for_quiz)
             except Exception as e:
                 logger.error(f"[SCHEDULER] get_groups_due_for_quiz() failed: {e}")
                 return
@@ -346,7 +377,7 @@ class AutoQuizScheduler:
                     skipped += 1
                     # Advance schedule so we don't retry every minute
                     if self.db:
-                        self.db.update_group_quiz_schedule(chat_id, self.interval)
+                        await asyncio.to_thread(self.db.update_group_quiz_schedule, chat_id, self.interval)
                     continue
 
                 options     = question.get("options", [])
@@ -394,9 +425,10 @@ class AutoQuizScheduler:
 
                 # Advance this group's schedule immediately after delivery
                 if self.db:
-                    self.db.update_group_quiz_schedule(chat_id, self.interval)
+                    await asyncio.to_thread(self.db.update_group_quiz_schedule, chat_id, self.interval)
 
-                self._save_active_quiz(
+                await asyncio.to_thread(
+                    self._save_active_quiz,
                     chat_id=chat_id,
                     message_id=msg.message_id,
                     quiz_id=q_id,
@@ -410,10 +442,11 @@ class AutoQuizScheduler:
                     "question_id":       q_id,
                     "thread_id":         thread_id,
                     "tracking_id":       chat_id,
+                    "ts":                time.time(),
                 }
                 if self.db and q_id:
                     try:
-                        self.db.save_poll_mapping(poll_id_str, q_id, poll_data=poll_entry)
+                        await asyncio.to_thread(self.db.save_poll_mapping, poll_id_str, q_id, poll_data=poll_entry)
                     except Exception as e:
                         logger.warning(
                             f"[SCHEDULER] save_poll_mapping failed for {chat_id}: {e}"
@@ -437,7 +470,7 @@ class AutoQuizScheduler:
                 logger.warning(f"[SCHEDULER] ⏳ Flood limit for {chat_id} — retry in {wait_s:.0f}s")
                 if self.db:
                     try:
-                        self.db.update_group_quiz_schedule(chat_id, max(1.0, wait_s / 60 + 0.5))
+                        await asyncio.to_thread(self.db.update_group_quiz_schedule, chat_id, max(1.0, wait_s / 60 + 0.5))
                     except Exception:
                         pass
                 failed += 1
@@ -452,7 +485,7 @@ class AutoQuizScheduler:
                                    f"retry in {self.TRANSIENT_RETRY_MIN} min")
                     if self.db:
                         try:
-                            self.db.update_group_quiz_schedule(chat_id, self.TRANSIENT_RETRY_MIN)
+                            await asyncio.to_thread(self.db.update_group_quiz_schedule, chat_id, self.TRANSIENT_RETRY_MIN)
                         except Exception:
                             pass
                 elif any(kw in err for kw in self._INACTIVE_ERRORS):
@@ -468,7 +501,7 @@ class AutoQuizScheduler:
                     # Advance schedule so we don't retry every minute
                     if self.db:
                         try:
-                            self.db.update_group_quiz_schedule(chat_id, self.interval)
+                            await asyncio.to_thread(self.db.update_group_quiz_schedule, chat_id, self.interval)
                         except Exception:
                             pass
                 failed += 1

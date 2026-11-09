@@ -2,7 +2,9 @@
 PollMixin — poll persistence and handle_poll_answer.
 """
 
+import asyncio
 import logging
+import time
 import os
 from datetime import datetime
 
@@ -93,6 +95,8 @@ class PollMixin(object):
         bot_data = self.application.bot_data
         for key, val in merged.items():
             if key.startswith("poll_"):
+                if isinstance(val, dict):
+                    val.setdefault("ts", time.time())   # for in-memory pruning
                 bot_data[key] = val
 
         stats["total"] = len(merged)
@@ -107,23 +111,36 @@ class PollMixin(object):
         return stats
 
     async def handle_poll_answer(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        # poll_answer has no effective_chat; ensure_group_registered recovers
-        # chat_id from bot_data using the poll_id.
-        self.ensure_group_registered(update, context, source="poll-answer")
-
-        answer     = update.poll_answer
-        if answer.user:
-            self.ensure_user_registered(answer.user, source="poll-answer")
+        """Fast path on the event loop; every MongoDB write runs in a worker
+        thread so one slow database call never freezes the whole bot."""
+        answer = update.poll_answer
+        if not answer or not answer.user:
+            return
         user_id    = answer.user.id
         poll_id    = answer.poll_id
         option_ids = answer.option_ids
 
-        # 1v1 battle polls are scored separately and never touch regular stats
+        # 1v1 battle polls are scored separately (in memory, on the event loop)
+        # and never touch regular stats
         if hasattr(self, "battle_on_poll_answer") and \
                 self.battle_on_poll_answer(str(poll_id), user_id, option_ids):
+            await asyncio.to_thread(self.ensure_user_registered, answer.user, None, "poll-answer")
             return
 
-        data       = context.bot_data.get(f"poll_{poll_id}", {})
+        data = context.bot_data.get(f"poll_{poll_id}", {})
+        await asyncio.to_thread(self._store_poll_answer, update, context, answer.user, data)
+
+    def _store_poll_answer(self, update, context, user, data: dict) -> None:
+        """Blocking part of a poll answer (runs in a worker thread)."""
+        # poll_answer has no effective_chat; ensure_group_registered recovers
+        # chat_id from bot_data using the poll_id.
+        self.ensure_group_registered(update, context, source="poll-answer")
+        self.ensure_user_registered(user, source="poll-answer")
+
+        answer     = update.poll_answer
+        user_id    = user.id
+        poll_id    = answer.poll_id
+        option_ids = answer.option_ids
         correct_id = data.get("correct_option_id")
         chat_id    = data.get("chat_id", 0)
         thread_id  = data.get("thread_id")

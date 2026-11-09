@@ -191,5 +191,6 @@ Pakke bugs aur sirf "possible risks" alag-alag likho.
 - `/api/metrics` missing aur panel broadcast button ka mismatch (Phase 0 ke bache items).
 - `datetime.utcnow()` deprecated hai (DB mein naive ISO strings save hote hain). Badalne se stored format badlega, isliye soch ke migrate karna.
 - `send_poll` timeout pe Telegram ne poll shayad bhej diya ho; 2 min retry se ek extra poll reh sakta hai jo track nahi hota. Rare, accept kiya.
-- Auto quiz groups ko sequentially bhejta hai, koi global rate limiter nahi. Bahut groups pe 30 msg/sec limit ke liye pacing chahiye (Phase 1).
+- Rate limit: `AIORateLimiter` (poore bot pe, 429 pe khud retry). Poll answers ki DB writes worker thread mein, `concurrent_updates(16)`; scheduler ki DB calls bhi thread mein. Load test: ~30 → ~240 answers/sec.
+- Housekeeping job roz: `activities` 30 din, `poll_map` + memory polls 7 din (`purge_old_data`). Blocked user ka data delete nahi hota, sirf `pm_accessible=False`.
 - Tests abhi bhi kam hain (handlers, parser, poll answers untested).
