@@ -17,6 +17,12 @@ ProtectSystem=full
 ProtectHome=true
 PrivateTmp=true
 LimitNOFILE=65536
+# share the server fairly with other bots
+MemoryMax=2G
+CPUQuota=200%
+Nice=5
+IOSchedulingClass=best-effort
+IOSchedulingPriority=6
 
 [Install]
 WantedBy=multi-user.target

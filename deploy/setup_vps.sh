@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
-# Miss Quiz Bot — one-time VPS setup (Ubuntu 22.04). Safe to run again.
-#   sudo bash setup_vps.sh            # bot + local MongoDB (recommended)
+# Miss Quiz Bot — VPS setup (Ubuntu 22.04). Safe to run again.
+# Built for a server that already runs OTHER bots: it never upgrades existing
+# packages, never restarts other services, never touches the firewall, and
+# caps this bot's (and its MongoDB's) RAM/CPU.
+#
+#   sudo bash setup_vps.sh --check    # only show what would happen, change nothing
+#   sudo bash setup_vps.sh            # bot + local MongoDB (if 27017 is free)
 #   sudo bash setup_vps.sh --atlas    # bot only, keep using MongoDB Atlas
 set -euo pipefail
 
@@ -8,34 +13,57 @@ REPO="https://github.com/ownermood/miss-quiz.git"
 BRANCH="ccr-f1e736ea-a5z34q"
 APP_DIR="/opt/miss-quiz"
 APP_USER="missquiz"
-LOCAL_MONGO=1
-[[ "${1:-}" == "--atlas" ]] && LOCAL_MONGO=0
+LOCAL_MONGO=1; CHECK=0
+for a in "$@"; do
+    case "$a" in --atlas) LOCAL_MONGO=0 ;; --check) CHECK=1 ;; esac
+done
 
 [[ $EUID -eq 0 ]] || { echo "Run as root: sudo bash $0"; exit 1; }
-say() { echo -e "\n\033[1;32m==> $*\033[0m"; }
+say()  { echo -e "\n\033[1;32m==> $*\033[0m"; }
 warn() { echo -e "\033[1;33m!! $*\033[0m"; }
 port_busy() { ss -ltnH "( sport = :$1 )" 2>/dev/null | grep -q .; }
 
-say "What is already running on this server (other bots are left alone)"
-ss -ltnp 2>/dev/null | awk 'NR==1 || /LISTEN/' || true
+# apt: install ONLY what is missing, never upgrade, never auto-restart services
+export DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=l NEEDRESTART_SUSPEND=1
+missing() { local m=(); for p in "$@"; do dpkg -s "$p" >/dev/null 2>&1 || m+=("$p"); done; echo "${m[@]:-}"; }
 
-say "System packages"
-apt-get update -y
-DEBIAN_FRONTEND=noninteractive apt-get install -y git python3 python3-venv python3-pip \
-    ufw fail2ban curl gnupg ca-certificates unattended-upgrades
-
-if [[ $LOCAL_MONGO -eq 1 ]] && port_busy 27017; then
-    warn "Something already listens on 27017 (existing MongoDB / Docker). Not installing another one;"
-    warn "the bot will use it with its own database 'quiz_bot'."
-    MONGO_EXISTS=1
+NEED_PKGS=$(missing git python3 python3-venv python3-pip curl gnupg ca-certificates)
+MONGO_PLAN="none"
+if [[ $LOCAL_MONGO -eq 1 ]]; then
+    if port_busy 27017; then MONGO_PLAN="reuse existing MongoDB on 27017 (own database 'quiz_bot')"
+    elif command -v mongod >/dev/null; then MONGO_PLAN="use installed mongod"
+    else MONGO_PLAN="install MongoDB 7, bind 127.0.0.1, cache limited to 1 GB"; fi
 fi
-if [[ $LOCAL_MONGO -eq 1 ]] && [[ -z "${MONGO_EXISTS:-}" ]] && ! command -v mongod >/dev/null; then
-    say "MongoDB 7 (local, only reachable from this server)"
+
+say "Plan (nothing else on this server is touched)"
+echo "  missing packages to install : ${NEED_PKGS:-none}"
+echo "  MongoDB                     : $MONGO_PLAN"
+echo "  code                        : $APP_DIR (user $APP_USER)"
+echo "  service                     : miss-quiz (max 2 GB RAM, 2 CPU cores, low priority)"
+echo "  firewall / other services   : NOT touched"
+echo "  listening ports right now   :"
+ss -ltnp 2>/dev/null | awk 'NR>1 {print "    " $4 "  " $6}' || true
+[[ $CHECK -eq 1 ]] && { echo -e "\n--check: nothing changed."; exit 0; }
+
+if [[ -n "$NEED_PKGS" ]]; then
+    say "Installing missing packages: $NEED_PKGS"
+    apt-get update -y
+    # shellcheck disable=SC2086
+    apt-get install -y --no-upgrade $NEED_PKGS
+fi
+
+if [[ "$MONGO_PLAN" == install* ]]; then
+    say "MongoDB 7 (only reachable from this server)"
     curl -fsSL https://www.mongodb.org/static/pgp/server-7.0.asc \
         | gpg --dearmor -o /usr/share/keyrings/mongodb-server-7.0.gpg --yes
     echo "deb [ arch=amd64,arm64 signed-by=/usr/share/keyrings/mongodb-server-7.0.gpg ] https://repo.mongodb.org/apt/ubuntu jammy/mongodb-org/7.0 multiverse" \
         > /etc/apt/sources.list.d/mongodb-org-7.0.list
-    apt-get update -y && apt-get install -y mongodb-org
+    apt-get update -y
+    apt-get install -y --no-upgrade mongodb-org
+    # By default MongoDB takes ~50% of RAM for cache — cap it so other bots keep theirs
+    if ! grep -q "cacheSizeGB" /etc/mongod.conf; then
+        sed -i 's/^storage:/storage:\n  wiredTiger:\n    engineConfig:\n      cacheSizeGB: 1/' /etc/mongod.conf
+    fi
     systemctl enable --now mongod
 fi
 
@@ -47,7 +75,7 @@ else
     git -C "$APP_DIR" pull origin "$BRANCH"
 fi
 
-say "Python environment"
+say "Python environment (private venv, system Python untouched)"
 python3 -m venv "$APP_DIR/venv"
 "$APP_DIR/venv/bin/pip" install --upgrade pip -q
 "$APP_DIR/venv/bin/pip" install -r "$APP_DIR/requirements.txt" -q
@@ -80,17 +108,6 @@ say "systemd service (auto start on boot, auto restart on crash)"
 cp "$APP_DIR/deploy/miss-quiz.service" /etc/systemd/system/miss-quiz.service
 systemctl daemon-reload
 systemctl enable miss-quiz
-
-# Firewall: never switch it on here — that would block other bots' webhook /
-# dashboard ports. If it's already on, only make sure SSH stays allowed.
-if ufw status 2>/dev/null | grep -q "Status: active"; then
-    ufw allow OpenSSH >/dev/null
-    say "Firewall already active — left as it is (SSH allowed)"
-else
-    warn "Firewall (ufw) is OFF. Not enabling it automatically, so your other bots keep working."
-    warn "This bot needs NO open port. Enable later only after allowing your other bots' ports."
-fi
-systemctl enable --now fail2ban
 
 if grep -q '^TELEGRAM_TOKEN=your_bot_token_here' "$APP_DIR/.env" || ! grep -q '^OWNER_ID=[0-9]' "$APP_DIR/.env"; then
     echo -e "\n\033[1;33mNEXT: nano $APP_DIR/.env  → set TELEGRAM_TOKEN and OWNER_ID, then: systemctl start miss-quiz\033[0m"
