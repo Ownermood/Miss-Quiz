@@ -38,14 +38,22 @@ GUIDES = {
     ),
 }
 
-ADDQUIZ_HELP = (
-    "<b>ADD QUESTION</b>\n{line}\n"
-    "<b>Send in this format (one per line):</b>\n"
-    "<code>Question text\nOption A\nOption B\nOption C\nOption D\n"
-    "Correct (1-4)\nCategory</code>\n\n"
-    "<b>Example:</b>\n<code>Which Article abolishes untouchability?\n"
-    "Article 14\nArticle 17\nArticle 19\nArticle 21\n2\nPolity</code>\n\n"
-    "<i>/cancel to stop</i>"
+ADDQ_HELP = (
+    "<b>➕ ADD QUESTIONS</b>\n{line}\n"
+    "<b>Send any of these — as many as you want:</b>\n"
+    "• Type / paste questions (one or hundreds)\n"
+    "• A file: .txt .docx .pdf .csv .xlsx .json .html .md .odt .pptx .rtf\n"
+    "• Forward Telegram quiz polls (answer comes with them)\n\n"
+    "<b>Example (any similar layout works):</b>\n"
+    "<code>1. Which Article abolishes untouchability?\n"
+    "A) Article 14\nB) Article 17\nC) Article 19\nD) Article 21\n"
+    "Answer: B\n"
+    "Explanation: Article 17 abolishes untouchability.\n"
+    "Category: Polity</code>\n\n"
+    "<b>Also fine:</b> ✅ after the right option · answer key at the end "
+    "(<code>1-B 2-A</code>) · Hindi (प्रश्न / उत्तर) · CSV/Excel columns "
+    "<code>question, A, B, C, D, answer</code>\n\n"
+    "<i>Tap ✅ Done when finished.</i>"
 )
 
 
@@ -107,8 +115,7 @@ class AdminPanelMixin:
         rows = [
             [btn("Bot Stats", "stats", BLUE, callback_data="ap:stats"),
              btn("Reload", "bolt", BLUE, callback_data="ap:reload")],
-            [btn("Add Quiz", "plus", BLUE, callback_data="ap:addquiz"),
-             btn("Import .txt", "folder", BLUE, callback_data="ap:import")],
+            [btn("Add Questions (text · file · poll)", "plus", BLUE, callback_data="ap:addq")],
             [btn("Edit Quiz", "edit", BLUE, callback_data="ap:edit"),
              btn("Delete Quiz", "trash", BLUE, callback_data="ap:delquiz")],
             [btn("Find Question (ID / word)", "bolt", BLUE, callback_data="ap:find")],
@@ -208,9 +215,6 @@ class AdminPanelMixin:
         elif data == "ap:reload":
             await q.answer("Reloading…")
             await self.cmd_reload(self._proxy(update, "/reload"), context)
-        elif data == "ap:import":
-            await q.answer()
-            await self.cmd_importquiz(self._proxy(update), context)
         elif data == "ap:delquiz":
             await q.answer()
             await self.cmd_delquiz(self._proxy(update), context)
@@ -233,8 +237,9 @@ class AdminPanelMixin:
                       f"🔎 <b>FIND QUESTION</b>\n{UI.THIN}\n"
                       "<b>Send a question ID (like 125) or any word from the question.</b>\n"
                       "You'll get Edit / Delete buttons for each match.\n<i>/cancel to stop</i>")
-        elif data == "ap:addquiz":
-            await ask("addquiz", ADDQUIZ_HELP.format(line=UI.THIN))
+        elif data in ("ap:addq", "ap:addquiz", "ap:import"):     # old buttons land here too
+            await ask("addq", ADDQ_HELP.format(line=UI.THIN),
+                      [[btn("Done", "check", GREEN, callback_data="ap:home")]])
         elif data == "ap:bc":
             await ask("broadcast",
                       f"{e('signal')} <b>BROADCAST</b>\n{UI.THIN}\n"
@@ -365,12 +370,8 @@ class AdminPanelMixin:
 
         if key == PHOTO_KEY:
             await self._save_start_photo_from(update, msg, ud)
-        elif key == "addquiz":
-            if not msg.text:
-                await self._reply(update, f"{e('warn')} <b>Send the question as text.</b>")
-            else:
-                ud.pop("ap_await", None)
-                await self.cmd_addquiz(update, context)
+        elif key == "addq":
+            await self._addq_input(update, context, msg)      # stays in this mode until Done/Back
         elif key == "broadcast":
             ud.pop("ap_await", None)
             dev = getattr(self, "_dev", None)
@@ -566,6 +567,45 @@ class AdminPanelMixin:
         kb = InlineKeyboardMarkup(([nav] if nav else []) + [[btn("Back", "back", RED, callback_data="ap:home")]])
         return head + "\n".join(rows), kb
 
+    # ── add questions: text, any file, forwarded quiz polls ──────────────
+
+    async def _addq_input(self, update, context, msg):
+        from src.bot.quiz_parser import bulk_import
+        if msg.document:
+            await self.handle_document(update, context)          # full import report
+            return
+        items, text, src = [], "", ""
+        if msg.poll:
+            p = msg.poll
+            if p.type != "quiz" or p.correct_option_id is None:
+                await self._reply(update, f"{e('warn')} <b>Only quiz polls with a visible answer can be added.</b>")
+                return
+            items = [{"question": p.question, "options": [o.text for o in p.options],
+                      "correct_answer": p.correct_option_id, "explanation": p.explanation or ""}]
+            src = "poll"
+        elif msg.text:
+            text, src = msg.text, "text"
+        else:
+            await self._reply(update, f"{e('warn')} <b>Send text, a file, or forward a quiz poll.</b>")
+            return
+        res = await asyncio.to_thread(bulk_import, text, self.quiz_manager, items)
+        if src == "text" and not res["imported"] and not res["duplicates"] and not res["problems"]:
+            # nothing recognised: maybe the old 6-line /addquiz layout
+            await self.cmd_addquiz(update, context)
+            return
+        import html as _h
+        lines = [f"{e('check')} <b>Added {res['imported']}</b>"
+                 + (f" · {res['duplicates']} duplicate" if res["duplicates"] else "")
+                 + (f" · {len(res['problems'])} not understood" if res["problems"] else "")
+                 + f"  ·  total {self._q_count()}"]
+        for d in res.get("dup_list", [])[:3]:
+            lines.append(f"♻️ {_h.escape(d['where'])} — {_h.escape(d['reason'])}")
+        for pr in res.get("problems", [])[:5]:
+            lines.append(f"⚠️ {_h.escape(pr['where'])} — {_h.escape(pr['reason'])}")
+        lines.append("<i>Send more, or tap ✅ Done.</i>")
+        await self._reply(update, "\n".join(lines),
+                          reply_markup=InlineKeyboardMarkup([[btn("Done", "check", GREEN, callback_data="ap:home")]]))
+
     # ── find question ────────────────────────────────────────────────────
 
     async def handle_forwarded_poll(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -575,6 +615,8 @@ class AdminPanelMixin:
         user, msg = update.effective_user, update.effective_message
         if not user or not msg or not msg.poll or not await self._is_authorized(user.id):
             return
+        if (getattr(context, "user_data", None) or {}).get("ap_await") == "addq":
+            return          # adding questions: handle_admin_input imports the poll instead
         poll = msg.poll
         qid = (context.bot_data.get(f"poll_{poll.id}", {}) or {}).get("question_id")
         if qid is None and self.db:

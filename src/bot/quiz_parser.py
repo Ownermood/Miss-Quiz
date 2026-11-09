@@ -471,15 +471,49 @@ def _clamp_option(opt: str) -> str:
     return opt[:97] + "…" if len(opt) > _TELEGRAM_OPT_MAX else opt
 
 
-def bulk_import(text: str, quiz_manager) -> Dict:
+def items_to_questions(items: List[Dict]) -> Tuple[List[Dict], List[Dict]]:
+    """Structured rows (CSV/XLSX/JSON/forwarded polls) → questions.
+    answer_raw may be a letter, '(b)', 1-based number, option text or an
+    already-resolved index (key 'correct_answer')."""
+    out, problems = [], []
+    for n, it in enumerate(items, 1):
+        q = re.sub(r"\s+", " ", str(it.get("question") or "")).strip()
+        opts = [re.sub(r"\s+", " ", str(o)).strip() for o in it.get("options") or [] if str(o).strip()]
+        where = f"row {n} “{q[:30]}”"
+        if not q or len(opts) < 2:
+            problems.append({"where": where, "reason": "needs a question and at least 2 options"}); continue
+        if isinstance(it.get("correct_answer"), int):
+            correct = it["correct_answer"]
+        else:
+            raw = it.get("answer_raw")
+            raw = "" if raw is None else str(raw)
+            correct = _u_resolve_answer(raw, opts, "letter") if raw.strip() else None
+        if correct is None or not (0 <= correct < len(opts)):
+            problems.append({"where": where, "reason": f"answer “{str(it.get('answer_raw', ''))[:20]}” doesn't match any option"})
+            continue
+        item = _make(q, opts, correct)
+        if it.get("explanation"):
+            item["explanation"] = str(it["explanation"]).strip()
+        if it.get("category"):
+            item["category"] = str(it["category"])[:40]
+        out.append(item)
+    return out, problems
+
+
+def bulk_import(text: str, quiz_manager, items: Optional[List[Dict]] = None) -> Dict:
     parser   = SmartQuizParser()
-    raw      = parser.parse(text)
+    raw      = parser.parse(text) if (text or "").strip() else []
     problems = list(getattr(parser, "problems", []) or [])
+    if items:
+        more, more_problems = items_to_questions(items)
+        raw += more
+        problems += more_problems
     if len(raw) > MAX_IMPORT_PER_FILE:
         logger.warning(f"Import truncated: {len(raw)} detected, max={MAX_IMPORT_PER_FILE}")
         raw = raw[:MAX_IMPORT_PER_FILE]
     existing = {q["question"].strip().lower() for q in quiz_manager.questions}   # already in DB
     seen_in_file: set = set()                                                     # repeats inside this file
+    dup_list: List[Dict] = []                                                     # which ones, and why
 
     imported, skipped, failed, duplicates = 0, 0, 0, 0
     errors, batch = [], []
@@ -499,7 +533,10 @@ def bulk_import(text: str, quiz_manager) -> Dict:
         if correct is None or not (0 <= correct < len(options)):
             skipped += 1; problems.append({"where": where, "reason": "answer out of range"}); continue
         if q_text.lower() in existing or q_text.lower() in seen_in_file:
-            skipped += 1; duplicates += 1; continue
+            skipped += 1; duplicates += 1
+            dup_list.append({"where": where, "reason": "already in the bot" if q_text.lower() in existing
+                             else "repeated in this file"})
+            continue
         if item.get("explanation"):
             item["explanation"] = item["explanation"][:200]
 
@@ -539,6 +576,7 @@ def bulk_import(text: str, quiz_manager) -> Dict:
         "failed":         failed,
         "errors":         errors,
         "duplicates":     duplicates,
+        "dup_list":       dup_list,          # [{where, reason}] — which questions were duplicates
         "problems":       problems,          # [{where, reason}] — why things were skipped
     }
 

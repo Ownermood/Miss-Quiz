@@ -208,13 +208,13 @@ def _ctx():
 
 def test_panel_has_a_button_for_every_admin_command(bot):
     cbs = set(buttons(bot._panel_kb(True)))
-    for need in ("ap:stats", "ap:reload", "ap:addquiz", "ap:import", "ap:edit", "ap:delquiz",
+    for need in ("ap:stats", "ap:reload", "ap:addq", "ap:edit", "ap:delquiz",
                  "ap:bc", "ap:dbc", "ap:photo", "ap:team", "ap:restart", "ap:close"):
         assert need in cbs
 
 
 @pytest.mark.parametrize("data,handler", [
-    ("ap:import", "cmd_importquiz"), ("ap:delquiz", "cmd_delquiz"), ("ap:edit", "cmd_editquiz"),
+    ("ap:delquiz", "cmd_delquiz"), ("ap:edit", "cmd_editquiz"),
 ])
 async def test_one_tap_commands_run_without_reply_target(bot, data, handler):
     setattr(bot, handler, AsyncMock())
@@ -224,18 +224,43 @@ async def test_one_tap_commands_run_without_reply_target(bot, data, handler):
     assert passed.effective_user.id == DEV
 
 
-async def test_addquiz_button_then_text_runs_addquiz(bot):
+async def test_add_questions_text_poll_and_old_buttons(bot):
     from telegram.ext import ApplicationHandlerStop
+    bot.quiz_manager.questions = []
+    bot.quiz_manager.add_questions.side_effect = lambda b, _existing=None: {"added": len(b), "rejected": {}, "errors": []}
     ctx = _ctx()
-    await bot.handle_admin_panel_callback(_cb(OWNER, "ap:addquiz"), ctx)
-    assert ctx.user_data["ap_await"] == "addquiz"
-    bot.cmd_addquiz = AsyncMock()
-    u = SimpleNamespace(effective_user=SimpleNamespace(id=OWNER), effective_message=MagicMock(text="Q?\nA\nB\nC\nD\n1\nGK"))
+    await bot.handle_admin_panel_callback(_cb(OWNER, "ap:addquiz"), ctx)     # old button → new flow
+    assert ctx.user_data["ap_await"] == "addq"
+    owner = SimpleNamespace(id=OWNER)
+    txt = MagicMock(text="1. Capital of India?\nA) Delhi\nB) Mumbai\nAnswer: A", document=None, poll=None)
     with pytest.raises(ApplicationHandlerStop):
-        await bot.handle_admin_input(u, ctx)
-    bot.cmd_addquiz.assert_awaited_once()
-    assert "ap_await" not in ctx.user_data
+        await bot.handle_admin_input(SimpleNamespace(effective_user=owner, effective_message=txt), ctx)
+    assert "Added 1" in bot._reply.await_args.args[1]
+    poll = SimpleNamespace(type="quiz", correct_option_id=1, question="2+2?", explanation="",
+                           options=[SimpleNamespace(text="3"), SimpleNamespace(text="4")])
+    pm = MagicMock(text=None, document=None, poll=poll)
+    with pytest.raises(ApplicationHandlerStop):
+        await bot.handle_admin_input(SimpleNamespace(effective_user=owner, effective_message=pm), ctx)
+    saved = bot.quiz_manager.add_questions.call_args.args[0][0]
+    assert saved["question"] == "2+2?" and saved["correct_answer"] == 1
+    assert ctx.user_data["ap_await"] == "addq"                                # keeps accepting more
 
+
+async def test_add_questions_file_goes_to_import(bot):
+    from telegram.ext import ApplicationHandlerStop
+    bot.handle_document = AsyncMock()
+    ctx = _ctx(); ctx.user_data["ap_await"] = "addq"
+    m = MagicMock(document=MagicMock(), poll=None, text=None)
+    with pytest.raises(ApplicationHandlerStop):
+        await bot.handle_admin_input(SimpleNamespace(effective_user=SimpleNamespace(id=OWNER), effective_message=m), ctx)
+    bot.handle_document.assert_awaited_once()
+
+
+async def test_forward_finder_steps_aside_while_adding(bot):
+    msg = SimpleNamespace(poll=SimpleNamespace(id="P", question="x"))
+    upd = SimpleNamespace(effective_user=SimpleNamespace(id=OWNER), effective_message=msg)
+    await bot.handle_forwarded_poll(upd, SimpleNamespace(bot_data={}, user_data={"ap_await": "addq"}))
+    bot._reply.assert_not_awaited()
 
 async def test_broadcast_text_then_confirm_buttons(bot):
     from telegram.ext import ApplicationHandlerStop

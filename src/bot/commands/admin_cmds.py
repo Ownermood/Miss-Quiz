@@ -730,26 +730,9 @@ class AdminCommandsMixin(object):
             await self._unauthorized(update)
             return
 
-        text = (
-            f"📥 <b>BULK IMPORT</b>\n"
-            f"{UI.LINE}\n\n"
-            f"  Send a <b>.txt file</b> to this chat.\n\n"
-            f"<b>AUTO-DETECTED FORMATS</b>\n"
-            f"{UI.THIN}\n"
-            f"  ◈ Numbered  —  1. / Q1:\n"
-            f"  ◈ Options   —  A) B) C) D)\n"
-            f"  ◈ Answer    —  Answer: B / Ans: 2\n"
-            f"  ◈ Inline    —  All on same line\n"
-            f"  ◈ Asterisk  —  C) opt *\n\n"
-            f"<b>PROTECTION</b>\n"
-            f"{UI.THIN}\n"
-            f"  ✅ Duplicate detection\n"
-            f"  ✅ Format validation\n"
-            f"  ✅ Auto category tagging\n"
-            f"  ✅ Import report\n\n"
-            f"{UI.LINE}\n"
-            f"  <i>Send your .txt file to begin →</i>"
-        )
+        from src.bot.admin_panel import ADDQ_HELP
+        text = ADDQ_HELP.format(line=UI.THIN).replace("<i>Tap ✅ Done when finished.</i>",
+                                                      "<i>Send your file or text now →</i>")
         await self._reply(update, text)
 
     # ─── DOCUMENT HANDLER — Bulk .txt import ─────────────────
@@ -766,8 +749,7 @@ class AdminCommandsMixin(object):
         user = update.effective_user
 
         if not await self._is_authorized(user.id):
-            await self._unauthorized(update)
-            return
+            return          # files from normal users are just ignored (no spam reply)
 
         doc = update.effective_message.document
         if not doc:
@@ -775,19 +757,6 @@ class AdminCommandsMixin(object):
 
         mention = UI.mention(user.id, UI.display_name(user))
         fname   = doc.file_name or ""
-        is_txt  = (
-            fname.lower().endswith(".txt") or
-            (doc.mime_type or "").startswith("text/")
-        )
-        if not is_txt:
-            await self._reply(update,
-                f"⚠️ <b>Wrong File Type</b>\n"
-                f"{UI.LINE}\n\n"
-                f"  Please send a <b>.txt</b> file.\n"
-                f"  Use /importquiz to see the format guide."
-            )
-            return
-
         if doc.file_size and doc.file_size > 20 * 1024 * 1024:
             await self._reply(update,
                 f"❌ <b>File Too Large</b>\n"
@@ -837,22 +806,21 @@ class AdminCommandsMixin(object):
                 )
             return
 
+        # Any file type → questions (src/bot/file_extract.py)
+        from src.bot.file_extract import extract
         try:
-            text = raw_bytes.decode("utf-8")
-        except UnicodeDecodeError:
-            try:
-                text = raw_bytes.decode("latin-1")
-            except Exception:
-                self._import_users.discard(user.id)
-                if msg:
-                    await self._edit(msg,
-                        f"❌ <b>Encoding Error</b>\n"
-                        f"{UI.LINE}\n\n"
-                        f"  Please save the file as UTF-8 and retry."
-                    )
-                return
+            items, text, note = await asyncio.to_thread(extract, fname, bytes(raw_bytes))
+        except Exception as e:
+            logger.warning(f"[IMPORT] could not read {fname!r}: {e}")
+            items, text, note = [], "", "This file looks damaged or isn't what its name says."
+        if note or (not items and not text.strip()):
+            self._import_users.discard(user.id)
+            if msg:
+                await self._edit(msg, f"❌ <b>Can't read this file</b>\n{UI.LINE}\n\n"
+                                      f"{html.escape(note or 'No text found in the file.')}")
+            return
 
-        line_count = len(text.splitlines())
+        line_count = len(text.splitlines()) + len(items)   # text lines + table/JSON rows
         if msg:
             await self._edit(msg,
                 f"📥 <b>IMPORT IN PROGRESS</b>\n"
@@ -866,7 +834,7 @@ class AdminCommandsMixin(object):
 
         # ── Fire background task — handler returns immediately ─────────────
         task = asyncio.create_task(
-            self._run_import_background(text, fname, mention, user.id, msg),
+            self._run_import_background(text, fname, mention, user.id, msg, items),
             name=f"import-uid{user.id}",
         )
         # Surface unhandled task exceptions to the log
@@ -883,6 +851,7 @@ class AdminCommandsMixin(object):
         mention: str,
         user_id: int,
         msg,
+        items=None,          # structured rows from CSV/XLSX/JSON/DOCX tables
     ):
         """Background task: parse → batch-insert → report.
         Runs parse+insert in asyncio.to_thread() so the event loop stays
@@ -890,7 +859,7 @@ class AdminCommandsMixin(object):
         try:
             t0 = time.monotonic()
             from src.bot.quiz_parser import bulk_import
-            result  = await asyncio.to_thread(bulk_import, text, self.quiz_manager)
+            result  = await asyncio.to_thread(bulk_import, text, self.quiz_manager, items)
             elapsed = time.monotonic() - t0
 
             detected = result.get("total_detected", 0)
@@ -922,6 +891,11 @@ class AdminCommandsMixin(object):
                 f"  📦 Total in DB: <b>{total_q}</b>\n"
                 f"  ⏱ Time      ›  <b>{elapsed:.1f}s</b>\n"
             )
+            dup_list = result.get("dup_list", [])
+            if dup_list:
+                text_out += f"\n<b>♻️ DUPLICATES ({min(len(dup_list), 5)} of {len(dup_list)}):</b>\n"
+                for d in dup_list[:5]:
+                    text_out += f"  • {html.escape(d['where'])} — {html.escape(d['reason'])}\n"
             if problems:
                 text_out += f"\n<b>⚠️ FIX THESE ({min(len(problems), 10)} of {len(problems)}):</b>\n"
                 for pr in problems[:10]:

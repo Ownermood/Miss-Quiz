@@ -399,7 +399,7 @@ class TelegramQuizBot(
 
         # Bulk import: .txt file
         app.add_handler(MessageHandler(
-            filters.Document.TXT | filters.Document.TEXT,
+            filters.Document.ALL & filters.ChatType.PRIVATE,   # any file type, DM only
             self.handle_document))
 
         # Dev module
