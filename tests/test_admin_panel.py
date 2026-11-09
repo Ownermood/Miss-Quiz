@@ -53,7 +53,7 @@ async def test_owner_panel_red_buttons_with_restart(bot):
     assert "ADMIN PANEL" in text and "Paused (not admin)  ›  1" in text
     assert "ap:restart" in buttons(kb)
     styles = {b.callback_data: b.style for row in kb.inline_keyboard for b in row}
-    assert styles["ap:stats"] == "primary" and styles["ap:restart"] == "danger"
+    assert styles["ap:stats"] == "primary" and styles["ap:restart"] == "success" and styles["ap:close"] == "danger"
 
 
 async def test_dev_has_no_restart(bot):
@@ -302,7 +302,7 @@ async def test_every_message_emoji_becomes_premium(monkeypatch):
     from telegram import InlineKeyboardButton as B, InlineKeyboardMarkup as M
     kb = M([[B("🏆 Leaderboard", callback_data="x"), B("⬅️ Back", callback_data="y")]])
     out = await _capture_post(monkeypatch, True, text="🎓 <b>Hi</b> 1 < 2", parse_mode="HTML", reply_markup=kb)
-    assert out["text"].startswith('<tg-emoji emoji-id="')
+    assert out["text"].startswith('<b><tg-emoji emoji-id="') and out["text"].endswith("</b>")
     b1, b2 = out["reply_markup"].inline_keyboard[0]
     assert b1.text == "Leaderboard" and b1.icon_custom_emoji_id
     assert b2.style == "danger"
@@ -317,7 +317,7 @@ async def test_premium_off_leaves_text_but_back_still_red(monkeypatch):
     from telegram import InlineKeyboardButton as B, InlineKeyboardMarkup as M
     out = await _capture_post(monkeypatch, False, text="✅ ok", parse_mode="HTML",
                               reply_markup=M([[B("🔙 Back", callback_data="y")]]))
-    assert out["text"] == "✅ ok"
+    assert out["text"] == "<b>✅ ok</b>" and "tg-emoji" not in out["text"]
     assert out["reply_markup"].inline_keyboard[0][0].style == "danger"
 
 
@@ -350,3 +350,83 @@ async def test_rejected_premium_is_resent_plain(monkeypatch):
     bot = make_premium_bot_class()("123:abc")
     assert await bot._do_post("sendMessage", {"text": "✅ hi", "parse_mode": "HTML"}) is True
     assert len(calls) == 2 and calls[1]["text"] == "✅ hi"
+
+
+# ── edit-in-place flow, bold/gaps, live stats ──────────────────────────────
+
+async def test_panel_command_edits_panel_message_with_back():
+    from src.bot.admin_panel import _MsgProxy
+    panel = MagicMock(); panel.edit_text = AsyncMock(return_value="edited"); panel.reply_text = AsyncMock()
+    proxy = _MsgProxy(panel, edit=True)
+    assert await proxy.reply_text("Reloaded", parse_mode="HTML") == "edited"
+    panel.reply_text.assert_not_awaited()                     # no new message in chat
+    kb = panel.edit_text.await_args.kwargs["reply_markup"]
+    assert kb.inline_keyboard[-1][0].callback_data == "ap:home"
+
+
+async def test_panel_edit_falls_back_to_new_message_on_photo():
+    from src.bot.admin_panel import _MsgProxy
+    panel = MagicMock()
+    panel.edit_text = AsyncMock(side_effect=Exception("There is no text in the message to edit"))
+    panel.reply_text = AsyncMock(return_value="new")
+    assert await _MsgProxy(panel, edit=True).reply_text("x", message_thread_id=5) == "new"
+
+
+async def test_bold_and_gaps_on_every_message(monkeypatch):
+    out = await _capture_post(monkeypatch, False, text="<b>A</b>\n\n\n\nB", parse_mode="HTML")
+    assert out["text"] == "<b>A\n\nB</b>"
+    out = await _capture_post(monkeypatch, False, text="Use <code>/x</code>", parse_mode="HTML")
+    assert out["text"] == "Use <code>/x</code>"           # code can't be inside bold
+
+
+def test_group_analytics_counts_only_real_admin_groups():
+    mongomock = pytest.importorskip("mongomock")
+    from src.core.database import DatabaseManager
+    db = DatabaseManager.__new__(DatabaseManager)
+    db.groups_col = mongomock.MongoClient().db.g
+    db.groups_col.insert_many([{"bot_is_admin": True}, {"bot_is_admin": False}, {}])
+    d = db.get_group_analytics()
+    assert (d["g_total"], d["g_admin"], d["g_paused"]) == (3, 1, 1)
+
+
+def test_activity_analytics_live_counts():
+    mongomock = pytest.importorskip("mongomock")
+    from datetime import datetime, timedelta
+    from src.core.database import DatabaseManager
+    db = DatabaseManager.__new__(DatabaseManager)
+    db.activities_col = mongomock.MongoClient().db.a
+    now = datetime.utcnow()
+    ts = lambda h: (now - timedelta(hours=h)).isoformat()
+    db.activities_col.insert_many([
+        {"type": "quiz_answer", "timestamp": ts(0.1), "is_correct": True, "user_id": 1},
+        {"type": "quiz_answer", "timestamp": ts(5), "is_correct": False, "user_id": 2},
+        {"type": "quiz_answer", "timestamp": ts(30), "is_correct": True, "user_id": 3},
+        {"type": "command", "timestamp": ts(0.1)},
+    ])
+    assert db.get_activity_analytics() == {"a_day": 2, "a_day_ok": 1, "a_hour": 1, "a_players": 2}
+
+
+async def test_botstats_live_text_and_back_to_panel(bot):
+    bot.db.get_user_analytics.return_value = {"u_total": 9}
+    bot.db.get_group_analytics.return_value = {"g_total": 4, "g_admin": 3, "g_paused": 1}
+    bot.db.get_content_analytics.return_value = {"q_cats": 2}
+    bot.db.get_activity_analytics.return_value = {"a_day": 10, "a_day_ok": 7, "a_hour": 3, "a_players": 5}
+    bot.db.get_db_stats.return_value = {"objects": 50}
+    from src.bot.commands.quiz_cmds import QuizCommandsMixin
+    msg = MagicMock(); msg.edit_text = AsyncMock()
+    await QuizCommandsMixin.cmd_botstats(bot, upd(OWNER), None, edit_msg=msg)
+    text, kb = bot._edit.await_args.args[1], bot._edit.await_args.args[2]
+    assert "accuracy 70%" in text and "Answers (last hour) › 3" in text and "Updated" in text
+    assert "Paused (not admin) › 1" in text
+    assert [b.callback_data for b in kb.inline_keyboard[0]] == ["bs_refresh", "ap:home"]
+
+
+def test_refresh_button_is_routed():
+    from telegram.ext import Application, CallbackQueryHandler
+    b = TelegramQuizBot(MagicMock(), db_manager=MagicMock())
+    b.application = Application.builder().token("1:a").build()
+    b._register_handlers()
+    cbs = [h for h in b.application.handlers[0] if isinstance(h, CallbackQueryHandler)]
+    h = next(h for h in cbs if h.callback == b._cb_botstats_refresh)
+    assert h.pattern.match("bs_refresh")
+    assert cbs.index(h) < [x.callback for x in cbs].index(b.handle_callback)

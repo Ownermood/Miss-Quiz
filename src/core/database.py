@@ -773,13 +773,32 @@ class DatabaseManager:
             _af   = {"active_status": {"$ne": "inactive"}}
             return {
                 "g_total": gcol.count_documents(_af),
-                "g_admin": gcol.count_documents({**_af, "bot_is_admin": {"$ne": False}}),
+                "g_admin":  gcol.count_documents({**_af, "bot_is_admin": True}),
+                "g_paused": gcol.count_documents({**_af, "bot_is_admin": False}),
                 "g_new_d": gcol.count_documents({**_af, "joined_at": {"$gte": d_cut}}),
                 "g_new_w": gcol.count_documents({**_af, "joined_at": {"$gte": w_cut}}),
                 "g_new_m": gcol.count_documents({**_af, "joined_at": {"$gte": m_cut}}),
             }
         except Exception as e:
             logger.error(f"get_group_analytics error: {e}")
+            return {}
+
+    def get_activity_analytics(self) -> Dict:
+        """Live activity from the activities log: answers + accuracy, last 24h / 1h."""
+        try:
+            now = datetime.utcnow()
+            d_cut = (now - timedelta(hours=24)).isoformat()
+            h_cut = (now - timedelta(hours=1)).isoformat()
+            acol = self.activities_col
+            q = {"type": "quiz_answer"}
+            return {
+                "a_day":     acol.count_documents({**q, "timestamp": {"$gte": d_cut}}),
+                "a_day_ok":  acol.count_documents({**q, "timestamp": {"$gte": d_cut}, "is_correct": True}),
+                "a_hour":    acol.count_documents({**q, "timestamp": {"$gte": h_cut}}),
+                "a_players": len(acol.distinct("user_id", {**q, "timestamp": {"$gte": d_cut}})),
+            }
+        except Exception as e:
+            logger.error(f"get_activity_analytics error: {e}")
             return {}
 
     def get_content_analytics(self) -> Dict:

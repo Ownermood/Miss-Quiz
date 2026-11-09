@@ -5,12 +5,13 @@ QuizCommandsMixin — /quiz /score /stats /achievements /botstats
 import asyncio
 import logging
 
+from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, Poll
 from telegram.error import TelegramError
 from telegram.ext import ContextTypes
 from telegram.constants import ParseMode
 
-from src.bot.ui import UI, COMMUNITY, get_thread_id, get_tracking_id
+from src.bot.ui import UI, get_thread_id, get_tracking_id
 
 logger = logging.getLogger(__name__)
 
@@ -398,74 +399,53 @@ class QuizCommandsMixin(object):
         await asyncio.sleep(0.3)
 
         q_total = self._q_count()
-        ud = gd = dbs = cd = {}
+        d, dbs = {}, {}
         if self.db:
             try:
-                ud, gd, cd, dbs = await asyncio.gather(
+                parts = await asyncio.gather(
                     asyncio.to_thread(self.db.get_user_analytics),
                     asyncio.to_thread(self.db.get_group_analytics),
                     asyncio.to_thread(self.db.get_content_analytics),
+                    asyncio.to_thread(self.db.get_activity_analytics),
                     asyncio.to_thread(self.db.get_db_stats),
                 )
+                for part in parts[:4]:
+                    d.update(part or {})
+                dbs = parts[4] or {}
             except Exception as e:
                 logger.error(f"cmd_botstats: {e}")
-        d = {**ud, **gd, **cd}
+        g = lambda k: d.get(k, 0)
+        acc = round(g("a_day_ok") * 100 / g("a_day")) if g("a_day") else 0
+        live_battles = sum(1 for b in getattr(self, "_battles", {}).values() if b.state == "running")
+        now = datetime.utcnow().strftime("%H:%M:%S UTC")
 
-        u_total    = d.get("u_total",    0)
-        u_pm       = d.get("u_pm",       0)
-        u_active_d = d.get("u_active_d", 0)
-        u_active_w = d.get("u_active_w", 0)
-        u_new_d    = d.get("u_new_d",    0)
-        u_new_w    = d.get("u_new_w",    0)
-        u_new_m    = d.get("u_new_m",    0)
-        g_total    = d.get("g_total",    0)
-        g_admin    = d.get("g_admin",    0)
-        g_new_d    = d.get("g_new_d",    0)
-        g_new_w    = d.get("g_new_w",    0)
-        g_new_m    = d.get("g_new_m",    0)
-        q_cats     = d.get("q_cats",     0)
-
-        LINE = "━" * 38
         text = (
-            f"📊  <b>𝐌𝐈𝐒𝐒 𝐐𝐔𝐈𝐙  •  𝐁𝐎𝐓 𝐀𝐍𝐀𝐋𝐘𝐓𝐈𝐂𝐒</b>\n"
-            f"{LINE}\n\n"
-
-            f"👥  <b>𝐔𝐒𝐄𝐑  𝐒𝐓𝐀𝐓𝐈𝐒𝐓𝐈𝐂𝐒</b>\n"
-            f"╭──────────────────────────────────────╮\n"
-            f"│  Total Users      ›  <b>{u_total:,}</b>\n"
-            f"│  Reachable Users  ›  <b>{u_pm:,}</b>\n"
-            f"│  Active Today     ›  <b>{u_active_d:,}</b>\n"
-            f"│  Active This Week ›  <b>{u_active_w:,}</b>\n"
-            f"│  New Today        ›  <b>+{u_new_d}</b>\n"
-            f"│  New This Week    ›  <b>+{u_new_w}</b>\n"
-            f"│  New This Month   ›  <b>+{u_new_m}</b>\n"
-            f"╰──────────────────────────────────────╯\n\n"
-
-            f"💬  <b>𝐆𝐑𝐎𝐔𝐏  𝐍𝐄𝐓𝐖𝐎𝐑𝐊</b>\n"
-            f"╭──────────────────────────────────────╮\n"
-            f"│  Total Groups     ›  <b>{g_total:,}</b>\n"
-            f"│  Admin Groups     ›  <b>{g_admin:,}</b>\n"
-            f"│  New Today        ›  <b>+{g_new_d}</b>\n"
-            f"│  New This Week    ›  <b>+{g_new_w}</b>\n"
-            f"│  New This Month   ›  <b>+{g_new_m}</b>\n"
-            f"╰──────────────────────────────────────╯\n\n"
-
-            f"📚  <b>𝐂𝐎𝐍𝐓𝐄𝐍𝐓  𝐋𝐈𝐁𝐑𝐀𝐑𝐘</b>\n"
-            f"╭──────────────────────────────────────╮\n"
-            f"│  Questions        ›  <b>{q_total:,}</b>\n"
-            f"│  Categories       ›  <b>{q_cats:,}</b>\n"
-            f"│  Collections      ›  <b>{dbs.get('collections', 0):,}</b>\n"
-            f"│  Documents        ›  <b>{dbs.get('objects', 0):,}</b>\n"
-            f"╰──────────────────────────────────────╯\n\n"
-
-            f"{LINE}\n"
-            f"⚡  Powered by {COMMUNITY}\n"
-            f"{LINE}"
+            f"📊 <b>BOT STATS · LIVE</b>\n"
+            f"<blockquote><b>⚡ RIGHT NOW\n"
+            f"Answers (last hour) › {g('a_hour'):,}\n"
+            f"Battles running › {live_battles}</b></blockquote>"
+            f"<blockquote><b>📈 LAST 24 HOURS\n"
+            f"Answers › {g('a_day'):,}  ·  accuracy {acc}%\n"
+            f"Players › {g('a_players'):,}\n"
+            f"New users › +{g('u_new_d')}  ·  new groups › +{g('g_new_d')}</b></blockquote>"
+            f"<blockquote><b>👥 USERS\n"
+            f"Total › {g('u_total'):,}  ·  reachable in DM › {g('u_pm'):,}\n"
+            f"Active today › {g('u_active_d'):,}  ·  this week › {g('u_active_w'):,}\n"
+            f"New this week › +{g('u_new_w')}  ·  month › +{g('u_new_m')}</b></blockquote>"
+            f"<blockquote><b>💬 GROUPS\n"
+            f"Total › {g('g_total'):,}\n"
+            f"Auto quiz ON (bot admin) › {g('g_admin'):,}\n"
+            f"Paused (not admin) › {g('g_paused'):,}\n"
+            f"New this week › +{g('g_new_w')}  ·  month › +{g('g_new_m')}</b></blockquote>"
+            f"<blockquote><b>📚 CONTENT\n"
+            f"Questions › {q_total:,}  ·  categories › {g('q_cats'):,}\n"
+            f"Database documents › {dbs.get('objects', 0):,}</b></blockquote>"
+            f"<b>🕒 Updated {now}</b>"
         )
 
         kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🔄 Refresh", callback_data="bs_refresh"),
-             InlineKeyboardButton("🏠 Home",    callback_data="nav_home")],
+            [InlineKeyboardButton("🔄 Refresh", callback_data="bs_refresh", style="primary"),
+             InlineKeyboardButton("⬅️ Back", callback_data="ap:home")],   # back to Admin Panel
         ])
 
         await self._edit(wait, text, kb)

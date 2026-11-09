@@ -259,6 +259,46 @@ def premiumize_request(data: dict, endpoint: str = "sendMessage") -> dict:
     return data
 
 
+def bold_on() -> bool:
+    return os.environ.get("BOLD_TEXT", "1").strip().lower() not in ("0", "false", "no", "off")
+
+
+_GAP_RE = _re.compile(r"\n[ \t]*\n([ \t]*\n)+")
+
+
+def tidy_html(text: str) -> str:
+    """Bold everything and remove extra blank lines.
+    - 3+ line breaks → one empty line; no blank lines at start/end
+    - whole message wrapped in <b> (inner <b> tags dropped). Skipped when the
+      message has <code>/<pre>, which Telegram doesn't allow inside bold."""
+    if not text:
+        return text
+    text = _GAP_RE.sub("\n\n", text).strip("\n")
+    if bold_on() and "<code" not in text and "<pre" not in text:
+        text = "<b>" + _re.sub(r"</?b>", "", text) + "</b>"
+    return text
+
+
+def style_request(data: dict, endpoint: str) -> dict:
+    """Always on (premium or not): bold + tidy HTML text, red Back buttons."""
+    if not isinstance(data, dict):
+        return data
+    if "reply_markup" in data:
+        data["reply_markup"] = style_markup(data["reply_markup"])
+    if endpoint in _HTML_ENDPOINTS:
+        for key in ("text", "caption"):
+            val = data.get(key)
+            if not isinstance(val, str) or not val.strip():
+                continue
+            mode = str(data.get("parse_mode") or "").upper()
+            if mode == "HTML":
+                data[key] = tidy_html(val)
+            elif not mode and not data.get("entities") and not data.get("caption_entities"):
+                data[key] = tidy_html(_html.escape(val, quote=False))
+                data["parse_mode"] = "HTML"
+    return data
+
+
 _BACK_RE = _re.compile(r"\bback\b", _re.IGNORECASE)
 
 
@@ -285,15 +325,14 @@ def make_premium_bot_class():
     class PremiumExtBot(ExtBot):
         async def _do_post(self, endpoint, data, *args, **kwargs):
             from telegram.error import BadRequest
-            if isinstance(data, dict) and "reply_markup" in data:
-                data["reply_markup"] = style_markup(data["reply_markup"])
             original = dict(data) if isinstance(data, dict) else data
             try:
+                data = style_request(data, endpoint)
                 return await super()._do_post(endpoint, premiumize_request(data, endpoint), *args, **kwargs)
             except BadRequest as e:
-                # Premium emoji rejected (e.g. owner's Premium expired): never lose
-                # the message — resend it exactly as it was, with normal emoji.
-                if premium_on() and any(w in str(e).lower() for w in ("emoji", "entit", "document_invalid")):
+                # Premium emoji / bold rejected (e.g. Premium expired, odd markup):
+                # never lose the message — resend it exactly as the code wrote it.
+                if any(w in str(e).lower() for w in ("emoji", "entit", "document_invalid", "can't parse")):
                     import logging
                     logging.getLogger(__name__).warning(f"premium emoji rejected on {endpoint}: {e} — sent plain")
                     return await super()._do_post(endpoint, original, *args, **kwargs)

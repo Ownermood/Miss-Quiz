@@ -307,6 +307,11 @@ class TelegramQuizBot(
             f"{e('play')} <b>QUIZ • BATTLE • WIN!</b>"
         )
 
+    async def _cb_botstats_refresh(self, update: Update, context):
+        """'Refresh' on /botstats: re-query live numbers in place (auth inside)."""
+        await update.callback_query.answer("Refreshing…")
+        await self.cmd_botstats(update, context, edit_msg=update.callback_query.message)
+
     async def _cb_start_battle(self, update: Update, context):
         """'Battle' button on /start → same as typing /battle."""
         await update.callback_query.answer()
@@ -388,6 +393,8 @@ class TelegramQuizBot(
             self.handle_admin_panel_callback, pattern=r"^ap:"))
         app.add_handler(CallbackQueryHandler(
             self._cb_start_battle, pattern=r"^start_battle$"))
+        app.add_handler(CallbackQueryHandler(
+            self._cb_botstats_refresh, pattern=r"^bs_refresh$"))
         app.add_handler(CallbackQueryHandler(self.handle_callback))
 
         # Bulk import: .txt file

@@ -50,15 +50,40 @@ ADDQUIZ_HELP = (
 
 
 class _MsgProxy:
-    """A message stand-in: same as `base`, but with chosen text / reply_to."""
+    """A message stand-in: same as `base`, but with chosen text / reply_to.
 
-    def __init__(self, base, text="", reply_to=None):
+    edit=True: reply_text() EDITS `base` (the panel message) instead of sending
+    a new message, so panel actions stay in one message (clean chat). A Back
+    button to the panel is added to every screen shown this way."""
+
+    def __init__(self, base, text="", reply_to=None, edit=False):
         self._base = base
         self.text = text
         self.reply_to_message = reply_to
+        self._edit_mode = edit
 
     def __getattr__(self, name):
         return getattr(self._base, name)
+
+    async def reply_text(self, text, **kw):
+        if not self._edit_mode:
+            return await self._base.reply_text(text, **kw)
+        kb = kw.get("reply_markup")
+        back = [btn("Back", "back", RED, callback_data="ap:home")]
+        rows = list(kb.inline_keyboard) if isinstance(kb, InlineKeyboardMarkup) else []
+        if not any(b.callback_data == "ap:home" for r in rows for b in r):
+            rows.append(back)
+        try:
+            return await self._base.edit_text(
+                text, parse_mode=kw.get("parse_mode"), reply_markup=InlineKeyboardMarkup(rows),
+                link_preview_options=kw.get("link_preview_options"))
+        except Exception as ex:
+            if "not modified" in str(ex).lower():
+                return self._base
+            # photo message or too old to edit: fall back to a new message
+            kw["reply_markup"] = InlineKeyboardMarkup(rows)
+            kw.pop("message_thread_id", None)
+            return await self._base.reply_text(text, **kw)
 
 
 class _UpdProxy:
@@ -92,8 +117,8 @@ class AdminPanelMixin:
              btn("Team", "users", BLUE, callback_data="ap:team")],
         ]
         if is_owner:
-            rows.append([btn("Restart Bot", "warn", RED, callback_data="ap:restart")])
-        rows.append([btn("Close", "cross", None, callback_data="ap:close")])
+            rows.append([btn("Restart Bot", "warn", GREEN, callback_data="ap:restart")])
+        rows.append([btn("Close", "cross", RED, callback_data="ap:close")])
         return InlineKeyboardMarkup(rows)
 
     @staticmethod
@@ -122,9 +147,10 @@ class AdminPanelMixin:
         )
 
     def _proxy(self, update, text=""):
+        """Run a command handler from a panel button: its replies edit the panel."""
         q = update.callback_query
         base = q.message if q else update.effective_message
-        return _UpdProxy(update, _MsgProxy(base, text=text))
+        return _UpdProxy(update, _MsgProxy(base, text=text, edit=bool(q)))
 
     # ── /admin ───────────────────────────────────────────────────────────
 
@@ -176,10 +202,10 @@ class AdminPanelMixin:
         # read-only / one-tap commands
         elif data == "ap:stats":
             await q.answer()
-            await self.cmd_botstats(update, context)
+            await self.cmd_botstats(update, context, edit_msg=q.message)
         elif data == "ap:reload":
             await q.answer("Reloading…")
-            await self.cmd_reload(update, context)
+            await self.cmd_reload(self._proxy(update, "/reload"), context)
         elif data == "ap:import":
             await q.answer()
             await self.cmd_importquiz(self._proxy(update), context)
@@ -218,10 +244,16 @@ class AdminPanelMixin:
             await self._edit(q.message, await self._panel_text(), self._panel_kb(owner))
         elif data == "ap:team":
             await q.answer()
-            if dev and context is not None:
-                context.args = ["list"]
-                await dev.dev(self._proxy(update, "/dev list"), context)
-            await self._reply(update, f"{e('users')} <b>TEAM</b>", reply_markup=InlineKeyboardMarkup([
+            team = f"{e('users')} <b>TEAM</b>\n{UI.THIN}\n"
+            if self.db:
+                try:
+                    devs = await asyncio.to_thread(self.db.get_all_developers)
+                    team += "\n".join(
+                        f"<b>• {UI.mention(d.get('user_id'), d.get('name') or d.get('username') or d.get('user_id'))}</b>"
+                        f"  <code>{d.get('user_id')}</code>" for d in devs) or "<b>No developers yet.</b>"
+                except Exception as ex:
+                    logger.warning(f"[ADMIN PANEL] team list failed: {ex}")
+            await self._edit(q.message, team, InlineKeyboardMarkup([
                 [btn("Add Developer", "plus", GREEN, callback_data="ap:dev_add"),
                  btn("Remove Developer", "trash", RED, callback_data="ap:dev_rm")],
                 [btn("Back", "back", RED, callback_data="ap:home")]]))
@@ -234,6 +266,7 @@ class AdminPanelMixin:
         # broadcast confirm / undo
         elif data == "ap:bc_yes" and dev:
             await q.answer("Sending…")
+            await self._edit(q.message, f"{e('signal')} <b>Sending broadcast…</b>")
             await dev.broadcast_confirm(self._proxy(update, "/broadcast_confirm"), context)
         elif data == "ap:bc_no":
             for k in [k for k in ud if str(k).startswith("broadcast_")]:
@@ -242,13 +275,13 @@ class AdminPanelMixin:
             await self._edit(q.message, f"{e('cross')} <b>Broadcast cancelled.</b>", self._back_kb())
         elif data == "ap:dbc" and dev:
             await q.answer()
-            await dev.delbroadcast(self._proxy(update, "/delbroadcast"), context)
-            await self._reply(update, f"{e('warn')} <b>Delete the last broadcast everywhere?</b>",
-                              reply_markup=InlineKeyboardMarkup([
-                                  [btn("Yes, delete it", "trash", RED, callback_data="ap:dbc_yes")],
-                                  [btn("Back", "back", RED, callback_data="ap:home")]]))
+            await self._edit(q.message, f"{e('warn')} <b>Delete the last broadcast from every chat?</b>",
+                             InlineKeyboardMarkup([
+                                 [btn("Yes, delete it", "trash", RED, callback_data="ap:dbc_yes")],
+                                 [btn("Back", "back", RED, callback_data="ap:home")]]))
         elif data == "ap:dbc_yes" and dev:
             await q.answer("Deleting…")
+            await dev.delbroadcast(self._proxy(update, "/delbroadcast"), context)          # finds the last one
             await dev.delbroadcast_confirm(self._proxy(update, "/delbroadcast_confirm"), context)
 
         # owner only
