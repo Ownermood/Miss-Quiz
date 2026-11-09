@@ -484,7 +484,7 @@ async def test_bold_and_gaps_on_every_message(monkeypatch):
     out = await _capture_post(monkeypatch, False, text="<b>A</b>\n\n\n\nB", parse_mode="HTML")
     assert out["text"] == "<b>A\n\nB</b>"
     out = await _capture_post(monkeypatch, False, text="Use <code>/x</code>", parse_mode="HTML")
-    assert out["text"] == "Use <code>/x</code>"           # code can't be inside bold
+    assert out["text"] == "<b>Use </b><code>/x</code>"   # code itself can't be bold, the rest is
 
 
 def test_group_analytics_counts_only_real_admin_groups():

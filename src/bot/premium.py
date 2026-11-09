@@ -325,9 +325,25 @@ def tidy_html(text: str) -> str:
     if not text:
         return text
     text = _GAP_RE.sub("\n\n", text).strip("\n")
-    if bold_on() and "<code" not in text and "<pre" not in text:
-        text = "<b>" + _re.sub(r"</?b>", "", text) + "</b>"
-    return text
+    if not bold_on():
+        return text
+    text = _re.sub(r"</?b>", "", text)
+    if "<code" not in text and "<pre" not in text:
+        return "<b>" + text + "</b>"
+    # Telegram can't bold <code>/<pre>: bold every text run outside them
+    # (each run gets its own <b>, so tags always stay properly nested).
+    out, skip = [], 0
+    for part in _TAG_RE.split(text):
+        if part.startswith("<") and part.endswith(">"):
+            name = part[1:].split()[0].rstrip(">").lower() if len(part) > 2 else ""
+            if name.lstrip("/") in ("code", "pre", "tg-emoji"):
+                skip = max(0, skip + (-1 if name.startswith("/") else 1))
+            out.append(part)
+        elif skip or not part.strip():
+            out.append(part)
+        else:
+            out.append(f"<b>{part}</b>")
+    return "".join(out)
 
 
 def style_request(data: dict, endpoint: str) -> dict:
