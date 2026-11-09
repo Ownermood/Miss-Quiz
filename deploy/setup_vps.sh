@@ -72,7 +72,8 @@ id "$APP_USER" >/dev/null 2>&1 || useradd --system --create-home --shell /usr/sb
 if [[ ! -d "$APP_DIR/.git" ]]; then
     git clone -b "$BRANCH" "$REPO" "$APP_DIR"     # private repo: asks GitHub username + token
 else
-    git -C "$APP_DIR" pull origin "$BRANCH"
+    # repo belongs to $APP_USER; tell git (running as root) that's fine
+    git -c safe.directory="$APP_DIR" -C "$APP_DIR" pull origin "$BRANCH"
 fi
 
 say "Python environment (private venv, system Python untouched)"
