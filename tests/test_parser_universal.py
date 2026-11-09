@@ -106,3 +106,20 @@ async def test_forwarded_poll_text_fallback(bot):
     with pytest.raises(ApplicationHandlerStop):
         await bot.handle_forwarded_poll(upd, SimpleNamespace(bot_data={}))
     assert "#7" in bot._reply.await_args.args[1]
+
+
+def test_bulk_import_end_to_end_saves_into_empty_db():
+    """Real QuizManager (only MongoDB mocked): every question was being
+    rejected as its own duplicate and nothing was saved."""
+    from src.core.quiz import QuizManager
+    db = MagicMock()
+    db.get_all_questions.return_value = []
+    db.add_questions_batch.side_effect = lambda b: (len(b), [(i, 100 + i) for i in range(len(b))], [])
+    qm = QuizManager(db_manager=db)
+    text = "\n\n".join(f"{i}. Question number {i}?\nA) x{i}\nB) y{i}\nAnswer: A" for i in range(1, 6))
+    text += "\n\n6. Question number 1?\nA) x\nB) y\nAnswer: A"            # repeat inside the file
+    res = bulk_import(text, qm)
+    assert res["imported"] == 5 and res["duplicates"] == 1
+    assert len(qm.questions) == 5
+    res2 = bulk_import(text, qm)                                           # same file again
+    assert res2["imported"] == 0 and res2["duplicates"] == 6

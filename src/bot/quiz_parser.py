@@ -478,7 +478,8 @@ def bulk_import(text: str, quiz_manager) -> Dict:
     if len(raw) > MAX_IMPORT_PER_FILE:
         logger.warning(f"Import truncated: {len(raw)} detected, max={MAX_IMPORT_PER_FILE}")
         raw = raw[:MAX_IMPORT_PER_FILE]
-    existing = {q["question"].strip().lower() for q in quiz_manager.questions}
+    existing = {q["question"].strip().lower() for q in quiz_manager.questions}   # already in DB
+    seen_in_file: set = set()                                                     # repeats inside this file
 
     imported, skipped, failed, duplicates = 0, 0, 0, 0
     errors, batch = [], []
@@ -497,7 +498,7 @@ def bulk_import(text: str, quiz_manager) -> Dict:
             skipped += 1; problems.append({"where": where, "reason": "empty option"}); continue
         if correct is None or not (0 <= correct < len(options)):
             skipped += 1; problems.append({"where": where, "reason": "answer out of range"}); continue
-        if q_text.lower() in existing:
+        if q_text.lower() in existing or q_text.lower() in seen_in_file:
             skipped += 1; duplicates += 1; continue
         if item.get("explanation"):
             item["explanation"] = item["explanation"][:200]
@@ -513,7 +514,7 @@ def bulk_import(text: str, quiz_manager) -> Dict:
         item["options"]  = clamped
         if not item.get("category") or item["category"] == "General Knowledge":
             item["category"] = guess_category(q_text)   # keep a category given in the file
-        existing.add(q_text.lower())
+        seen_in_file.add(q_text.lower())   # NOT into `existing`: that set means "already in DB"
         batch.append(item)
 
     if batch:
