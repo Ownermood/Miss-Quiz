@@ -143,6 +143,8 @@ Pakke bugs aur sirf "possible risks" alag-alag likho.
 - [ ] Har chat mein X din tak repeat na ho (DB mein)
 - [ ] Send fail ho to retry. Inactive groups pause. Rate limit ke liye staggering + 429 handling.
 
+**Group Quiz (manual sessions)** → plan: `docs/GROUP_QUIZ_PLAN.md` (Phase A–E). Owner ke jawab ke baad shuru.
+
 **Phase 2: Quiz Builder MVP**
 - [ ] DM mein quiz banana (step by step), forward kiye poll se import, .txt/.csv import
 - [ ] `/startquiz` group/channel mein, admin check ke saath. Schedule, pause, stop.
