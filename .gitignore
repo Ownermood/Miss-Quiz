@@ -78,3 +78,6 @@ attached_assets/
 # SQLite specific
 *.db-shm
 *.db-wal
+# runtime files written by the bot
+data/*.pkl
+data/.restart_flag
