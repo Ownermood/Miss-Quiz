@@ -77,7 +77,7 @@ def parse_questions(text: str, items: Optional[List[Dict]] = None,
     for it in raw:
         raw_q = " ".join(str(it.get("question") or "").split())
         q = clean_text(raw_q, custom_words)
-        opts = [clean_text(str(o).strip(), custom_words) for o in it.get("options") or []]
+        opts = [clean_text(str(o).strip(), custom_words, is_option=True) for o in it.get("options") or []]
         c = it.get("correct_answer")
         where = f"“{q[:30]}”"
         if len(q) < 3:
@@ -88,7 +88,7 @@ def parse_questions(text: str, items: Optional[List[Dict]] = None,
             problems.append({"where": where, "reason": "answer missing or doesn't match an option"}); continue
         d = {"question": q[:280], "options": [_clamp_option(o) for o in opts], "correct_answer": c}
         if it.get("explanation"):
-            d["explanation"] = clean_text(str(it["explanation"]).strip(), custom_words)[:190]
+            d["explanation"] = clean_text(str(it["explanation"]).strip(), custom_words, is_option=True)[:190]
         out.append(d)
     return out, problems
 
@@ -242,7 +242,8 @@ class MyQuizMixin:
                 qs = await self._mq_db("get_quiz_set", renaming_id)
                 await self._reply(update, f"✅ <b>Quiz renamed to:</b> <code>{html.escape(new_title)}</code>")
                 if qs:
-                    await self._reply(update, *self._mq_card_view(qs, bot_username=context.bot.username))
+                    c_text, c_kb = self._mq_card_view(qs, bot_username=context.bot.username)
+                    await self._reply(update, c_text, reply_markup=c_kb)
                 raise ApplicationHandlerStop
 
         d = self._mq_draft(context)
@@ -339,8 +340,6 @@ class MyQuizMixin:
         await context.bot.send_message(d["chat"], card_text, parse_mode=ParseMode.HTML, reply_markup=kb)
 
     # ── callbacks ────────────────────────────────────────────────────────
-
-    handle_myquiz_callback = handle_my_quiz_callback
     async def handle_my_quiz_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         query, user = update.callback_query, update.effective_user
         if not query or not user or not query.data:
@@ -395,10 +394,19 @@ class MyQuizMixin:
             return
 
         if action == "mq_list":
+            context.user_data.pop("mq_renaming", None)
+            context.user_data.pop("mq_prac", None)
             await query.answer()
             await self.mq_open_list(update, context, query, int(arg) if arg.isdigit() else 1)
             return
         if action == "mq_new":
+            context.user_data.pop("mq_renaming", None)
+            context.user_data.pop("mq_prac", None)
+            if query.message and query.message.chat and query.message.chat.type != "private":
+                bot_user = getattr(context.bot, "username", "")
+                if bot_user:
+                    await query.answer(url=f"https://t.me/{bot_user}?start=mq_new")
+                    return
             await query.answer()
             await self.mq_start_draft(query, context, user)
             return
@@ -409,6 +417,8 @@ class MyQuizMixin:
             return
 
         if action == "mq_open":
+            context.user_data.pop("mq_renaming", None)
+            context.user_data.pop("mq_prac", None)
             await query.answer()
             await self._bt_edit(query, *self._mq_card_view(qs, bot_username=context.bot.username))
         elif action == "mq_prac":
@@ -594,3 +604,5 @@ class MyQuizMixin:
         await self._bt_save(b)
         await query.answer("Challenge created! ⚔️")
         await self._bt_edit(query, *self._bt_challenge_view(b, context.bot.username, self._bt_inline_on(context)))
+
+    handle_myquiz_callback = handle_my_quiz_callback

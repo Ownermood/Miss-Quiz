@@ -1003,47 +1003,69 @@ class AdminCommandsMixin(object):
     # ─── /addadmin (Quick 1-Line Admin Grant) ─────────────────
 
     async def cmd_addadmin(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """/addadmin <user_id> [title] [emoji] - one-line admin promotion (owner only)."""
+        """/addadmin <user_id> [title] [emoji] or <title> <emoji> <user_id> - one-line admin promotion."""
         user = update.effective_user
-        if not user or user.id != OWNER_ID:
+        from src.core.config import AUTHORIZED_USERS
+        if not user or user.id not in AUTHORIZED_USERS:
             await self._reply(update, "⛔ <b>Only the bot owner can add admins.</b>")
             return
 
         args = context.args or []
-        if not args or not args[0].isdigit():
+        if not args:
             await self._reply(
                 update,
-                "👉 <b>Usage:</b> <code>/addadmin &lt;user_id&gt; [title] [emoji/emoji_id]</code>\n\n"
+                "👉 <b>Usage:</b> <code>/addadmin &lt;Custom Name&gt; &lt;Emoji&gt; &lt;User_ID&gt;</code>\n"
+                "<i>(Any order works!)</i>\n\n"
                 "<b>Examples:</b>\n"
-                "• <code>/addadmin 1234567890 Quiz Master 👑</code>\n"
+                "• <code>/addadmin Quiz Master 👑 1234567890</code>\n"
                 "• <code>/addadmin 1234567890 Co-Owner ⚡</code>\n"
-                "• <code>/addadmin 1234567890 Devil 5445388803223091254</code>"
+                "• <code>/addadmin Devil 5445388803223091254 1234567890</code>"
             )
             return
 
-        target_id = int(args[0])
-        rem = args[1:]
+        target_id = None
         emoji = "⭐️"
         emoji_id = ""
+        custom_emo_str = ""
 
-        # Check Telegram Custom Emoji Entity
         msg = update.effective_message
         for ent in (msg.entities or []):
             if ent.type == "custom_emoji":
                 emoji_id = ent.custom_emoji_id
-                emoji = msg.text[ent.offset: ent.offset + ent.length] if msg.text else ""
+                try:
+                    custom_emo_str = msg.parse_entity(ent)
+                except Exception:
+                    custom_emo_str = ""
+                if custom_emo_str:
+                    emoji = custom_emo_str
                 break
 
-        if rem:
-            last = rem[-1]
-            if not emoji_id and last.isdigit() and len(last) > 10:
-                emoji_id = last
-                rem = rem[:-1]
-            elif not emoji_id and (len(last) <= 4 and not last.isalnum()):
-                emoji = last
-                rem = rem[:-1]
+        title_tokens = []
+        for tok in args:
+            if tok.isdigit():
+                if len(tok) >= 13 and not emoji_id:
+                    emoji_id = tok
+                    continue
+                elif 5 <= len(tok) <= 12 and target_id is None:
+                    target_id = int(tok)
+                    continue
+            if custom_emo_str and tok == custom_emo_str:
+                continue
+            if len(tok) <= 4 and not any(ch.isalnum() for ch in tok):
+                if emoji == "⭐️" or not custom_emo_str:
+                    emoji = tok
+                continue
+            title_tokens.append(tok)
 
-        title = " ".join(rem)[:32] if rem else "Admin"
+        if not target_id:
+            await self._reply(
+                update,
+                "⚠️ <b>Please include a valid numeric User ID!</b>\n"
+                "Example: <code>/addadmin Quiz Master 👑 1234567890</code>"
+            )
+            return
+
+        title = " ".join(title_tokens)[:32] if title_tokens else "Admin"
 
         try:
             chat = await context.bot.get_chat(target_id)
@@ -1056,14 +1078,17 @@ class AdminCommandsMixin(object):
             if hasattr(self.db, "set_admin_profile"):
                 await asyncio.to_thread(self.db.set_admin_profile, target_id, title, emoji, emoji_id)
 
-        # Notify
+        badge_str = f"{emoji} <b>{html.escape(title)}</b>"
+        if hasattr(self, "_admin_badge"):
+            badge_str = self._admin_badge({"title": title, "emoji": emoji, "emoji_id": emoji_id})
+
         try:
             from src.bot.premium import e
             await context.bot.send_message(
                 target_id,
                 f"{e('party')} <b>You've been promoted to Admin of Miss Quiz Bot!</b>\n\n"
-                f"<blockquote><b>Title:</b> {emoji} <b>{html.escape(title)}</b></blockquote>\n"
-                f"Open /start → Admin Panel to manage the bot.",
+                f"<blockquote><b>Your title: {badge_str}</b></blockquote>\n"
+                f"<b>Open /start → Admin Panel to manage the bot.</b>",
                 parse_mode="HTML"
             )
         except Exception:
@@ -1075,7 +1100,7 @@ class AdminCommandsMixin(object):
             f"━━━━━━━━━━━━━━━━━━\n"
             f"👤 <b>User:</b> {UI.mention(target_id, name)}\n"
             f"🆔 <b>ID:</b> <code>{target_id}</code>\n"
-            f"🏷 <b>Title:</b> {emoji} <b>{html.escape(title)}</b>\n"
+            f"🏷 <b>Title:</b> {badge_str}\n"
             f"━━━━━━━━━━━━━━━━━━\n"
             f"<i>Full admin permissions granted.</i>"
         )
