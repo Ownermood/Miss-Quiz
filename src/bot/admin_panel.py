@@ -39,20 +39,21 @@ GUIDES = {
 }
 
 ADDQ_HELP = (
-    "<b>➕ ADD QUESTIONS</b>\n{line}\n"
-    "<b>Send any of these — as many as you want:</b>\n"
-    "• Type / paste questions (one or hundreds)\n"
-    "• A file: .txt .docx .pdf .csv .xlsx .json .html .md .odt .pptx .rtf\n"
-    "• Forward Telegram quiz polls (answer comes with them)\n\n"
-    "<b>Example (any similar layout works):</b>\n"
+    "<b>➕ ADD QUESTIONS</b>\n"
+    "<blockquote><b>📤 Send any of these — as many as you want</b>\n"
+    "✍️ Type or paste questions (1 or 1000)\n"
+    "📂 Any file: txt · docx · pdf · xlsx · csv · json · html · md\n"
+    "📊 Forward Telegram quiz polls</blockquote>"
+    "<blockquote><b>📝 Example</b>\n"
     "<code>1. Which Article abolishes untouchability?\n"
     "A) Article 14\nB) Article 17\nC) Article 19\nD) Article 21\n"
-    "Answer: B\n"
-    "Explanation: Article 17 abolishes untouchability.\n"
-    "Category: Polity</code>\n\n"
-    "<b>Also fine:</b> ✅ after the right option · answer key at the end "
-    "(<code>1-B 2-A</code>) · Hindi (प्रश्न / उत्तर) · CSV/Excel columns "
-    "<code>question, A, B, C, D, answer</code>\n\n"
+    "Answer: B</code></blockquote>"
+    "<blockquote><b>✅ Also works</b>\n"
+    "✔️ mark after the right option\n"
+    "🔑 Answer key at the end: 1-B 2-A\n"
+    "🇮🇳 Hindi: प्रश्न / उत्तर\n"
+    "💡 Explanation: … (optional)\n"
+    "📚 Category is detected automatically</blockquote>"
     "<i>Tap ✅ Done when finished.</i>"
 )
 
@@ -112,22 +113,23 @@ class AdminPanelMixin:
     # ── screens ──────────────────────────────────────────────────────────
 
     def _panel_kb(self, is_owner: bool) -> InlineKeyboardMarkup:
+        last = [btn("Emoji Test", "star", BLUE, callback_data="ap:emoji:0")]
+        if is_owner:
+            last.append(btn("Restart Bot", "warn", GREEN, callback_data="ap:restart"))
         rows = [
-            [btn("Bot Stats", "stats", BLUE, callback_data="ap:stats"),
-             btn("Reload", "bolt", BLUE, callback_data="ap:reload")],
-            [btn("Add Questions (text · file · poll)", "plus", BLUE, callback_data="ap:addq")],
+            [btn("Add Questions", "plus", GREEN, callback_data="ap:addq")],
+            [btn("Find Question", "search", GREEN, callback_data="ap:find")],
             [btn("Edit Quiz", "edit", BLUE, callback_data="ap:edit"),
              btn("Delete Quiz", "trash", BLUE, callback_data="ap:delquiz")],
-            [btn("Find Question (ID / word)", "bolt", BLUE, callback_data="ap:find")],
+            [btn("Bot Stats", "stats", BLUE, callback_data="ap:stats"),
+             btn("Reload", "bolt", BLUE, callback_data="ap:reload")],
             [btn("Broadcast", "signal", BLUE, callback_data="ap:bc"),
              btn("Undo Broadcast", "back", BLUE, callback_data="ap:dbc")],
             [btn("Start Photo", "folder", BLUE, callback_data="ap:photo"),
              btn("Admins", "users", BLUE, callback_data="ap:team")],
-            [btn("Emoji Test", "star", BLUE, callback_data="ap:emoji:0")],
+            last,
+            [btn("Close", "cross", RED, callback_data="ap:close")],
         ]
-        if is_owner:
-            rows.append([btn("Restart Bot", "warn", GREEN, callback_data="ap:restart")])
-        rows.append([btn("Close", "cross", RED, callback_data="ap:close")])
         return InlineKeyboardMarkup(rows)
 
     @staticmethod
