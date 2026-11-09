@@ -42,7 +42,7 @@ T_MIN, T_MAX     = 5, 600                    # Telegram open_period limits
 MODES = {"classic": ("🎯 Classic", 10, 20), "quick": ("⚡ Quick", 5, 15),
          "marathon": ("🧠 Marathon", 20, 30)}
 T_CHOICES        = (10, 15, 20, 30, 60, 240)   # Telegram allows up to 600 s
-INVITE_TTL       = 300    # seconds a setup/challenge stays open
+INVITE_TTL       = 86400  # open challenge stays valid (no visible limit; memory safety only)
 START_DELAY      = 3      # seconds between "battle starts" and first question
 ROUND_GAP        = 1      # pause after each question before the next one
 
@@ -180,10 +180,23 @@ class BattleMixin:
         return self._battles
 
     def _bt_busy(self, uid: int) -> bool:
-        for b in self._bt_state().values():
-            if b.state != "done" and not b.expired() and uid in b.players:
-                return True
-        return False
+        """Only a battle being played blocks a user; open challenges don't."""
+        return any(b.state == "running" and uid in b.players for b in self._bt_state().values())
+
+    async def _bt_drop_open(self, uid: int, context) -> None:
+        """Close this user's own open challenges (setup/pending) — a new
+        /battle or accepting someone else replaces them."""
+        for b in list(self._bt_state().values()):
+            if b.p1 != uid or b.state not in ("setup", "pending"):
+                continue
+            b.state = "done"
+            if b.msg_id:
+                try:
+                    await context.bot.edit_message_text(
+                        "⚔️ <i>This challenge was replaced by a new one.</i>",
+                        chat_id=b.chat_id or b.p1, message_id=b.msg_id, parse_mode=ParseMode.HTML)
+                except Exception:
+                    pass
 
     def _bt_cleanup(self) -> None:
         battles = self._bt_state()
@@ -222,8 +235,9 @@ class BattleMixin:
             return
         self._bt_cleanup()
         if self._bt_busy(user.id):
-            await self._reply(update, "⚔️ You already have a battle running or waiting.")
+            await self._reply(update, "⚔️ You're already in a battle — finish it first.")
             return
+        await self._bt_drop_open(user.id, context)
         if len(self._bt_pool()) < Q_CHOICES[0]:
             await self._reply(update, "⚠️ Not enough questions for a battle yet.")
             return
@@ -364,8 +378,7 @@ class BattleMixin:
         if b.mode == "group":
             vs = UI.mention(b.p2, b.p2_name) if b.p2 else "<i>anyone</i>"
             text = (f"⚔️ <b>1v1 BATTLE</b>\n{UI.mention(b.p1, b.p1_name)}  vs  {vs}\n"
-                    f"{self._bt_settings_line(b)}\n"
-                    f"⌛ <i>Open for {INVITE_TTL // 60} min</i>")
+                    f"{self._bt_settings_line(b)}")
             kb = InlineKeyboardMarkup([
                 [InlineKeyboardButton("⚔️ Accept Battle", callback_data=f"bt_acc:{b.id}", style="success")],
                 [InlineKeyboardButton("✏️ Change", callback_data=f"bt_ch:{b.id}", style="primary"),
@@ -377,7 +390,7 @@ class BattleMixin:
         text = (f"⚔️ <b>1v1 BATTLE</b>\n"
                 f"Send this link to a friend — when they open it, the battle starts in both your DMs.\n"
                 f"{self._bt_settings_line(b)}\n"
-                f"🔗 {html.escape(link)}\n⌛ <i>Link valid {INVITE_TTL // 60} min</i>")
+                f"🔗 {html.escape(link)}")
         share = ("https://t.me/share/url?url=" + quote(link, safe="") +
                  "&text=" + quote("Battle me on Miss Quiz ⚔️"))
         kb = InlineKeyboardMarkup([
@@ -475,10 +488,11 @@ class BattleMixin:
         if action == "bt_acc":
             ok, why = b.can_accept(user.id)
             if ok and self._bt_busy(user.id):
-                ok, why = False, "You already have a battle running or waiting."
+                ok, why = False, "You're already in a battle — finish it first."
             if not ok:
                 await query.answer(why, show_alert=True)
                 return
+            await self._bt_drop_open(user.id, context)
             b.start(user.id, self._bt_name(user))
             await query.answer("Battle accepted! ⚔️")
             await self._bt_edit(
@@ -512,6 +526,7 @@ class BattleMixin:
         if self._bt_busy(user.id) or self._bt_busy(other):
             await query.answer("One of you is already in a battle.", show_alert=True)
             return
+        await self._bt_drop_open(user.id, context)
         bid = secrets.token_urlsafe(6).replace("-", "x").replace("_", "y")
         b = Battle(id=bid, mode=old.mode, p1=user.id, p1_name=self._bt_name(user),
                    p2=other, p2_name=other_name, chat_id=old.chat_id, thread_id=old.thread_id,
@@ -544,10 +559,11 @@ class BattleMixin:
             return
         ok, why = b.can_accept(user.id)
         if ok and self._bt_busy(user.id):
-            ok, why = False, "You already have a battle running or waiting."
+            ok, why = False, "You're already in a battle — finish it first."
         if not ok:
             await self._reply(update, f"⚔️ {why}")
             return
+        await self._bt_drop_open(user.id, context)
         b.start(user.id, self._bt_name(user))
         intro = (
             f"⚔️  <b>BATTLE STARTED</b>\n{UI.LINE}\n\n"

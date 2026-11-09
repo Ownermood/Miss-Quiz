@@ -212,8 +212,43 @@ async def test_busy_player_and_self_challenge_rejected():
     await app.cmd_battle(group_update(a, reply_to=a), ctx)
     assert "yourself" in app.replies[-1][0]
     await app.cmd_battle(group_update(a), ctx)
+    first = next(iter(app._bt_state().values()))
+    await app.cmd_battle(group_update(a), ctx)                 # new /battle replaces the open one
+    assert first.state == "done" and "replaced" in ctx.bot.edit_message_text.await_args.args[0]
+    assert sum(b.state == "setup" for b in app._bt_state().values()) == 1
+    second = [b for b in app._bt_state().values() if b.state == "setup"][0]
+    second.start(2, "Bina")                                     # now actually playing
     await app.cmd_battle(group_update(a), ctx)
-    assert "already" in app.replies[-1][0]
+    assert "already in a battle" in app.replies[-1][0]
+
+
+async def test_open_challenge_has_no_visible_time_limit_and_lasts():
+    app = FakeBotApp()
+    ctx, _ = fake_context()
+    a = user(1, "Amit")
+    await app.cmd_battle(group_update(a), ctx)
+    bid = await setup_and_create(app, ctx, a)
+    b = app._bt_state()[bid]
+    text, _ = app._bt_challenge_view(b, "MissQuizBot")
+    dm_text, _ = app._bt_challenge_view(bt.dataclass_replace_mode(b, "dm"), "MissQuizBot")
+    assert "min" not in text.replace("Max", "") and "valid" not in dm_text
+    b.created -= 60 * 60                                        # an hour later still joinable
+    assert b.can_accept(2)[0] is True
+
+
+async def test_accepting_drops_accepters_own_open_challenge():
+    app = FakeBotApp()
+    ctx, _ = fake_context()
+    a, c = user(1, "Amit"), user(3, "Chetan")
+    await app.cmd_battle(group_update(c), ctx)                 # Chetan's own open challenge
+    mine = next(iter(app._bt_state().values()))
+    await app.cmd_battle(group_update(a), ctx)
+    bid = [k for k, v in app._bt_state().items() if v.p1 == 1][0]
+    app._bt_state()[bid].secs = 0.2
+    await press(app, ctx, a, f"bt_m:{bid}:quick")
+    app._bt_state()[bid].secs = 0.2
+    await press(app, ctx, c, f"bt_acc:{bid}")                  # not blocked by his open one
+    assert app._bt_state()[bid].state == "running" and mine.state == "done"
 
 
 async def test_decline_by_target_and_outsider_blocked():
