@@ -376,9 +376,12 @@ async def test_slash_dev_add_is_owner_only(owner_only):
     upd = SimpleNamespace(effective_user=SimpleNamespace(id=DEV, username="dev", first_name="Dev", last_name=None),
                           effective_chat=SimpleNamespace(id=1, type="private"),
                           message=msg, effective_message=msg)
-    await dev.dev(upd, SimpleNamespace(args=["add", "999"]))
+    for args in (["add", "999"], ["999"], ["remove", "999"]):      # incl. quick add /dev <id>
+        msg.reply_text.reset_mock()
+        await dev.dev(upd, SimpleNamespace(args=args, bot=MagicMock()))
+        assert "Only the owner" in msg.reply_text.await_args.args[0], args
     dev.db.add_developer.assert_not_called()
-    assert "Only the owner" in msg.reply_text.await_args.args[0]
+    dev.db.remove_developer.assert_not_called()
 
 
 async def test_cancel_clears_pending_input(bot):
@@ -525,18 +528,6 @@ async def test_botstats_live_text_and_back_to_panel(bot):
     assert "Paused (not admin) › 1" in text
     assert [b.callback_data for b in kb.inline_keyboard[0]] == ["bs_refresh", "ap:home"]
 
-
-def test_refresh_button_is_routed():
-    from telegram.ext import Application, CallbackQueryHandler
-    b = TelegramQuizBot(MagicMock(), db_manager=MagicMock())
-    b.application = Application.builder().token("1:a").build()
-    b._register_handlers()
-    cbs = [h for h in b.application.handlers[0] if isinstance(h, CallbackQueryHandler)]
-    h = next(h for h in cbs if h.callback == b._cb_botstats_refresh)
-    assert h.pattern.match("bs_refresh")
-    assert cbs.index(h) < [x.callback for x in cbs].index(b.handle_callback)
-
-
 def test_emoji_test_pages_cover_every_mapped_emoji(bot, monkeypatch):
     monkeypatch.setenv("PREMIUM_EMOJI", "1")
     from src.bot.premium import EMOJI_ID, premiumize_html
@@ -558,3 +549,45 @@ def test_keycap_and_new_pack_emojis_premium(monkeypatch):
     out = premiumize_html("1️⃣ 🔥 10")
     assert out.count("<tg-emoji") == 2 and out.endswith(" 10")      # plain digits untouched
     assert "🔥" in EXACT and "💪" in EXACT
+
+
+def test_refresh_button_handled_by_generic_callback():
+    """bs_refresh is served by handle_callback's 'bs_' branch (no extra handler)."""
+    import inspect
+    from src.bot.handlers_main import TelegramQuizBot
+    assert 'data.startswith("bs_")' in inspect.getsource(TelegramQuizBot._dispatch_callback)
+
+
+async def test_broken_html_is_still_delivered_as_plain_text(monkeypatch):
+    from src.bot.premium import make_premium_bot_class
+    from telegram.ext import ExtBot
+    from telegram.error import BadRequest
+    monkeypatch.setenv("PREMIUM_EMOJI", "0")
+    calls = []
+
+    async def fake(self, endpoint, data, *a, **k):
+        calls.append(dict(data))
+        if data.get("parse_mode") == "HTML":
+            raise BadRequest("Can't parse entities: unsupported start tag \"5\" at byte offset 10")
+        return True
+    monkeypatch.setattr(ExtBot, "_do_post", fake)
+    bot = make_premium_bot_class()("123:abc")
+    assert await bot._do_post("sendMessage", {"text": "<b>Score</b> x <5 &amp; y", "parse_mode": "HTML"}) is True
+    assert calls[-1] == {"text": "Score x <5 & y"} or calls[-1]["text"] == "Score x <5 & y"
+    assert "parse_mode" not in calls[-1]
+
+
+async def test_quiz_editor_is_html_and_escapes_question(monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock, MagicMock
+    from src.bot.dev_commands import DeveloperCommands
+    qm = MagicMock(); qm.questions = [{"id": 1, "question": "Fill the ___ : 2 < 3 & *x*", "options": ["a"], "category": "A & B"}]
+    dev = DeveloperCommands(MagicMock(), qm)
+    q = MagicMock(); q.edit_message_text = AsyncMock()
+    upd = SimpleNamespace(callback_query=q, effective_message=MagicMock())
+    await dev._show_quiz_list(upd, SimpleNamespace(), page=1)
+    kw = q.edit_message_text.await_args.kwargs
+    text = q.edit_message_text.await_args.args[0]
+    assert kw["parse_mode"] == "HTML" and "2 &lt; 3 &amp; *x*" in text and "A &amp; B" in text
+    text2 = dev._format_quiz_editor({"id": 1, "question": "a<b", "options": ["x&y", "z"], "correct_answer": 0})
+    assert "a&lt;b" in text2 and "x&amp;y" in text2 and "**" not in text2

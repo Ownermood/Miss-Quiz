@@ -382,10 +382,24 @@ def make_premium_bot_class():
             except BadRequest as e:
                 # Premium emoji / bold rejected (e.g. Premium expired, odd markup):
                 # never lose the message — resend it exactly as the code wrote it.
-                if any(w in str(e).lower() for w in ("emoji", "entit", "document_invalid", "can't parse")):
-                    import logging
-                    logging.getLogger(__name__).warning(f"premium emoji rejected on {endpoint}: {e} — sent plain")
+                if not any(w in str(e).lower() for w in ("emoji", "entit", "document_invalid", "can't parse")):
+                    raise
+                import logging
+                log = logging.getLogger(__name__)
+                log.warning(f"{endpoint} rejected ({e}) — resending as written")
+                try:
                     return await super()._do_post(endpoint, original, *args, **kwargs)
-                raise
+                except BadRequest as e2:
+                    if "parse" not in str(e2).lower() or not isinstance(original, dict):
+                        raise
+                    # The code's own HTML is broken (e.g. unescaped '<' in user
+                    # text). Last resort: same words, no formatting — never lose it.
+                    log.error(f"{endpoint}: broken HTML ({e2}) — sent without formatting")
+                    plain = dict(original)
+                    for key, mode in (("text", "parse_mode"), ("caption", "parse_mode")):
+                        if isinstance(plain.get(key), str) and plain.get(mode):
+                            plain[key] = _html.unescape(_re.sub(r"<[^>]+>", "", plain[key]))
+                    plain.pop("parse_mode", None)
+                    return await super()._do_post(endpoint, plain, *args, **kwargs)
 
     return PremiumExtBot

@@ -99,7 +99,7 @@ class AdminCommandsMixin(object):
                 f"  A: {options[0]}\n  B: {options[1]}\n"
                 f"  C: {options[2]}\n  D: {options[3]}\n\n"
                 f"  ✅ Answer   ›  Option {correct+1} — <b>{options[correct]}</b>\n"
-                f"  📂 Category ›  <b>{category}</b>\n\n"
+                f"  📂 Category ›  <b>{html.escape(str(category))}</b>\n\n"
                 f"{UI.LINE}\n"
                 f"  📦 Total in bank: <b>{total}</b>"
             )
@@ -251,7 +251,7 @@ class AdminCommandsMixin(object):
             qtext = q.get("question", "")[:40]
             cat   = q.get("category", "General")
             emoji = UI.cat_emoji(cat)
-            lines.append(f"  {emoji} <code>#{qid}</code>  {qtext}{'…' if len(q.get('question',''))>40 else ''}")
+            lines.append(f"  {emoji} <code>#{qid}</code>  {html.escape(qtext)}{'…' if len(q.get('question',''))>40 else ''}")
 
         return "\n".join(lines)
 
@@ -378,7 +378,7 @@ class AdminCommandsMixin(object):
                         f"✅ <b>DELETED</b>\n"
                         f"{UI.LINE}\n\n"
                         f"  By {mention}\n"
-                        f"  <code>#{qid}</code> — {preview}…\n\n"
+                        f"  <code>#{qid}</code> — {html.escape(preview)}…\n\n"
                         f"  📦 Remaining: <b>{remaining}</b> questions"
                     )
                 else:
@@ -439,7 +439,7 @@ class AdminCommandsMixin(object):
             cat   = q.get("category", "General")
             emoji = UI.cat_emoji(cat)
             lines.append(
-                f"  {emoji} <code>#{qid}</code>  {qtext}"
+                f"  {emoji} <code>#{qid}</code>  {html.escape(qtext)}"
                 + ("…" if len(q.get("question", "")) > 45 else "")
             )
 

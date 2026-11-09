@@ -3,6 +3,7 @@ UserCommandsMixin — /start /help /ping /info /categories
 """
 
 import asyncio
+import html
 import logging
 import time
 
@@ -116,7 +117,7 @@ class UserCommandsMixin(object):
                               edit_msg=None):
         DIV = "═" * 32
         cat_lines = "\n".join(
-            f"•  {name}  {emoji}" for name, emoji in UI.QUIZ_CATEGORIES
+            f"•  {html.escape(name)}  {emoji}" for name, emoji in UI.QUIZ_CATEGORIES
         )
         text = (
             f"📚  <b>𝗩𝗜𝗘𝗪  𝗖𝗔𝗧𝗘𝗚𝗢𝗥𝗜𝗘𝗦</b>\n"

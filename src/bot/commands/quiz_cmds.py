@@ -3,6 +3,7 @@ QuizCommandsMixin — /quiz /score /stats /achievements /botstats
 """
 
 import asyncio
+import html
 import logging
 
 from datetime import datetime
@@ -34,7 +35,7 @@ class QuizCommandsMixin(object):
             text  = (
                 f"📭 <b>No Questions Found</b>\n"
                 f"{UI.LINE}\n\n"
-                + (f"  {cat_e} Category: <b>{category}</b>\n\n" if category else "")
+                + (f"  {cat_e} Category: <b>{html.escape(category)}</b>\n\n" if category else "")
                 + "  The question bank is empty.\n\n"
                 "  Use /addquiz to add questions."
             )
@@ -265,7 +266,7 @@ class QuizCommandsMixin(object):
                 s_attempted = sdata.get("attempted", 0)
                 s_correct   = sdata.get("correct",   0)
                 s_acc       = round(s_correct / max(s_attempted, 1) * 100, 1) if s_attempted else 0
-                text += f"│  {subj[:18]}   ›  {s_acc}%  ({s_correct}/{s_attempted})\n"
+                text += f"│  {html.escape(subj[:18])}   ›  {s_acc}%  ({s_correct}/{s_attempted})\n"
             text += f"╰──────────────────────────────╯\n\n"
 
         # Insights
@@ -294,9 +295,9 @@ class QuizCommandsMixin(object):
                     best_subject = subj
 
             if weak_subject and weak_acc < 60:
-                insights.append(f"Your {weak_subject} needs improvement.")
+                insights.append(f"Your {html.escape(str(weak_subject))} needs improvement.")
             if best_subject:
-                insights.append(f"Your strongest subject is {best_subject} at {round(best_acc, 1)}%.")
+                insights.append(f"Your strongest subject is {html.escape(str(best_subject))} at {round(best_acc, 1)}%.")
             if streak > 5:
                 insights.append(f"🔥 You're on a {streak}-day streak! Keep going!")
 

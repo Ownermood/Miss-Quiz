@@ -7,6 +7,7 @@ self.check_access(), self.send_unauthorized_message(), and self.auto_clean_messa
 to be available via the MRO (set by DeveloperCommands).
 """
 
+import html
 import logging
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -100,7 +101,7 @@ class QuizEditorMixin:
             if update.effective_message:
                 await update.effective_message.reply_text(
                     "❌ Error loading quiz editor. Please try again.",
-                    parse_mode=ParseMode.MARKDOWN
+                    parse_mode=ParseMode.HTML
                 )
 
     async def _show_quiz_list(self, update: Update, context: ContextTypes.DEFAULT_TYPE, page: int = 1) -> None:
@@ -116,7 +117,7 @@ class QuizEditorMixin:
             if update.effective_message:
                 await update.effective_message.reply_text(
                     "📭 No quizzes found.\n\nAdd new quizzes using /addquiz command.",
-                    parse_mode=ParseMode.MARKDOWN
+                    parse_mode=ParseMode.HTML
                 )
             return
 
@@ -127,7 +128,7 @@ class QuizEditorMixin:
         start_idx = (page - 1) * per_page
         end_idx = min(start_idx + per_page, len(questions))
 
-        text = f"""🔍 **Select Quiz to Edit**
+        text = f"""🔍 <b>Select Quiz to Edit</b>
 ━━━━━━━━━━━━━━━━━━━━━
 
 📊 Total: {len(questions)} quizzes
@@ -140,7 +141,8 @@ class QuizEditorMixin:
             q = questions[i]
             category = q.get('category', 'N/A')
             question_preview = q['question'][:50] + '...' if len(q['question']) > 50 else q['question']
-            text += f"{i + 1}. {question_preview}\n   📂 Category: {category or 'Uncategorized'}\n\n"
+            text += (f"{i + 1}. {html.escape(question_preview)}\n"
+                     f"   📂 Category: {html.escape(str(category or 'Uncategorized'))}\n\n")
             keyboard.append([InlineKeyboardButton(
                 f"✏️ Edit #{q['id']}: {question_preview[:30]}...",
                 callback_data=f"edit_quiz_select_{q['id']}"
@@ -162,14 +164,14 @@ class QuizEditorMixin:
         if update.callback_query:
             await update.callback_query.edit_message_text(
                 text,
-                parse_mode=ParseMode.MARKDOWN,
+                parse_mode=ParseMode.HTML,
                 reply_markup=reply_markup
             )
         else:
             if update.effective_message:
                 await update.effective_message.reply_text(
                     text,
-                    parse_mode=ParseMode.MARKDOWN,
+                    parse_mode=ParseMode.HTML,
                     reply_markup=reply_markup
                 )
 
@@ -179,22 +181,22 @@ class QuizEditorMixin:
         quiz = await _asyncio.to_thread(self.db.get_question_by_id, quiz_id)
 
         if not quiz:
-            error_text = f"""❌ **Quiz Not Found**
+            error_text = f"""❌ <b>Quiz Not Found</b>
 
 Quiz ID #{quiz_id} doesn't exist.
 
-💡 Use /totalquiz to see all available quizzes."""
+💡 Use /editquiz to browse all questions."""
 
             if update.callback_query:
                 await update.callback_query.edit_message_text(
                     error_text,
-                    parse_mode=ParseMode.MARKDOWN
+                    parse_mode=ParseMode.HTML
                 )
             else:
                 if update.effective_message:
                     await update.effective_message.reply_text(
                         error_text,
-                        parse_mode=ParseMode.MARKDOWN
+                        parse_mode=ParseMode.HTML
                     )
             return
 
@@ -228,14 +230,14 @@ Quiz ID #{quiz_id} doesn't exist.
         if update.callback_query:
             await update.callback_query.edit_message_text(
                 text,
-                parse_mode=ParseMode.MARKDOWN,
+                parse_mode=ParseMode.HTML,
                 reply_markup=reply_markup
             )
         else:
             if update.effective_message:
                 await update.effective_message.reply_text(
                     text,
-                    parse_mode=ParseMode.MARKDOWN,
+                    parse_mode=ParseMode.HTML,
                     reply_markup=reply_markup
                 )
 
@@ -245,21 +247,21 @@ Quiz ID #{quiz_id} doesn't exist.
         for i, opt in enumerate(quiz['options']):
             marker = "✓" if i == quiz['correct_answer'] else "○"
             letter = chr(65 + i)
-            options_text += f"{letter}) {opt} {marker}\n"
+            options_text += f"{letter}) {html.escape(str(opt))} {marker}\n"
 
         category = quiz.get('category') or 'Uncategorized'
         correct_letter = chr(65 + quiz['correct_answer'])
 
-        return f"""✏️ **Edit Quiz #{quiz['id']}**
+        return f"""✏️ <b>Edit Quiz #{quiz['id']}</b>
 ━━━━━━━━━━━━━━━━━━━━━
 
-**Current Question:**
-{quiz['question']}
+<b>Current Question:</b>
+{html.escape(str(quiz['question']))}
 
-**Options:**
+<b>Options:</b>
 {options_text}
-**📂 Category:** {category}
-**✅ Correct Answer:** {correct_letter}
+<b>📂 Category:</b> {html.escape(str(category))}
+<b>✅ Correct Answer:</b> {correct_letter}
 
 ━━━━━━━━━━━━━━━━━━━━━
 Select what to edit:"""
@@ -317,8 +319,8 @@ Select what to edit:"""
             if context.user_data is not None:
                 context.user_data['waiting_for'] = f'quiz_question_{quiz_id}'
             await query.edit_message_text(
-                f"✏️ **Edit Question**\n\nPlease send the new question text:",
-                parse_mode=ParseMode.MARKDOWN
+                f"✏️ <b>Edit Question</b>\n\nPlease send the new question text:",
+                parse_mode=ParseMode.HTML
             )
 
         elif data.startswith("edit_quiz_options_"):
@@ -326,14 +328,14 @@ Select what to edit:"""
             if context.user_data is not None:
                 context.user_data['waiting_for'] = f'quiz_options_{quiz_id}'
             await query.edit_message_text(
-                f"""📝 **Edit Options**
+                f"""📝 <b>Edit Options</b>
 
 Please send options in this format:
-`Option1|Option2|Option3|Option4`
+<code>Option1|Option2|Option3|Option4</code>
 
 Example:
-`Paris|London|Berlin|Rome`""",
-                parse_mode=ParseMode.MARKDOWN
+<code>Paris|London|Berlin|Rome</code>""",
+                parse_mode=ParseMode.HTML
             )
 
         elif data.startswith("edit_quiz_category_"):
@@ -398,8 +400,8 @@ Example:
         reply_markup = InlineKeyboardMarkup(keyboard)
         if update.callback_query:
             await update.callback_query.edit_message_text(
-                "📂 **Select Category**\n\nChoose a category for this quiz:",
-                parse_mode=ParseMode.MARKDOWN,
+                "📂 <b>Select Category</b>\n\nChoose a category for this quiz:",
+                parse_mode=ParseMode.HTML,
                 reply_markup=reply_markup
             )
 
@@ -430,8 +432,8 @@ Example:
         reply_markup = InlineKeyboardMarkup(keyboard)
         if update.callback_query:
             await update.callback_query.edit_message_text(
-                "✅ **Select Correct Answer**\n\nChoose the correct option:",
-                parse_mode=ParseMode.MARKDOWN,
+                "✅ <b>Select Correct Answer</b>\n\nChoose the correct option:",
+                parse_mode=ParseMode.HTML,
                 reply_markup=reply_markup
             )
 
@@ -495,13 +497,13 @@ Example:
                 text = self._format_quiz_editor(quiz_data)
                 text = text.replace(
                     "Select what to edit:",
-                    f"✅ **Changes Saved Successfully!**\n\nModified: {', '.join(changes)}"
+                    f"✅ <b>Changes Saved Successfully!</b>\n\nModified: {', '.join(changes)}"
                 )
 
                 if update.callback_query:
                     await update.callback_query.edit_message_text(
                         text,
-                        parse_mode=ParseMode.MARKDOWN
+                        parse_mode=ParseMode.HTML
                     )
 
                 if context.user_data is not None:
@@ -540,7 +542,7 @@ Example:
 
                         await update.message.reply_text(
                             f"✅ Question updated!\n\nUse /editquiz {quiz_id} to continue editing.",
-                            parse_mode=ParseMode.MARKDOWN
+                            parse_mode=ParseMode.HTML
                         )
 
             elif waiting_for.startswith('quiz_options_'):
@@ -552,7 +554,7 @@ Example:
                         if len(options) != 4:
                             await update.message.reply_text(
                                 "❌ Invalid format. Please provide exactly 4 options separated by |",
-                                parse_mode=ParseMode.MARKDOWN
+                                parse_mode=ParseMode.HTML
                             )
                             return
 
@@ -561,7 +563,7 @@ Example:
 
                         await update.message.reply_text(
                             f"✅ Options updated!\n\nUse /editquiz {quiz_id} to continue editing.",
-                            parse_mode=ParseMode.MARKDOWN
+                            parse_mode=ParseMode.HTML
                         )
 
         except Exception as e:

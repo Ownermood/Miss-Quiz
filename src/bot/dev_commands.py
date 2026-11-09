@@ -367,31 +367,31 @@ class DeveloperCommands(BroadcastCommandsMixin, QuizEditorMixin):
             if update.message.reply_to_message:
                 replied_msg = update.message.reply_to_message
 
-                diagnostics = "🔍 **Message Diagnostics**\n"
+                diagnostics = "🔍 <b>Message Diagnostics</b>\n"
                 diagnostics += "━━━━━━━━━━━━━━━━━━━\n\n"
-                diagnostics += f"**📨 Message Info:**\n"
-                diagnostics += f"• Message ID: `{replied_msg.message_id}`\n"
-                diagnostics += f"• Chat ID: `{replied_msg.chat.id}`\n"
+                diagnostics += f"<b>📨 Message Info:</b>\n"
+                diagnostics += f"• Message ID: <code>{replied_msg.message_id}</code>\n"
+                diagnostics += f"• Chat ID: <code>{replied_msg.chat.id}</code>\n"
                 diagnostics += f"• Timestamp: {replied_msg.date}\n"
 
                 if replied_msg.from_user:
                     _u = replied_msg.from_user
                     _nm = _u.full_name or _u.first_name or f"@{_u.username}" or "N/A"
-                    diagnostics += f"\n**👤 User Info:**\n"
-                    diagnostics += f"• User ID: `{_u.id}`\n"
-                    diagnostics += f"• Name: {UI.mention_md(_u.id, _nm)}\n"
+                    diagnostics += f"\n<b>👤 User Info:</b>\n"
+                    diagnostics += f"• User ID: <code>{_u.id}</code>\n"
+                    diagnostics += f"• Name: {UI.mention(_u.id, _nm)}\n"
                     diagnostics += f"• Username: @{_u.username or 'N/A'}\n"
 
                 if replied_msg.poll:
                     poll_id = replied_msg.poll.id
-                    diagnostics += f"\n**📊 Poll Info:**\n"
-                    diagnostics += f"• Poll ID: `{poll_id}`\n"
-                    diagnostics += f"• Question: {replied_msg.poll.question[:50]}...\n"
+                    diagnostics += f"\n<b>📊 Poll Info:</b>\n"
+                    diagnostics += f"• Poll ID: <code>{poll_id}</code>\n"
+                    diagnostics += f"• Question: {html.escape(replied_msg.poll.question[:50])}...\n"
 
                     poll_data = context.bot_data.get(f"poll_{poll_id}")
                     if poll_data:
-                        diagnostics += f"\n**🎯 Quiz Data:**\n"
-                        diagnostics += f"• Question ID: `{poll_data.get('question_id', 'N/A')}`\n"
+                        diagnostics += f"\n<b>🎯 Quiz Data:</b>\n"
+                        diagnostics += f"• Question ID: <code>{poll_data.get('question_id', 'N/A')}</code>\n"
                         _cid = poll_data.get('correct_option_id')
                         _cid_str = str(_cid + 1) if isinstance(_cid, int) else 'N/A'
                         diagnostics += f"• Correct Answer: Option {_cid_str}\n"
@@ -400,18 +400,18 @@ class DeveloperCommands(BroadcastCommandsMixin, QuizEditorMixin):
                         diagnostics += f"• Status: ⚠️ Poll data expired/unavailable\n"
 
                 if replied_msg.photo:
-                    diagnostics += f"\n**📷 Media:**\n• Type: Photo\n• File ID: `{replied_msg.photo[-1].file_id[:30]}...`\n"
+                    diagnostics += f"\n<b>📷 Media:</b>\n• Type: Photo\n• File ID: <code>{replied_msg.photo[-1].file_id[:30]}...</code>\n"
                 elif replied_msg.video:
-                    diagnostics += f"\n**🎥 Media:**\n• Type: Video\n• File ID: `{replied_msg.video.file_id[:30]}...`\n"
+                    diagnostics += f"\n<b>🎥 Media:</b>\n• Type: Video\n• File ID: <code>{replied_msg.video.file_id[:30]}...</code>\n"
                 elif replied_msg.document:
-                    diagnostics += f"\n**📄 Media:**\n• Type: Document\n• File ID: `{replied_msg.document.file_id[:30]}...`\n"
+                    diagnostics += f"\n<b>📄 Media:</b>\n• Type: Document\n• File ID: <code>{replied_msg.document.file_id[:30]}...</code>\n"
 
                 if replied_msg.text:
                     preview = replied_msg.text[:100] + "..." if len(replied_msg.text) > 100 else replied_msg.text
-                    diagnostics += f"\n**📝 Text Content:**\n```\n{preview}\n```\n"
+                    diagnostics += f"\n<b>📝 Text Content:</b>\n<pre>{html.escape(preview)}</pre>\n"
                 elif replied_msg.caption:
                     preview = replied_msg.caption[:100] + "..." if len(replied_msg.caption) > 100 else replied_msg.caption
-                    diagnostics += f"\n**📝 Caption:**\n```\n{preview}\n```\n"
+                    diagnostics += f"\n<b>📝 Caption:</b>\n<pre>{html.escape(preview)}</pre>\n"
 
                 diagnostics += "\n━━━━━━━━━━━━━━━━━━━\n"
                 diagnostics += "💡 Use this info to debug issues or verify data"
@@ -431,7 +431,7 @@ class DeveloperCommands(BroadcastCommandsMixin, QuizEditorMixin):
                     success=True
                 )
 
-                reply = await update.message.reply_text(diagnostics, parse_mode=ParseMode.MARKDOWN)
+                reply = await update.message.reply_text(diagnostics, parse_mode=ParseMode.HTML)
                 logger.info(f"Showed contextual diagnostics for message {replied_msg.message_id}")
                 return
 
@@ -458,16 +458,25 @@ class DeveloperCommands(BroadcastCommandsMixin, QuizEditorMixin):
 
             if not context.args:
                 reply = await update.message.reply_text(
-                    "🔧 **Developer Management**\n\n"
-                    "**Commands:**\n"
+                    "🔧 <b>Developer Management</b>\n\n"
+                    "<b>Commands:</b>\n"
                     "• /dev [user_id] - Add developer (quick add)\n"
                     "• /dev add [user_id] - Add developer\n"
                     "• /dev remove [user_id] - Remove developer\n"
                     "• /dev list - Show all developers\n\n"
-                    "**💡 Reply Mode:**\n"
+                    "<b>💡 Reply Mode:</b>\n"
                     "• Reply to any message with /dev to see diagnostics",
-                    parse_mode=ParseMode.MARKDOWN
+                    parse_mode=ParseMode.HTML
                 )
+                await self.auto_clean_message(update.message, reply)
+                return
+
+            # Granting/revoking admin is owner-only — this covers quick add
+            # (/dev <id>) too, which used to bypass the check below.
+            first_arg = context.args[0].lower()
+            if (first_arg.isdigit() or first_arg in ("add", "remove")) \
+                    and update.effective_user.id not in config.AUTHORIZED_USERS:
+                reply = await update.message.reply_text("⛔ Only the owner can add or remove admins.")
                 await self.auto_clean_message(update.message, reply)
                 return
 
@@ -504,13 +513,6 @@ class DeveloperCommands(BroadcastCommandsMixin, QuizEditorMixin):
                 pass  # Not a user ID — treat as action word
 
             action = context.args[0].lower()
-
-            # Only the owner (and WIFU) may grant or revoke admin rights —
-            # a developer must not be able to make anyone else an admin.
-            if action in ("add", "remove") and update.effective_user.id not in config.AUTHORIZED_USERS:
-                reply = await update.message.reply_text("⛔ Only the owner can add or remove admins.")
-                await self.auto_clean_message(update.message, reply)
-                return
 
             if action == "add":
                 if len(context.args) < 2:
