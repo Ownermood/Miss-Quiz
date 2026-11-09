@@ -673,11 +673,20 @@ class DatabaseManager:
             logger.error(f"update_group_quiz_schedule {chat_id}: {e}")
 
     def backfill_group_schedules(self, interval_minutes: int = 30) -> int:
-        """One-time migration: give every existing group an initial next_quiz_due_at.
-        Sets it to NOW so they are all served in the first scheduler poll after upgrade.
-        Groups added after this commit are seeded by register_group_interaction."""
+        """One-time migration: give every existing group an initial next_quiz_due_at
+        and reset legacy unverified message_thread_id values that predate
+        open/closed topic tracking."""
         now = datetime.utcnow().isoformat()
         try:
+            # Clear legacy single-field message_thread_id on groups that don't yet
+            # have open_threads tracking (prevents sending into already-closed topics).
+            self.groups_col.update_many(
+                {"open_threads": {"$exists": False}},
+                {
+                    "$set": {"open_threads": [], "closed_threads": []},
+                    "$unset": {"message_thread_id": ""},
+                }
+            )
             result = self.groups_col.update_many(
                 {"next_quiz_due_at": {"$exists": False}},
                 {"$set": {
@@ -930,21 +939,105 @@ class DatabaseManager:
             "last_seen":     now_iso,
             "active_status": "active",
         }
-        if thread_id:
-            data["message_thread_id"] = thread_id
         self.groups_col.update_one(
             {"chat_id": chat_id},
             {
                 "$set": data,
                 "$setOnInsert": {
-                    "joined_at":        now_iso,
-                    "quiz_start_time":  now_iso,
-                    "next_quiz_due_at": next_due,
+                    "joined_at":         now_iso,
+                    "quiz_start_time":   now_iso,
+                    "next_quiz_due_at":  next_due,
                     "last_quiz_sent_at": None,
+                    "open_threads":      [],
+                    "closed_threads":    [],
                 },
             },
             upsert=True
         )
+        if thread_id:
+            self.mark_group_topic_open(chat_id, int(thread_id), reopened=False)
+
+    def mark_group_topic_open(self, chat_id: int, thread_id: int, reopened: bool = False) -> None:
+        """Record a forum topic as open and set it as the preferred active topic.
+        If reopened=False and the topic is known to be closed, ignore (admins can
+        send messages inside closed topics without reopening them)."""
+        if not thread_id or not isinstance(thread_id, int):
+            return
+        try:
+            doc = self.groups_col.find_one(
+                {"chat_id": chat_id},
+                {"open_threads": 1, "closed_threads": 1, "_id": 0}
+            ) or {}
+            closed = list(doc.get("closed_threads") or [])
+            if thread_id in closed:
+                if not reopened:
+                    return
+                closed = [t for t in closed if t != thread_id]
+            open_list = [thread_id] + [t for t in (doc.get("open_threads") or []) if t != thread_id and t not in closed]
+            open_list = open_list[:20]
+            self.groups_col.update_one(
+                {"chat_id": chat_id},
+                {"$set": {
+                    "message_thread_id": thread_id,
+                    "open_threads":      open_list,
+                    "closed_threads":    closed,
+                }}
+            )
+        except Exception as e:
+            logger.error(f"mark_group_topic_open ({chat_id}, {thread_id}): {e}")
+
+    def mark_group_topic_closed(self, chat_id: int, thread_id: int) -> Optional[int]:
+        """Mark a forum topic as closed, remove it from open_threads, and switch
+        message_thread_id to the next open topic (or None = Main/General topic if
+        all topics in the group are closed). Returns the new active thread_id."""
+        if not thread_id or not isinstance(thread_id, int):
+            return None
+        try:
+            doc = self.groups_col.find_one(
+                {"chat_id": chat_id},
+                {"open_threads": 1, "closed_threads": 1, "_id": 0}
+            ) or {}
+            closed = [thread_id] + [t for t in (doc.get("closed_threads") or []) if t != thread_id]
+            closed = closed[:50]
+            open_list = [t for t in (doc.get("open_threads") or []) if t != thread_id and t not in closed]
+            next_open = open_list[0] if open_list else None
+            update_ops: Dict = {
+                "$set": {
+                    "open_threads":   open_list,
+                    "closed_threads": closed,
+                }
+            }
+            if next_open is not None:
+                update_ops["$set"]["message_thread_id"] = next_open
+            else:
+                update_ops["$unset"] = {"message_thread_id": ""}
+            self.groups_col.update_one({"chat_id": chat_id}, update_ops)
+            return next_open
+        except Exception as e:
+            logger.error(f"mark_group_topic_closed ({chat_id}, {thread_id}): {e}")
+            return None
+
+    def get_group_open_thread(self, chat_id: int, preferred_thread_id: Optional[int] = None) -> Optional[int]:
+        """Return an open topic thread_id for chat_id, or None (Main/General topic)
+        if all topics are closed or the group is not a forum."""
+        try:
+            doc = self.groups_col.find_one(
+                {"chat_id": chat_id},
+                {"open_threads": 1, "closed_threads": 1, "message_thread_id": 1, "_id": 0}
+            ) or {}
+            closed = set(doc.get("closed_threads") or [])
+            if preferred_thread_id and isinstance(preferred_thread_id, int) and preferred_thread_id not in closed:
+                return preferred_thread_id
+            open_list = [t for t in (doc.get("open_threads") or []) if isinstance(t, int) and t not in closed]
+            if open_list:
+                return open_list[0]
+            saved = doc.get("message_thread_id")
+            if saved and isinstance(saved, int) and saved not in closed and "open_threads" in doc:
+                return saved
+            return None
+        except Exception as e:
+            logger.error(f"get_group_open_thread ({chat_id}): {e}")
+            return None
 
     def update_group_admin_status(
         self, chat_id: int, is_admin: bool, permissions: dict = None
@@ -982,9 +1075,8 @@ class DatabaseManager:
         }
 
     def clear_group_thread(self, chat_id: int, thread_id: int) -> None:
-        """Forget a closed/deleted topic (only if it is still the saved one)."""
-        self.groups_col.update_one({"chat_id": chat_id, "message_thread_id": thread_id},
-                                   {"$unset": {"message_thread_id": ""}})
+        """Forget a closed/deleted topic and switch to the next open topic (or main topic)."""
+        self.mark_group_topic_closed(chat_id, thread_id)
 
     def mark_admin_reminder(self, chat_id: int) -> None:
         """Record that a 'make me admin' alert was sent to this group."""

@@ -283,13 +283,22 @@ class GroupQuizMixin:
         kw = {"parse_mode": ParseMode.HTML}
         if kb is not None:
             kw["reply_markup"] = kb
-        if s.thread_id:
-            kw["message_thread_id"] = s.thread_id
-        try:
-            return await context.bot.send_message(s.chat_id, text, **kw)
-        except Exception as e:
-            logger.warning(f"[GQUIZ] {s.chat_id} send failed: {e}")
-            return None
+        for _attempt in range(3):
+            call_kw = dict(kw)
+            if s.thread_id:
+                call_kw["message_thread_id"] = s.thread_id
+            try:
+                return await context.bot.send_message(s.chat_id, text, **call_kw)
+            except Exception as e:
+                err = str(e).lower()
+                if s.thread_id and any(w in err for w in ("topic", "thread", "closed")):
+                    next_tid = await self._gq_db("mark_group_topic_closed", s.chat_id, s.thread_id, default=None)
+                    logger.info(f"[GQUIZ] topic {s.thread_id} in {s.chat_id} closed — switching to {next_tid or 'Main'}")
+                    s.thread_id = next_tid
+                    continue
+                logger.warning(f"[GQUIZ] {s.chat_id} send failed: {e}")
+                return None
+        return None
 
     async def _gq_edit_ctrl(self, context, s: Session, note: str = "") -> None:
         if not s.ctrl_msg_id:
@@ -371,6 +380,8 @@ class GroupQuizMixin:
             return None
         if skip_lobby is None:
             skip_lobby = (START_DELAY == 0)
+        if self.db and hasattr(self.db, "get_group_open_thread"):
+            thread_id = await self._gq_db("get_group_open_thread", chat_id, thread_id, default=thread_id)
         random.shuffle(questions)
         chat_title = ""
         try:
@@ -495,12 +506,24 @@ class GroupQuizMixin:
         exp = str(q.get("explanation") or "").strip()
         if exp:
             kw["explanation"] = exp[:200]
-        if s.thread_id:
-            kw["message_thread_id"] = s.thread_id
-        try:
-            msg = await context.bot.send_poll(**kw)
-        except Exception as e:
-            logger.warning(f"[GQUIZ] {s.chat_id} poll failed: {e}")
+        msg = None
+        for _attempt in range(3):
+            call_kw = dict(kw)
+            if s.thread_id:
+                call_kw["message_thread_id"] = s.thread_id
+            try:
+                msg = await context.bot.send_poll(**call_kw)
+                break
+            except Exception as e:
+                err = str(e).lower()
+                if s.thread_id and any(w in err for w in ("topic", "thread", "closed")):
+                    next_tid = await self._gq_db("mark_group_topic_closed", s.chat_id, s.thread_id, default=None)
+                    logger.info(f"[GQUIZ] poll topic {s.thread_id} in {s.chat_id} closed — switching to {next_tid or 'Main'}")
+                    s.thread_id = next_tid
+                    continue
+                logger.warning(f"[GQUIZ] {s.chat_id} poll failed: {e}")
+                return False
+        if not msg:
             return False
         pid = str(msg.poll.id)
         s.polls[pid] = (num - 1, correct, time.monotonic())

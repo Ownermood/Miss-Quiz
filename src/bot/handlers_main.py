@@ -555,8 +555,14 @@ class TelegramQuizBot(
     async def _reply(self, update: Update, text: str,
                      parse_mode=ParseMode.HTML,
                      reply_markup=None, **kw) -> Optional[Any]:
-        """Smart reply — auto-injects thread_id for forum topics."""
+        """Smart reply — routes to an open forum topic (or Main topic if all closed)."""
+        chat   = update.effective_chat
         tid    = get_thread_id(update)
+        if chat and chat.type in ("group", "supergroup") and self.db and hasattr(self.db, "get_group_open_thread"):
+            try:
+                tid = await asyncio.to_thread(self.db.get_group_open_thread, chat.id, tid)
+            except Exception:
+                pass
         kwargs = {"parse_mode": parse_mode, "link_preview_options": _NO_PREVIEW}
         if reply_markup:
             kwargs["reply_markup"] = reply_markup
@@ -564,14 +570,29 @@ class TelegramQuizBot(
             kwargs["message_thread_id"] = tid
         kwargs.update(kw)
         try:
+            if chat and getattr(update.effective_message, "is_topic_message", False) and tid != getattr(update.effective_message, "message_thread_id", None):
+                return await self.application.bot.send_message(chat_id=chat.id, text=text, **kwargs)
             return await update.effective_message.reply_text(text, **kwargs)
         except TelegramError as e:
-            if any(w in str(e).lower() for w in ("topic", "thread", "closed")):
-                kwargs.pop("message_thread_id", None)
+            if any(w in str(e).lower() for w in ("topic", "thread", "closed")) and chat:
+                next_tid = None
+                if tid and self.db and hasattr(self.db, "mark_group_topic_closed"):
+                    try:
+                        next_tid = await asyncio.to_thread(self.db.mark_group_topic_closed, chat.id, tid)
+                    except Exception:
+                        next_tid = None
+                if next_tid:
+                    kwargs["message_thread_id"] = next_tid
+                else:
+                    kwargs.pop("message_thread_id", None)
                 try:
-                    return await update.effective_message.reply_text(text, **kwargs)
+                    return await self.application.bot.send_message(chat_id=chat.id, text=text, **kwargs)
                 except Exception:
-                    pass
+                    kwargs.pop("message_thread_id", None)
+                    try:
+                        return await self.application.bot.send_message(chat_id=chat.id, text=text, **kwargs)
+                    except Exception:
+                        pass
             logger.error(f"_reply error: {e}")
         return None
 

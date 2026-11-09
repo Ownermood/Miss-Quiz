@@ -179,6 +179,8 @@ class UI:
 def get_thread_id(update: Update) -> Optional[int]:
     msg = update.effective_message
     if msg and getattr(msg, "is_topic_message", False):
+        if getattr(msg, "forum_topic_closed", None) is not None:
+            return None
         return msg.message_thread_id
     return None
 

@@ -59,6 +59,9 @@ class TrackingMixin(object):
         if not chat or chat.type not in ("group", "supergroup"):
             return
 
+        # Always track forum topic open/close state even when group is already in _seen_groups
+        self._track_group_topic(update)
+
         if chat.id in self._seen_groups:
             return  # already upserted this session — skip redundant DB write
 
@@ -78,6 +81,37 @@ class TrackingMixin(object):
             logger.error(
                 f"ensure_group_registered {chat.id} ({source}): {e}"
             )
+
+    def _track_group_topic(self, update: Update) -> None:
+        """Track open and closed forum topics in real time for topic-wise groups."""
+        if not self.db:
+            return
+        chat = update.effective_chat
+        msg  = update.effective_message
+        if not chat or chat.type not in ("group", "supergroup") or not msg:
+            return
+        tid = getattr(msg, "message_thread_id", None) if getattr(msg, "is_topic_message", False) else None
+        if not tid or not isinstance(tid, int):
+            return
+        if not hasattr(self, "_topic_cache"):
+            self._topic_cache = {}
+        try:
+            if getattr(msg, "forum_topic_closed", None) is not None:
+                self._topic_cache.pop(chat.id, None)
+                next_tid = self.db.mark_group_topic_closed(chat.id, tid)
+                logger.info(f"[TOPIC CLOSED] chat={chat.id} closed={tid} -> next_open={next_tid or 'Main'}")
+                return
+            if (getattr(msg, "forum_topic_reopened", None) is not None
+                    or getattr(msg, "forum_topic_created", None) is not None):
+                self._topic_cache[chat.id] = tid
+                self.db.mark_group_topic_open(chat.id, tid, reopened=True)
+                logger.info(f"[TOPIC OPENED] chat={chat.id} thread={tid}")
+                return
+            if self._topic_cache.get(chat.id) != tid:
+                self._topic_cache[chat.id] = tid
+                self.db.mark_group_topic_open(chat.id, tid, reopened=False)
+        except Exception as e:
+            logger.debug(f"_track_group_topic {chat.id}: {e}")
 
     # ══════════════════════════════════════════════════════════════
     #  USER TRACKING — SINGLE PIPELINE

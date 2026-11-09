@@ -216,23 +216,34 @@ class AutoQuizScheduler:
     _TOPIC_GONE = ("thread not found", "topic_closed", "topic closed", "topic_deleted",
                    "topic deleted", "forum topic is closed", "topic_id_invalid")
 
-    async def _send_in_topic(self, send, chat: int, thread_id, **kw):
-        """Topic groups: post in the group's open topic (the last one people
-        wrote in). If that topic was closed or deleted, post in the main
-        (General) topic instead and forget the dead topic.
+    async def _send_in_topic(self, send, chat: int, thread_id,
+                             open_threads=None, closed_threads=None, **kw):
+        """Topic groups: post in an open topic (most recent active open topic first).
+        If that topic was closed or deleted, try the next open topic in the group;
+        if all topics in the group are closed, post in the main (General) topic.
         Returns (message, thread_id actually used)."""
-        if thread_id:
+        closed = set(closed_threads or [])
+        candidates = []
+        for t in ([thread_id] if thread_id else []) + list(open_threads or []):
+            if t and isinstance(t, int) and t not in closed and t not in candidates:
+                candidates.append(t)
+
+        for tid in candidates:
             try:
-                return await send(**kw, message_thread_id=thread_id), thread_id
+                return await send(**kw, message_thread_id=tid), tid
             except BadRequest as e:
                 if not any(w in str(e).lower() for w in self._TOPIC_GONE):
                     raise
-                logger.info(f"[SCHEDULER] topic {thread_id} in {chat} is closed/gone ({e}) — using main topic")
+                logger.info(
+                    f"[SCHEDULER] topic {tid} in {chat} is closed/gone ({e}) "
+                    f"— trying next open topic or main topic"
+                )
                 if self.db:
                     try:
-                        self.db.clear_group_thread(chat, thread_id)
+                        self.db.mark_group_topic_closed(chat, tid)
                     except Exception as ex:
-                        logger.warning(f"[SCHEDULER] clear_group_thread failed for {chat}: {ex}")
+                        logger.warning(f"[SCHEDULER] mark_group_topic_closed failed for {chat}: {ex}")
+
         return await send(**kw), None
 
     async def _bot_is_admin(self, chat_id: int, known) -> bool:
@@ -304,7 +315,13 @@ class AutoQuizScheduler:
                 continue
             kw = {"chat_id": chat_id, "text": ADMIN_ALERT_TEXT, "parse_mode": "HTML", "reply_markup": kb}
             try:
-                await self._send_in_topic(tg.send_message, chat_id, g.get("message_thread_id"), **kw)
+                await self._send_in_topic(
+                    tg.send_message, chat_id,
+                    g.get("message_thread_id") if "open_threads" in g else None,
+                    open_threads=g.get("open_threads"),
+                    closed_threads=g.get("closed_threads"),
+                    **kw
+                )
                 self.db.mark_admin_reminder(chat_id)
                 sent += 1
             except RetryAfter as e:
@@ -343,14 +360,20 @@ class AutoQuizScheduler:
 
             from src.bot.group_quiz import is_active as _group_quiz_running
             group_targets = [
-                (g["chat_id"], g.get("message_thread_id"), g.get("bot_is_admin"))
+                (
+                    g["chat_id"],
+                    g.get("message_thread_id") if "open_threads" in g else None,
+                    g.get("bot_is_admin"),
+                    g.get("open_threads"),
+                    g.get("closed_threads"),
+                )
                 for g in groups
                 if g.get("chat_id") and not _group_quiz_running(g["chat_id"])   # a group quiz is on
             ]
         else:
             # No DB (dev/polling mode): fall back to all active chats.
             # Schedule tracking requires DB; without it every poll delivers.
-            group_targets = [(cid, None, None) for cid in self.quiz_manager.active_chats]
+            group_targets = [(cid, None, None, None, None) for cid in self.quiz_manager.active_chats]
 
         if not group_targets:
             return  # Nothing due — silent; most 1-min polls are empty
@@ -363,7 +386,7 @@ class AutoQuizScheduler:
         sent = failed = skipped = 0
 
         from telegram import Poll
-        for chat_id, thread_id, known_admin in group_targets:
+        for chat_id, thread_id, known_admin, open_threads, closed_threads in group_targets:
             try:
                 if not await self._bot_is_admin(chat_id, known_admin):
                     logger.info(f"[SCHEDULER] ⏸ {chat_id}: bot is not admin — auto quiz paused")
@@ -416,7 +439,13 @@ class AutoQuizScheduler:
                     is_anonymous      = False,
                 )
                 msg, thread_id = await self._send_in_topic(
-                    self.bot.application.bot.send_poll, chat_id, thread_id, **send_kwargs)
+                    self.bot.application.bot.send_poll,
+                    chat_id,
+                    thread_id,
+                    open_threads=open_threads,
+                    closed_threads=closed_threads,
+                    **send_kwargs,
+                )
                 poll_id_str = str(msg.poll.id)
 
                 # Remove the previous quiz only AFTER the new one is out, so a

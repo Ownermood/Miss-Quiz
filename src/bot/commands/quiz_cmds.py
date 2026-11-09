@@ -25,6 +25,11 @@ class QuizCommandsMixin(object):
     async def cmd_quiz(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         chat      = update.effective_chat
         thread_id = get_thread_id(update)
+        if chat.type in ("group", "supergroup") and self.db and hasattr(self.db, "get_group_open_thread"):
+            try:
+                thread_id = await asyncio.to_thread(self.db.get_group_open_thread, chat.id, thread_id)
+            except Exception:
+                pass
         track_id  = get_tracking_id(chat.id, thread_id)
         category  = " ".join(context.args).strip() if context.args else ""
 
@@ -94,7 +99,31 @@ class QuizCommandsMixin(object):
             poll_kwargs["message_thread_id"] = thread_id
 
         try:
-            poll_msg = await update.effective_message.reply_poll(**poll_kwargs)
+            try:
+                poll_msg = await context.bot.send_poll(chat_id=chat.id, **poll_kwargs)
+            except TelegramError as te:
+                if thread_id and any(w in str(te).lower() for w in ("topic", "thread", "closed")):
+                    next_tid = None
+                    if self.db and hasattr(self.db, "mark_group_topic_closed"):
+                        try:
+                            next_tid = await asyncio.to_thread(self.db.mark_group_topic_closed, chat.id, thread_id)
+                        except Exception:
+                            next_tid = None
+                    thread_id = next_tid
+                    track_id = get_tracking_id(chat.id, thread_id)
+                    if thread_id:
+                        poll_kwargs["message_thread_id"] = thread_id
+                    else:
+                        poll_kwargs.pop("message_thread_id", None)
+                    try:
+                        poll_msg = await context.bot.send_poll(chat_id=chat.id, **poll_kwargs)
+                    except TelegramError:
+                        poll_kwargs.pop("message_thread_id", None)
+                        thread_id = None
+                        track_id = chat.id
+                        poll_msg = await context.bot.send_poll(chat_id=chat.id, **poll_kwargs)
+                else:
+                    raise
             poll_id  = poll_msg.poll.id
 
             poll_entry = {
