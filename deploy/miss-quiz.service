@@ -1,0 +1,22 @@
+[Unit]
+Description=Miss Quiz Telegram Bot
+After=network-online.target mongod.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=missquiz
+Group=missquiz
+WorkingDirectory=/opt/miss-quiz
+ExecStart=/opt/miss-quiz/venv/bin/python main.py
+Restart=always
+RestartSec=5
+# hardening: the bot only needs its own folder
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=true
+PrivateTmp=true
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

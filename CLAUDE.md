@@ -10,7 +10,7 @@ Owner Hinglish mein baat karta hai, jawab bhi Hinglish mein, short aur seedha do
 **Miss Quiz**: Telegram quiz bot (abhi CLAT focus). Goal hai multi-exam aur multi-subject, phir global.
 
 - Python 3.11 (`runtime.txt`), python-telegram-bot v22, MongoDB (pymongo), Flask admin panel, APScheduler
-- Deploy: Render (`render.yaml`), Heroku-style `Procfile`, Docker (`Dockerfile`, `docker-compose.yml`)
+- Deploy: **VPS (main)** — `deploy/setup_vps.sh` + `deploy/miss-quiz.service` (systemd, user `missquiz`, `/opt/miss-quiz`, polling mode, local MongoDB 127.0.0.1, panel sirf SSH tunnel se). Purane: Render (`render.yaml`), `Procfile`, Docker
 - Modes: `MODE=polling` (local) / `MODE=webhook` (production) — `main.py`
 
 ## 2. Code ka naksha
