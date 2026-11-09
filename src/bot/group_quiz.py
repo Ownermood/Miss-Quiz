@@ -45,7 +45,7 @@ ACTIVE: Dict[int, "Session"] = {}       # chat_id → running/paused session (sc
 
 def is_active(chat_id: int) -> bool:
     s = ACTIVE.get(chat_id)
-    return bool(s and s.status in ("running", "paused"))
+    return bool(s and s.status in ("lobby", "running", "paused"))
 
 
 @dataclass
@@ -56,10 +56,11 @@ class Session:
     secs:      int
     started_by: int
     starter_name: str = ""
+    chat_title: str = ""
     thread_id: Optional[int] = None
     set_id:    str = ""
     idx:       int = 0                     # next question to send
-    status:    str = "running"             # running | paused | stopped | done
+    status:    str = "lobby"               # lobby | running | paused | stopped | done
     scores:    Dict[str, Dict] = field(default_factory=dict)   # uid → {name, correct, wrong, score, time}
     ctrl_msg_id: Optional[int] = None
     paused_at: float = 0.0
@@ -70,28 +71,40 @@ class Session:
     negative_rate: float = 0.25            # -0.25 marks per wrong answer
     marks_per_q:   float = 1.0             # +1.0 marks per correct answer
     user_history:  Dict[str, List[Dict]] = field(default_factory=dict) # uid → list of answered questions
+    ready_players: Dict[str, str] = field(default_factory=dict)        # uid_str → player display name
+    mention_players: bool = True
+    certificates:    bool = True
+    auto_pause:      bool = False
+    unanswered_streak: int = 0
 
     def to_doc(self) -> Dict:
         return {
-            "chat_id": self.chat_id, "thread_id": self.thread_id, "title": self.title,
-            "questions": self.questions, "secs": self.secs, "started_by": self.started_by,
-            "starter_name": self.starter_name, "set_id": self.set_id, "idx": self.idx,
-            "status": self.status, "scores": self.scores, "ctrl_msg_id": self.ctrl_msg_id,
+            "chat_id": self.chat_id, "chat_title": self.chat_title, "thread_id": self.thread_id,
+            "title": self.title, "questions": self.questions, "secs": self.secs,
+            "started_by": self.started_by, "starter_name": self.starter_name, "set_id": self.set_id,
+            "idx": self.idx, "status": self.status, "scores": self.scores, "ctrl_msg_id": self.ctrl_msg_id,
             "negative_rate": self.negative_rate, "marks_per_q": self.marks_per_q,
-            "user_history": self.user_history
+            "user_history": self.user_history, "ready_players": self.ready_players,
+            "mention_players": self.mention_players, "certificates": self.certificates,
+            "auto_pause": self.auto_pause,
         }
 
     @classmethod
     def from_doc(cls, d: Dict) -> "Session":
         return cls(
-            chat_id=d["chat_id"], title=d.get("title", "Quiz"), questions=d.get("questions") or [],
-            secs=int(d.get("secs") or BOT_SECS), started_by=d.get("started_by", 0),
-            starter_name=d.get("starter_name", ""), thread_id=d.get("thread_id"),
-            set_id=d.get("set_id", ""), idx=int(d.get("idx") or 0), status=d.get("status", "running"),
+            chat_id=d["chat_id"], chat_title=d.get("chat_title", ""), title=d.get("title", "Quiz"),
+            questions=d.get("questions") or [], secs=int(d.get("secs") or BOT_SECS),
+            started_by=d.get("started_by", 0), starter_name=d.get("starter_name", ""),
+            thread_id=d.get("thread_id"), set_id=d.get("set_id", ""),
+            idx=int(d.get("idx") or 0), status=d.get("status", "running"),
             scores=d.get("scores") or {}, ctrl_msg_id=d.get("ctrl_msg_id"),
             negative_rate=float(d.get("negative_rate") if d.get("negative_rate") is not None else 0.25),
             marks_per_q=float(d.get("marks_per_q") or 1.0),
-            user_history=d.get("user_history") or {}
+            user_history=d.get("user_history") or {},
+            ready_players=d.get("ready_players") or {},
+            mention_players=bool(d.get("mention_players", True)),
+            certificates=bool(d.get("certificates", True)),
+            auto_pause=bool(d.get("auto_pause", False)),
         )
 
     def record(self, poll_id: str, uid: int, name: str, option_ids) -> bool:
@@ -146,6 +159,79 @@ def _kb(s: Session) -> InlineKeyboardMarkup:
               InlineKeyboardButton("⏸ Pause", callback_data=f"gq|pause|{c}", style="primary"))
     return InlineKeyboardMarkup([[toggle, InlineKeyboardButton("⏭ Skip", callback_data=f"gq|skip|{c}", style="primary")],
                                  [InlineKeyboardButton("⏹ Stop", callback_data=f"gq|stop|{c}", style="danger")]])
+
+
+def _lobby_text(s: Session, extra_note: str = "") -> str:
+    n_ready = len(s.ready_players)
+    neg_str = f"-{s.negative_rate} marks" if s.negative_rate > 0 else "OFF (No Negative)"
+    if s.ready_players:
+        p_items = [
+            f"{idx}. {UI.mention(int(uid), name)}"
+            for idx, (uid, name) in enumerate(list(s.ready_players.items())[:30], 1)
+        ]
+        if n_ready > 30:
+            p_items.append(f"<i>…and {n_ready - 30} more</i>")
+        ready_block = "<blockquote>" + "  ·  ".join(p_items) + "</blockquote>"
+    else:
+        ready_block = "<blockquote><i>⏳ Waiting for players to tap “🙋‍♂️ I'm Ready!” below…</i></blockquote>"
+
+    return (
+        f"👋 <b>Hello everyone! Miss Quiz is ready to host:</b>
+"
+        f"━━━━━━━━━━━━━━━━━━━━━━━━━━
+"
+        f"📝 <b>{html.escape(s.title)}</b>
+"
+        f"<blockquote>"
+        f"❓ <b>Questions:</b> <code>{len(s.questions)} Qs</code>  ·  ⏱ <b>Timer:</b> <code>{s.secs}s / Q</code>
+"
+        f"⚖️ <b>Negative:</b> <code>{neg_str}</code>  ·  👑 <b>Host:</b> {UI.mention(s.started_by, s.starter_name or 'Host')}"
+        f"</blockquote>
+"
+        f"🙋‍♂️ <b>Players Ready ({n_ready}):</b>
+"
+        f"{ready_block}
+"
+        + (f"
+{extra_note}
+" if extra_note else "")
+        + f"
+👉 <i>Players: Tap <b>“I'm ready! ✅”</b> to join the lobby.
+"
+          f"👑 Host ({html.escape(s.starter_name or 'Admin')}) can tap <b>▶️ Start Now</b> when everyone is in!</i>"
+    )
+
+
+def _lobby_kb(s: Session) -> InlineKeyboardMarkup:
+    c = s.chat_id
+    n_ready = len(s.ready_players)
+    ready_label = f"🙋‍♂️ I'm ready! ✅ ({n_ready})" if n_ready > 0 else "🙋‍♂️ I'm ready! ✅"
+    men_lbl = "🔔 Mention Players: ON" if s.mention_players else "🔕 Mention Players: OFF"
+    men_style = "success" if s.mention_players else "primary"
+    cert_lbl = "🏆 Certificates: ON" if s.certificates else "🏆 Certificates: OFF"
+    cert_style = "success" if s.certificates else "primary"
+    neg_on = s.negative_rate > 0
+    neg_lbl = f"⚖️ Negative (-{s.negative_rate}): ON" if neg_on else "⚖️ Negative: OFF"
+    neg_style = "success" if neg_on else "primary"
+    ap_lbl = "⏸ Auto Pause: ON" if s.auto_pause else "⏸ Auto Pause: OFF"
+    ap_style = "success" if s.auto_pause else "primary"
+
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton(ready_label, callback_data=f"gq|ready|{c}", style="primary")],
+        [
+            InlineKeyboardButton("▶️ Start Now (Host)", callback_data=f"gq|launch|{c}", style="primary"),
+            InlineKeyboardButton("⏰ Auto-Start 30s", callback_data=f"gq|autostart|{c}", style="primary"),
+        ],
+        [
+            InlineKeyboardButton(men_lbl, callback_data=f"gq|tog_men|{c}", style=men_style),
+            InlineKeyboardButton(cert_lbl, callback_data=f"gq|tog_cert|{c}", style=cert_style),
+        ],
+        [
+            InlineKeyboardButton(neg_lbl, callback_data=f"gq|tog_neg|{c}", style=neg_style),
+            InlineKeyboardButton(ap_lbl, callback_data=f"gq|tog_ap|{c}", style=ap_style),
+        ],
+        [InlineKeyboardButton("❌ Cancel Quiz (Host)", callback_data=f"gq|cancel_lobby|{c}", style="danger")],
+    ])
 
 
 def _medal(i: int) -> str:
@@ -287,20 +373,54 @@ class GroupQuizMixin:
 
     async def _gq_begin(self, context, chat_id: int, thread_id, user, title: str,
                         questions: List[Dict], secs: int, set_id: str = "",
-                        negative_rate: float = 0.25) -> Optional[Session]:
+                        negative_rate: float = 0.25, skip_lobby: bool = False) -> Optional[Session]:
         if is_active(chat_id):
             return None
         random.shuffle(questions)
-        s = Session(chat_id=chat_id, title=title[:60], questions=questions, secs=max(5, min(secs, 600)),
-                    started_by=user.id, starter_name=self._bt_name(user), thread_id=thread_id, set_id=set_id,
-                    negative_rate=negative_rate)
+        chat_title = ""
+        try:
+            ch = await context.bot.get_chat(chat_id)
+            chat_title = ch.title or ""
+        except Exception:
+            pass
+        s = Session(
+            chat_id=chat_id, chat_title=chat_title, title=title[:60], questions=questions,
+            secs=max(5, min(secs, 600)), started_by=user.id, starter_name=self._bt_name(user),
+            thread_id=thread_id, set_id=set_id, negative_rate=negative_rate,
+            status="running" if skip_lobby else "lobby",
+        )
+        # Host is automatically the 1st ready player
+        s.ready_players[str(user.id)] = s.starter_name or "Host"
         ACTIVE[chat_id] = s
-        sent = await self._gq_send(context, s, self._gq_head(s) + f"🚀 <b>Starting in {START_DELAY}s…</b>", _kb(s))
-        s.ctrl_msg_id = getattr(sent, "message_id", None)
-        await self._gq_save(s)
-        logger.info(f"[GQUIZ] {chat_id} started '{title}' ({len(questions)} Q, {s.secs}s, neg={negative_rate}) by {user.id}")
-        asyncio.create_task(self._gq_run(s, context))
+        if skip_lobby:
+            sent = await self._gq_send(context, s, self._gq_head(s) + f"🚀 <b>Starting in {START_DELAY}s…</b>", _kb(s))
+            s.ctrl_msg_id = getattr(sent, "message_id", None)
+            await self._gq_save(s)
+            asyncio.create_task(self._gq_run(s, context))
+        else:
+            sent = await self._gq_send(context, s, _lobby_text(s), _lobby_kb(s))
+            s.ctrl_msg_id = getattr(sent, "message_id", None)
+            logger.info(f"[GQUIZ] {chat_id} opened lobby '{title}' ({len(questions)} Q, {s.secs}s) by {user.id}")
         return s
+
+    async def _gq_launch_from_lobby(self, context, s: Session) -> None:
+        if s.status != "lobby":
+            return
+        s.status = "running"
+        # Edit the lobby card into the active control header
+        await self._gq_edit_ctrl(context, s, f"🚀 <b>Quiz Live! ({len(s.ready_players)} players joined)</b>")
+        if s.mention_players and s.ready_players:
+            mentions = ", ".join(
+                UI.mention(int(uid), name) for uid, name in list(s.ready_players.items())[:25]
+            )
+            await self._gq_send(
+                context, s,
+                f"🔔 <b>TOURNAMENT STARTING IN {START_DELAY} SECONDS!</b>
+"
+                f"Get ready: {mentions} 🚀"
+            )
+        await self._gq_save(s)
+        asyncio.create_task(self._gq_run(s, context))
 
     # ── loop ─────────────────────────────────────────────────────────────
 
@@ -318,6 +438,7 @@ class GroupQuizMixin:
                     continue
                 q, num = s.questions[s.idx], s.idx + 1
                 s.idx += 1
+                ans_before = len(s.answered)
                 if not await self._gq_ask(context, s, q, num, n):
                     s.status = "stopped"
                     await self._gq_send(context, s, "⚠️ <b>Quiz stopped:</b> I can't send polls here "
@@ -332,6 +453,24 @@ class GroupQuizMixin:
                     pass
                 if s.status == "stopped":
                     break
+                # Check Auto-Pause if nobody answered this poll
+                if len(s.answered) == ans_before:
+                    s.unanswered_streak += 1
+                    if s.auto_pause and s.unanswered_streak >= 3 and s.status == "running" and s.idx < n:
+                        s.status = "paused"
+                        s.paused_at = time.monotonic()
+                        s.unanswered_streak = 0
+                        await self._gq_edit_ctrl(context, s, "⏸ <b>Auto-Paused (no answers for 3 questions).</b>")
+                        await self._gq_send(
+                            context, s,
+                            "⏸ <b>Quiz Auto-Paused</b> because 3 questions went unanswered.
+"
+                            "<i>Tap ▶️ Resume on the control panel above when players are ready!</i>",
+                            _kb(s)
+                        )
+                        continue
+                else:
+                    s.unanswered_streak = 0
                 if num % LB_EVERY == 0 and num < n:
                     await self._gq_send(context, s, f"📊 <b>After {num} questions</b>\n{self._gq_board(s, 5)}")
                 await asyncio.sleep(GAP)
@@ -448,6 +587,49 @@ class GroupQuizMixin:
         for k, text in enumerate(texts):
             await self._gq_send(context, s, text, self._gq_share_kb(context, s) if k == len(texts) - 1 else None)
         await self._gq_edit_ctrl(context, s, "🏁 <b>Finished.</b>" if not stopped else "⏹ <b>Stopped.</b>")
+
+        # Send Top-3 Winner Certificate Image Cards when certificates=True
+        rank = s.ranking()
+        if s.certificates and rank:
+            try:
+                import io as _io
+                from telegram import InputFile as _InputFile
+                from src.utils.certificate import generate_certificate_image
+                total_asked = max(1, min(s.idx, len(s.questions)))
+                bot_uname = getattr(context.bot, "username", "MissQuizBot") or "MissQuizBot"
+                medals = ("🥇", "🥈", "🥉")
+                for idx_r, (uid, sc) in enumerate(rank[:3]):
+                    r_pos = idx_r + 1
+                    p_name = sc.get("name") or "Player"
+                    cor = int(sc.get("correct", 0))
+                    pts = float(sc.get("score", cor))
+                    t_sec = float(sc.get("time", 0.0))
+                    png_bytes = await asyncio.to_thread(
+                        generate_certificate_image,
+                        player_name=p_name,
+                        quiz_title=s.title,
+                        group_title=s.chat_title or "Tournament Group",
+                        host_name=s.starter_name or "Host",
+                        rank_pos=r_pos,
+                        correct=cor,
+                        total_q=total_asked,
+                        score_pts=pts,
+                        time_secs=t_sec,
+                        bot_username=bot_uname,
+                    )
+                    kw_photo = {
+                        "chat_id": s.chat_id,
+                        "photo": _InputFile(_io.BytesIO(png_bytes), filename=f"certificate_rank_{r_pos}.png"),
+                        "caption": f"{medals[idx_r]} Congratulations {UI.mention(uid, p_name)}!",
+                        "parse_mode": ParseMode.HTML,
+                    }
+                    if s.thread_id:
+                        kw_photo["message_thread_id"] = s.thread_id
+                    await context.bot.send_photo(**kw_photo)
+                    await asyncio.sleep(0.4)
+            except Exception as ce:
+                logger.warning(f"[GQUIZ] certificate generation failed: {ce}")
+
         logger.info(f"[GQUIZ] {s.chat_id} ended ({'stopped' if stopped else 'done'}) players={len(s.scores)}")
 
     # ── speed control commands ───────────────────────────────────────────
@@ -779,9 +961,95 @@ class GroupQuizMixin:
         if not s:
             await query.answer("This quiz has ended.", show_alert=True)
             return
-        if user.id != s.started_by and not await self._gq_is_admin(context, chat_id, user):
-            await query.answer("Only group admins can control the quiz.", show_alert=True)
+
+        # ── Lobby "I'm ready!" button (ANY player in the group can tap!) ──
+        if action == "ready":
+            if s.status != "lobby":
+                await query.answer("The quiz has already started! Answer the live polls 👇", show_alert=True)
+                return
+            uid_s = str(user.id)
+            p_name = self._bt_name(user)
+            if uid_s in s.ready_players:
+                await query.answer(f"✅ You are already marked Ready! ({len(s.ready_players)} players in lobby)", show_alert=False)
+                return
+            s.ready_players[uid_s] = p_name
+            await query.answer(f"🔥 You're Ready! ({len(s.ready_players)} joined)")
+            try:
+                await query.message.edit_text(_lobby_text(s), parse_mode=ParseMode.HTML, reply_markup=_lobby_kb(s))
+            except Exception:
+                pass
             return
+
+        # Host / Admin check for all other lobby & running controls
+        if user.id != s.started_by and not await self._gq_is_admin(context, chat_id, user):
+            await query.answer("⛔ Only the Quiz Host or Group Admins can change settings or start the quiz.", show_alert=True)
+            return
+
+        if s.status == "lobby":
+            if action == "launch":
+                await query.answer("🚀 Launching Quiz Now!")
+                await self._gq_launch_from_lobby(context, s)
+                return
+            if action == "autostart":
+                await query.answer("⏰ Auto-starting in 30 seconds!")
+                try:
+                    await query.message.edit_text(
+                        _lobby_text(s, "⏰ <b>Auto-Start Activated:</b> Launching in <b>30 seconds</b>! Tap <b>I'm ready! ✅</b> fast!"),
+                        parse_mode=ParseMode.HTML,
+                        reply_markup=_lobby_kb(s),
+                    )
+                except Exception:
+                    pass
+                async def _delayed_launch():
+                    await asyncio.sleep(30)
+                    if ACTIVE.get(chat_id) is s and s.status == "lobby":
+                        await self._gq_launch_from_lobby(context, s)
+                asyncio.create_task(_delayed_launch())
+                return
+            if action == "tog_men":
+                s.mention_players = not s.mention_players
+                await query.answer(f"Mention Players: {'ON 🔔' if s.mention_players else 'OFF 🔕'}")
+                try:
+                    await query.message.edit_text(_lobby_text(s), parse_mode=ParseMode.HTML, reply_markup=_lobby_kb(s))
+                except Exception:
+                    pass
+                return
+            if action == "tog_cert":
+                s.certificates = not s.certificates
+                await query.answer(f"Top-3 Certificates: {'ON 🏆' if s.certificates else 'OFF'}")
+                try:
+                    await query.message.edit_text(_lobby_text(s), parse_mode=ParseMode.HTML, reply_markup=_lobby_kb(s))
+                except Exception:
+                    pass
+                return
+            if action == "tog_neg":
+                s.negative_rate = 0.0 if s.negative_rate > 0 else 0.25
+                await query.answer(f"Negative Marking: {'-' + str(s.negative_rate) if s.negative_rate > 0 else 'OFF'}")
+                try:
+                    await query.message.edit_text(_lobby_text(s), parse_mode=ParseMode.HTML, reply_markup=_lobby_kb(s))
+                except Exception:
+                    pass
+                return
+            if action == "tog_ap":
+                s.auto_pause = not s.auto_pause
+                await query.answer(f"Auto Pause: {'ON ⏸' if s.auto_pause else 'OFF'}")
+                try:
+                    await query.message.edit_text(_lobby_text(s), parse_mode=ParseMode.HTML, reply_markup=_lobby_kb(s))
+                except Exception:
+                    pass
+                return
+            if action == "cancel_lobby":
+                ACTIVE.pop(chat_id, None)
+                s.status = "stopped"
+                await query.answer("Quiz cancelled.")
+                try:
+                    await query.message.edit_text(
+                        f"❌ <b>Quiz Lobby Cancelled</b> by {UI.mention(user.id, self._bt_name(user))}.",
+                        parse_mode=ParseMode.HTML,
+                    )
+                except Exception:
+                    pass
+                return
         if action == "pause" and s.status == "running":
             s.status, s.paused_at = "paused", time.monotonic()
             await query.answer("Paused ⏸ — the current question still finishes.")

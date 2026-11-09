@@ -257,76 +257,82 @@ class MyQuizMixin:
         q_count = int(qs.get("count") or len(qs.get("questions") or []))
         secs = int(qs.get("secs") or 20)
         total_time = _fmt_total_time(q_count * secs)
-        shuffle_str = "On" if qs.get("shuffle") else "Off"
+        shuffle_str = "ON 🔀" if qs.get("shuffle") else "OFF"
+        neg_val = float(qs.get("negative_rate") if qs.get("negative_rate") is not None else 0.25)
+        neg_str = f"-{neg_val} marks" if neg_val > 0 else "No Negative"
         created_str = str(qs.get("created_at") or datetime.datetime.utcnow().isoformat())[:10]
         attempts = int(qs.get("plays") or 0)
+        files_cnt = len(qs.get("source_files") or [])
         share_link = f"https://t.me/{bot_username}?start=shared_{sid}" if bot_username else f"Code: {sid}"
 
         text = (
-            ("✅ <b>Quiz Saved Successfully!</b>\n\n" if saved else "") +
-            f"📝 <b>{title}</b>\n\n"
-            f"❓ Questions: <b>{q_count}</b>\n"
-            f"⏱ Time/Q: <b>{secs} sec</b>  •  🕒 Total: <b>{total_time}</b>\n"
-            f"🔀 Shuffle: <b>{shuffle_str}</b>\n"
-            f"📅 Created: <b>{created_str}</b>\n"
-            f"👥 Attempts: <b>{attempts}</b>\n"
-            f"🆔 ID: <code>{html.escape(sid)}</code>\n\n"
-            f"🔗 Quiz Link: {share_link}\n\n"
-            f"Select an action:"
+            ("🎉 <b>QUIZ PUBLISHED &amp; READY!</b>\n" if saved else "") +
+            f"🎓 <b>{title}</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"<blockquote>"
+            f"❓ <b>Questions:</b> <code>{q_count} Qs</code>\n"
+            f"⏱ <b>Timer:</b> <code>{secs}s / Q</code>  ·  🕒 <b>Duration:</b> <code>{total_time}</code>\n"
+            f"⚖️ <b>Marking:</b> <code>+1.0 / {neg_str}</code>  ·  🔀 <b>Shuffle:</b> <code>{shuffle_str}</code>\n"
+            f"👥 <b>Total Plays:</b> <code>{attempts}</code>  ·  📅 <b>Created:</b> <code>{created_str}</code>\n"
+            f"📚 <b>Study Files:</b> <code>{files_cnt} Attached</code>  ·  🆔 <b>Code:</b> <code>{html.escape(sid)}</code>"
+            f"</blockquote>\n"
+            f"🔗 <b>Direct Quiz Link:</b>\n{share_link}\n\n"
+            f"⚡ <i>Choose a mode below to launch, study, or share:</i>"
         )
 
         rows: List[List[InlineKeyboardButton]] = []
-        if is_owner:
-            rows.append([
-                _btn("📊 Stats", f"mq_stats:{sid}", "primary"),
-                _btn("✏️ Edit Quiz", f"mq_edit:{sid}", "primary"),
-            ])
-        else:
-            rows.append([
-                _btn("📊 Stats", f"mq_stats:{sid}", "primary"),
-            ])
 
-        # Row 2: Start (Private) & Start in Group (Green)
+        # Row 1: Primary Play Modes (Green)
         if bot_username:
             rows.append([
-                _btn("▶️ Start (Private)", f"mq_prac:{sid}", "success"),
-                InlineKeyboardButton("👥 Start in Group", style="success",
+                _btn("▶️ Play Solo (DM)", f"mq_prac:{sid}", "success"),
+                InlineKeyboardButton("👥 Host in Group", style="success",
                                      url=f"https://t.me/{bot_username}?startgroup=gq_{sid}"),
             ])
         else:
-            rows.append([_btn("▶️ Start (Private)", f"mq_prac:{sid}", "success")])
+            rows.append([_btn("▶️ Play Solo (DM)", f"mq_prac:{sid}", "success")])
 
-        # Row 3: 1v1 Battle (Green) & Delete (Red, owner only)
+        # Row 2: 1v1 Battle (Green) & Interactive Flashcards (Blue)
+        rows.append([
+            _btn("⚔️ 1v1 Live Battle", f"mq_bt:{sid}", "success"),
+            _btn("🎴 Study Flashcards", f"mq_flash:{sid}:0:0", "primary"),
+        ])
+
+        # Row 3: Real Study Materials File & Printable Question Paper (Blue)
+        sm_label = f"📚 Study Material ({files_cnt} File)" if files_cnt else "📚 Study Material"
+        rows.append([
+            _btn(sm_label, f"mq_mat:{sid}", "primary"),
+            _btn("📄 Question Paper", f"mq_pdf:{sid}", "primary"),
+        ])
+
+        # Row 4: Stats & Customize/Edit (Blue)
         if is_owner:
             rows.append([
-                _btn("⚔️ 1v1 Battle", f"mq_bt:{sid}", "success"),
-                _btn("🗑 Delete", f"mq_del:{sid}", "danger"),
+                _btn("📊 Quiz Stats", f"mq_stats:{sid}", "primary"),
+                _btn("⚙️ Customize Quiz", f"mq_edit:{sid}", "primary"),
             ])
         else:
-            rows.append([_btn("⚔️ 1v1 Battle", f"mq_bt:{sid}", "success")])
+            rows.append([_btn("📊 Quiz Stats", f"mq_stats:{sid}", "primary")])
 
-        # Row 4: Flashcards (Study)
-        rows.append([_btn("🎴 Flashcards (Study)", f"mq_flash:{sid}:0:0", "primary")])
-
-        # Row 5: Export as PDF / Printable Question Paper
-        rows.append([_btn("📄 Export as PDF / Question Paper", f"mq_pdf:{sid}", "primary")])
-
-        # Row 6: Send to Channel/Group
-        rows.append([_btn("📢 Send to Channel/Group", f"mq_ch:{sid}", "primary")])
-
-        # Row 7: Share
+        # Row 5: Channel/Group & Share Link (Blue)
         if bot_username:
-            share_text = urllib.parse.quote(f"🎯 Play my quiz \"{qs.get('title', 'Quiz')}\" ({q_count} Questions) on Miss Quiz Bot!")
+            share_text = urllib.parse.quote(f"🎯 Challenge yourself on \"{qs.get('title', 'Quiz')}\" ({q_count} Questions) on Miss Quiz Bot!")
             share_url = f"https://t.me/share/url?url={urllib.parse.quote(share_link)}&text={share_text}"
-            rows.append([InlineKeyboardButton("📩 Share", url=share_url, style="primary")])
+            rows.append([
+                _btn("📢 Channel / Group", f"mq_ch:{sid}", "primary"),
+                InlineKeyboardButton("📩 Share Quiz", url=share_url, style="primary"),
+            ])
+        else:
+            rows.append([_btn("📢 Channel / Group", f"mq_ch:{sid}", "primary")])
 
-        # Row 8: Study Materials (Real uploaded file or generated study notes!)
-        files_cnt = len(qs.get("source_files") or [])
-        sm_label = f"📚 Study Materials ({files_cnt} File{'s' if files_cnt > 1 else ''})" if files_cnt else "📚 Study Materials"
-        rows.append([_btn(sm_label, f"mq_mat:{sid}", "primary")])
-
-        # Row 9: Back to My Quizzes
-        rows.append([_btn("📚 My Quizzes", "mq_list", "primary")])
+        # Row 6: Delete (Red, owner only) & Back to My Quizzes
+        if is_owner:
+            rows.append([
+                _btn("🗑 Delete Quiz", f"mq_del:{sid}", "danger"),
+                _btn("📚 My Quizzes", "mq_list", "primary"),
+            ])
+        else:
+            rows.append([_btn("📚 My Quizzes", "mq_list", "primary")])
 
         return text, InlineKeyboardMarkup(rows)
 
