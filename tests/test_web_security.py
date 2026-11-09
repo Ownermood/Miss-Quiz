@@ -101,3 +101,45 @@ def test_webhook_secret_stable_and_valid(monkeypatch):
 def test_webhook_secret_env_override(monkeypatch):
     monkeypatch.setenv("WEBHOOK_SECRET_TOKEN", "explicit_secret")
     assert webhook_secret("123:abc") == "explicit_secret"
+
+
+# ── secrets never logged ────────────────────────────────────────────────────
+
+def test_mongo_url_password_redacted():
+    from src.core.database import redact_url
+    assert redact_url("mongodb+srv://u:secretpw@c.mongodb.net/?x=1") == "mongodb+srv://u:***@c.mongodb.net/?x=1"
+    assert "secretpw" not in redact_url("mongodb://u:secretpw@h:27017/db")
+    assert redact_url("mongodb://localhost:27017") == "mongodb://localhost:27017"
+
+
+async def test_initialize_retries_then_succeeds(monkeypatch):
+    from unittest.mock import AsyncMock, MagicMock
+    from telegram.error import TimedOut
+    import asyncio as _a
+    from src.bot.handlers_main import TelegramQuizBot
+    monkeypatch.setattr(_a, "sleep", AsyncMock())
+    b = TelegramQuizBot(MagicMock(), db_manager=MagicMock())
+    b.application = MagicMock()
+    b.application.initialize = AsyncMock(side_effect=[TimedOut(), TimedOut(), None])
+    await b._initialize_with_retry()
+    assert b.application.initialize.await_count == 3
+
+
+async def test_initialize_gives_up_after_attempts(monkeypatch):
+    from unittest.mock import AsyncMock, MagicMock
+    from telegram.error import TimedOut
+    import asyncio as _a
+    from src.bot.handlers_main import TelegramQuizBot
+    monkeypatch.setattr(_a, "sleep", AsyncMock())
+    b = TelegramQuizBot(MagicMock(), db_manager=MagicMock())
+    b.application = MagicMock()
+    b.application.initialize = AsyncMock(side_effect=TimedOut())
+    with pytest.raises(TimedOut):
+        await b._initialize_with_retry()
+    assert b.application.initialize.await_count == 3
+
+
+def test_application_uses_longer_timeouts():
+    from src.bot.handlers_main import TelegramQuizBot
+    app = TelegramQuizBot._build_application("123:abc")
+    assert app.bot.request._client.timeout.connect == 20

@@ -21,6 +21,12 @@ except ImportError:
     logger.error("pymongo not installed. Run: pip install pymongo")
 
 
+def redact_url(url: str) -> str:
+    """Hide the password in a connection URL before logging it."""
+    import re
+    return re.sub(r"(//[^:/@]+):[^@]*@", r"\1:***@", url or "")
+
+
 class DatabaseManager:
     def __init__(self, mongo_url: Optional[str] = None):
         if not PYMONGO_AVAILABLE:
@@ -50,7 +56,7 @@ class DatabaseManager:
         self.settings_col        = self.db["settings"]
 
         self._ensure_indexes()
-        logger.info(f"✅ MongoDB connected: {url} / db={db_name}")
+        logger.info(f"✅ MongoDB connected: {redact_url(url)} / db={db_name}")
 
     def _ensure_indexes(self):
         try:

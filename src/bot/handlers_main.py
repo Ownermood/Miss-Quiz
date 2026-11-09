@@ -151,18 +151,42 @@ class TelegramQuizBot(
 
     # ─── Initialization ──────────────────────────────────────
 
+    @staticmethod
+    def _build_application(token: str) -> Application:
+        """Longer timeouts than PTB's defaults (5s connect) so slow or flaky
+        networks (WSL, mobile hotspot, far-away servers) don't kill startup."""
+        return (Application.builder().token(token)
+                .connect_timeout(20).read_timeout(30).write_timeout(30).pool_timeout(30)
+                .get_updates_connect_timeout(20).get_updates_read_timeout(40)
+                .build())
+
+    async def _initialize_with_retry(self, attempts: int = 3) -> None:
+        from telegram.error import NetworkError, TimedOut
+        for i in range(1, attempts + 1):
+            try:
+                await self.application.initialize()
+                return
+            except (TimedOut, NetworkError) as e:
+                if i == attempts:
+                    logger.critical(
+                        "❌ Cannot reach api.telegram.org after %d tries (%s). "
+                        "Check internet / DNS / VPN, then retry.", attempts, e)
+                    raise
+                logger.warning(f"Telegram connect attempt {i}/{attempts} failed: {e} — retrying in {i*5}s")
+                await asyncio.sleep(i * 5)
+
     async def initialize(self, token: str):
-        self.application = Application.builder().token(token).build()
+        self.application = self._build_application(token)
         self._register_handlers()
-        await self.application.initialize()
+        await self._initialize_with_retry()
         await self._set_commands()
         logger.info("✅ Bot initialized — polling mode")
 
     async def initialize_webhook(self, token: str, webhook_url: str):
         from src.core.config import webhook_secret
-        self.application = Application.builder().token(token).build()
+        self.application = self._build_application(token)
         self._register_handlers()
-        await self.application.initialize()
+        await self._initialize_with_retry()
         await self.application.bot.set_webhook(
             url=webhook_url,
             secret_token=webhook_secret(token),
