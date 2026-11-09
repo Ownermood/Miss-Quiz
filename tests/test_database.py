@@ -35,3 +35,16 @@ def test_batch_partial_failure_skips_failed_index():
 
 def test_batch_empty():
     assert _db().add_questions_batch([]) == (0, [], [])
+
+
+def test_upsert_user_never_puts_a_field_in_set_and_setoninsert():
+    """MongoDB rejects that with error 40 — every NEW user was silently lost."""
+    db = DatabaseManager.__new__(DatabaseManager)
+    db.users_col = MagicMock()
+    db.upsert_user(5, {"user_id": 5, "active_status": "active", "first_name": "A"})
+    update = db.users_col.update_one.call_args.args[1]
+    overlap = set(update["$set"]) & set(update["$setOnInsert"])
+    assert not overlap
+    assert update["$set"]["active_status"] == "active"           # caller's value kept
+    assert update["$setOnInsert"]["xp"] == 0                      # other defaults still seeded
+    assert db.users_col.update_one.call_args.kwargs["upsert"] is True

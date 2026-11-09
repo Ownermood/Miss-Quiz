@@ -336,11 +336,7 @@ class DatabaseManager:
 
     def upsert_user(self, user_id: int, data: Dict):
         try:
-            self.users_col.update_one(
-                {"user_id": user_id},
-                {
-                    "$set": data,
-                    "$setOnInsert": {
+            defaults = {
                         "joined_at":          datetime.utcnow().isoformat(),
                         "active_status":      "active",
                         "quizzes_attempted":  0,
@@ -359,9 +355,14 @@ class DatabaseManager:
                         "subject_stats":      {},
                         "achievements":       [],
                         "daily_activity":     [],
-                    }
-                },
-                upsert=True
+            }
+            # A field may not be in both $set and $setOnInsert (MongoDB error 40,
+            # which silently dropped every NEW user). $set wins.
+            on_insert = {k: v for k, v in defaults.items() if k not in data}
+            self.users_col.update_one(
+                {"user_id": user_id},
+                {"$set": data, "$setOnInsert": on_insert},
+                upsert=True,
             )
         except Exception as e:
             logger.error(f"upsert_user error: {e}")
@@ -578,7 +579,9 @@ class DatabaseManager:
         try:
             self.groups_col.update_one(
                 {"chat_id": chat_id},
-                {"$set": data, "$setOnInsert": {"joined_at": datetime.utcnow().isoformat()}},
+                {"$set": data, "$setOnInsert": {k: v for k, v in
+                                                 {"joined_at": datetime.utcnow().isoformat()}.items()
+                                                 if k not in data}},
                 upsert=True
             )
         except Exception as e:
