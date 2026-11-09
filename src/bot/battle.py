@@ -390,16 +390,19 @@ class BattleMixin:
                 [cancel]]
         return text, InlineKeyboardMarkup(rows)
 
-    def _bt_my_view(self, b: "Battle", sets: List[Dict]):
+    def _bt_my_view(self, b: "Battle", sets: List[Dict], page: int = 1, pages: int = 1):
         B = lambda text, data, style="primary": InlineKeyboardButton(text, callback_data=data, style=style)
         if not sets:
             text = ("📚 <b>MY QUIZZES</b>\n<i>No quizzes yet. Create one from your questions — "
                     "text, a file or forwarded quiz polls.</i>")
             rows = []
         else:
-            text = f"📚 <b>MY QUIZZES</b> ({len(sets)})\n<i>Pick a quiz — the challenge is created right away.</i>"
+            from src.bot.my_quiz import page_rows
+            text = ("📚 <b>MY QUIZZES</b>" + (f" · page {page}/{pages}" if pages > 1 else "") +
+                    "\n<i>Pick a quiz — the challenge is created right away.</i>")
             rows = [[B(f"📝 {s.get('title', 'Quiz')[:28]} · {s.get('count', 0)}Q", f"bt_s:{b.id}:{s['id']}")]
                     for s in sets]
+            rows += page_rows(pages, page, lambda n: f"bt_my:{b.id}:{n}")
         rows.append([B("⬅️ Back", f"bt_p:{b.id}:mode", "danger"), B("❌ Cancel", f"bt_dec:{b.id}", "danger")])
         return text, InlineKeyboardMarkup(rows)
 
@@ -570,14 +573,21 @@ class BattleMixin:
                     await self.mq_start_draft(query, context, user)
                 return
             if action == "bt_my":
-                sets = []
-                if self.db and hasattr(self.db, "list_quiz_sets"):
+                from src.bot.my_quiz import load_page
+
+                async def call(fn, *a):
+                    if not self.db or not hasattr(self.db, fn):
+                        return None
                     try:
-                        sets = await asyncio.to_thread(self.db.list_quiz_sets, user.id)
+                        return await asyncio.to_thread(getattr(self.db, fn), *a)
                     except Exception as e:
-                        logger.debug(f"[BATTLE] list sets failed: {e}")
+                        logger.debug(f"[BATTLE] {fn} failed: {e}")
+                        return None
+                sets, page, pages = await load_page(lambda *a: call("list_quiz_sets", *a),
+                                                    lambda *a: call("count_quiz_sets", *a),
+                                                    user.id, int(arg) if arg.isdigit() else 1)
                 await query.answer()
-                await self._bt_edit(query, *self._bt_my_view(b, sets if isinstance(sets, list) else []))
+                await self._bt_edit(query, *self._bt_my_view(b, sets, page, pages))
                 return
             if action == "bt_s":
                 qs = None

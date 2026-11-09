@@ -316,10 +316,10 @@ class DatabaseManager:
     def get_quiz_set(self, sid: str) -> Optional[Dict]:
         return self.quiz_sets_col.find_one({"id": str(sid)}, {"_id": 0})
 
-    def list_quiz_sets(self, owner: int, limit: int = 20) -> List[Dict]:
+    def list_quiz_sets(self, owner: int, limit: int = 20, skip: int = 0) -> List[Dict]:
         return list(self.quiz_sets_col.find(
             {"owner": int(owner)}, {"_id": 0, "id": 1, "title": 1, "count": 1, "secs": 1, "created_at": 1}
-        ).sort("created_at", DESCENDING).limit(limit))
+        ).sort("created_at", DESCENDING).skip(max(0, skip)).limit(limit))
 
     def count_quiz_sets(self, owner: int) -> int:
         return self.quiz_sets_col.count_documents({"owner": int(owner)})

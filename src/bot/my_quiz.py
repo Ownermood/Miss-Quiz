@@ -19,10 +19,10 @@ from telegram.ext import ApplicationHandlerStop, ContextTypes
 
 logger = logging.getLogger(__name__)
 
-MAX_SETS      = 10                  # quizzes per user
 MIN_Q         = 3                   # questions needed to save
-MAX_Q_PER_SET = 100
-MAX_FILE      = 10 * 1024 * 1024    # 10 MB
+MAX_Q_PER_SET = 5000                # safety only (MongoDB document size)
+MAX_FILE      = 20 * 1024 * 1024    # Telegram: bots can't download files over 20 MB
+PER_PAGE      = 8                   # quizzes per list page
 
 HELP = ("<blockquote>📄 Paste questions as text\n"
         "📎 Send a file: PDF, DOCX, PPTX, TXT, CSV, XLSX…\n"
@@ -33,6 +33,28 @@ EXAMPLE = ("<blockquote>1. Capital of India?\nA) Mumbai\nB) Delhi\nC) Pune\nAnsw
 
 def _btn(text: str, data: str, style: Optional[str] = "primary") -> InlineKeyboardButton:
     return InlineKeyboardButton(text, callback_data=data, style=style)
+
+
+def page_rows(pages: int, current: int, data) -> List[List[InlineKeyboardButton]]:
+    """Page-number buttons, 5 per row (1 2 3 4 5 / 6 7 8 9 10). More than 10
+    pages: a window of 10 around the current one. Current page is green."""
+    if pages <= 1:
+        return []
+    start = max(1, min(current - 4, pages - 9))
+    nums = list(range(start, min(pages, start + 9) + 1))
+    btns = [_btn(f"·{n}·" if n == current else str(n), data(n), "success" if n == current else "primary")
+            for n in nums]
+    return [btns[k:k + 5] for k in range(0, len(btns), 5)]
+
+
+async def load_page(db_call, count_call, owner: int, page: int):
+    """(sets on this page, current page, total pages)."""
+    total = await count_call(owner)
+    total = total if isinstance(total, int) else 0
+    pages = max(1, -(-total // PER_PAGE))
+    page = max(1, min(page, pages))
+    sets = await db_call(owner, PER_PAGE, (page - 1) * PER_PAGE)
+    return (sets if isinstance(sets, list) else []), page, pages
 
 
 def parse_questions(text: str, items: Optional[List[Dict]] = None) -> Tuple[List[Dict], List[Dict]]:
@@ -102,16 +124,21 @@ class MyQuizMixin:
                                    [_btn("❌ Cancel", "mq_cancel", "danger")]])
         return text, kb
 
-    def _mq_list_view(self, sets: List[Dict]):
-        rows = [[_btn(f"📝 {s.get('title', 'Quiz')[:28]} · {s.get('count', 0)}Q", f"mq_open:{s['id']}")]
-                for s in sets]
+    def _mq_list_view(self, sets: List[Dict], page: int = 1, pages: int = 1):
+        rows = [[_btn("📝 Create Own Quiz", "mq_new", "success")]]
+        rows += [[_btn(f"📝 {s.get('title', 'Quiz')[:28]} · {s.get('count', 0)}Q", f"mq_open:{s['id']}")]
+                 for s in sets]
+        rows += page_rows(pages, page, lambda n: f"mq_list:{n}")
         if sets:
-            text = f"📚 <b>MY QUIZZES</b> ({len(sets)}/{MAX_SETS})\n<i>Open a quiz to battle with it.</i>"
+            text = ("📚 <b>MY QUIZZES</b>" + (f" · page {page}/{pages}" if pages > 1 else "") +
+                    "\n<i>Open a quiz to battle with it.</i>")
         else:
             text = "📚 <b>MY QUIZZES</b>\n<i>No quizzes yet. Make one from your own questions.</i>"
-        if len(sets) < MAX_SETS:
-            rows.insert(0, [_btn("📝 Create Own Quiz", "mq_new", "success")])
         return text, InlineKeyboardMarkup(rows)
+
+    async def _mq_page(self, owner: int, page: int):
+        call = lambda fn: (lambda *a: self._mq_db(fn, *a))
+        return await load_page(call("list_quiz_sets"), call("count_quiz_sets"), owner, page)
 
     @staticmethod
     def _mq_card_view(qs: Dict, saved: bool = False):
@@ -140,10 +167,9 @@ class MyQuizMixin:
             return
         await self.mq_open_list(update, context)
 
-    async def mq_open_list(self, update: Update, context, query=None):
+    async def mq_open_list(self, update: Update, context, query=None, page: int = 1):
         user = update.effective_user
-        sets = await self._mq_db("list_quiz_sets", user.id, default=[])
-        text, kb = self._mq_list_view(sets if isinstance(sets, list) else [])
+        text, kb = self._mq_list_view(*await self._mq_page(user.id, page))
         if query:
             await self._bt_edit(query, text, kb)
         else:
@@ -152,15 +178,6 @@ class MyQuizMixin:
     async def mq_start_draft(self, query, context, user, update: Optional[Update] = None):
         """Begin collecting questions. From a button (query) the same message
         becomes the panel; from /start mq_new a new one is sent."""
-        n = await self._mq_db("count_quiz_sets", user.id, default=0)
-        if isinstance(n, int) and n >= MAX_SETS:
-            text = f"⚠️ <b>You already have {MAX_SETS} quizzes.</b>\n<i>Delete one to make a new quiz.</i>"
-            kb = InlineKeyboardMarkup([[_btn("📚 My Quizzes", "mq_list")]])
-            if query:
-                await self._bt_edit(query, text, kb)
-            else:
-                await self._reply(update, text, reply_markup=kb)
-            return
         d = {"qs": [], "seen": set(), "problems": [], "note": "", "stage": "collect", "fname": ""}
         text, kb = self._mq_collect_view(d)
         if query:
@@ -212,7 +229,7 @@ class MyQuizMixin:
         elif msg.document:
             doc = msg.document
             if doc.file_size and doc.file_size > MAX_FILE:
-                note = "File is too big (max 10 MB)."
+                note = "File is too big — Telegram lets bots read files up to 20 MB. Split it and send the parts."
             else:
                 try:
                     from src.bot.file_extract import extract
@@ -253,12 +270,6 @@ class MyQuizMixin:
         raise ApplicationHandlerStop
 
     async def _mq_save(self, context, user, d: Dict, title: str) -> None:
-        n = await self._mq_db("count_quiz_sets", user.id, default=0)
-        if isinstance(n, int) and n >= MAX_SETS:
-            context.user_data.pop("mq_draft", None)
-            await self._mq_show(context, d, f"⚠️ <b>You already have {MAX_SETS} quizzes.</b>",
-                                InlineKeyboardMarkup([[_btn("📚 My Quizzes", "mq_list")]]))
-            return
         sid = await self._mq_db("create_quiz_set", user.id, title, d["qs"], 20)
         context.user_data.pop("mq_draft", None)
         if not sid:
@@ -311,7 +322,7 @@ class MyQuizMixin:
 
         if action == "mq_list":
             await query.answer()
-            await self.mq_open_list(update, context, query)
+            await self.mq_open_list(update, context, query, int(arg) if arg.isdigit() else 1)
             return
         if action == "mq_new":
             await query.answer()

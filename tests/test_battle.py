@@ -697,10 +697,36 @@ async def test_create_needs_min_questions_cancel_and_limit():
     assert q.answer.await_args.kwargs.get("show_alert") is True        # < 3 questions
     await press_mq(app, ctx, a, "mq_cancel")
     assert "mq_draft" not in ctx.user_data
-    for i in range(my_quiz.MAX_SETS):
+    for i in range(25):                                                 # no limit any more
         real.create_quiz_set(1, f"S{i}", [], 20)
     await app.mq_start_draft(None, ctx, a, dm_update(a))
-    assert "already have" in app.replies[-1][0] and "mq_draft" not in ctx.user_data
+    assert "CREATE YOUR QUIZ" in app.replies[-1][0] and "mq_draft" in ctx.user_data
+
+
+async def test_my_quizzes_page_numbers():
+    from src.bot.my_quiz import page_rows, PER_PAGE
+    rows = page_rows(10, 1, lambda n: f"p{n}")
+    assert [[b.text for b in r] for r in rows] == [["·1·", "2", "3", "4", "5"], ["6", "7", "8", "9", "10"]]
+    assert rows[0][0].style == "success" and rows[0][1].style == "primary"
+    assert page_rows(1, 1, str) == []
+    big = page_rows(30, 20, str)                                        # window of 10 around page 20
+    assert [b.text for r in big for b in r] == ["16", "17", "18", "19", "·20·", "21", "22", "23", "24", "25"]
+
+    app, real = _quiz_app()
+    ctx, _ = fake_context()
+    a = user(1, "Amit")
+    for i in range(PER_PAGE * 2 + 3):                                   # 19 quizzes → 3 pages
+        real.create_quiz_set(1, f"S{i:02d}", [], 20)
+    q = await press_mq(app, ctx, a, "mq_list:3")
+    text = q.edit_message_text.await_args.args[0]
+    kb = q.edit_message_text.await_args.kwargs.get("reply_markup") or q.edit_message_text.await_args.args[1]
+    names = [b.text for r in kb.inline_keyboard for b in r]
+    assert "page 3/3" in text and sum(n.startswith("📝 S") for n in names) == 3
+    assert ["1", "2", "·3·"] == [n for n in names if n.strip("·").isdigit()]
+    await app.cmd_battle(group_update(a), ctx)                          # same pages inside /battle
+    bt_ = next(iter(app._bt_state().values()))
+    await press(app, ctx, a, f"bt_my:{bt_.id}:2")
+    assert "page 2/3" in app._last_edit
 
 
 async def test_my_quiz_open_delete_owner_only_and_battle():
