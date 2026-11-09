@@ -16,7 +16,7 @@ def make_manager(questions=None):
     mgr.db                       = db
     mgr.questions                = [_fmt_question(q) for q in (questions or [])]
     mgr.scores                   = {}
-    mgr.active_chats             = []
+    mgr.active_chats             = set()
     mgr.stats                    = {}
     from collections import defaultdict, deque
     mgr.recent_questions         = defaultdict(lambda: deque(maxlen=50))

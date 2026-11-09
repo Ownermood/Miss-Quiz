@@ -152,12 +152,9 @@ class PollMixin(object):
 
         is_correct = (option_ids[0] == correct_id)
 
-        try:
-            self.quiz_manager.record_attempt(user_id, is_correct)
-            if chat_id and chat_id != user_id:
-                self.quiz_manager.record_group_attempt(user_id, chat_id, is_correct)
-        except Exception as e:
-            logger.error(f"record_attempt: {e}")
+        # (QuizManager.record_attempt kept per-user stats in RAM that nothing
+        # ever read — ~1.5 KB/user, i.e. GBs at scale. Stats live in MongoDB
+        # via record_quiz_result below, which /score and /stats use.)
 
         if self.db:
             try:

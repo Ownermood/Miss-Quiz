@@ -111,7 +111,6 @@ class QuizCommandsMixin(object):
             if self.db and q_id:
                 await asyncio.to_thread(
                     self.db.save_poll_mapping, str(poll_id), q_id, poll_entry)
-            self._pickle_save(f"poll_{poll_id}", poll_entry)
             self._poll_stats["stored"] += 1
 
             # Track active quiz so next /quiz call can clean it up (works in DMs and groups)

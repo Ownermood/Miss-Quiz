@@ -56,7 +56,7 @@ class QuizManager:
     def __init__(self, db_manager: Optional[DatabaseManager] = None):
         self.questions:      List[Dict] = []
         self.scores:         Dict       = {}
-        self.active_chats:   List       = []
+        self.active_chats:   set        = set()   # group chat ids (set: O(1) lookups)
         self.stats:          Dict       = {}
 
         self.db = db_manager if db_manager else DatabaseManager()
@@ -391,8 +391,6 @@ class QuizManager:
         else:
             s["current_streak"] = 0
 
-        if user_id not in self.active_chats:
-            self.active_chats.append(user_id)
 
     def record_group_attempt(self, user_id: int, chat_id: int, is_correct: bool):
         uid = str(user_id)
@@ -406,8 +404,7 @@ class QuizManager:
         self.stats[uid]["groups"][gid]["total"]   += 1
         if is_correct:
             self.stats[uid]["groups"][gid]["correct"] += 1
-        if chat_id not in self.active_chats:
-            self.active_chats.append(chat_id)
+        self.active_chats.add(chat_id)
 
     def get_score(self, user_id: int) -> int:
         return self.scores.get(user_id, 0)
@@ -416,7 +413,4 @@ class QuizManager:
 
     def remove_active_chat(self, chat_id: int):
         """Remove a chat from active_chats (called when bot is kicked from group)."""
-        try:
-            self.active_chats.remove(chat_id)
-        except ValueError:
-            pass
+        self.active_chats.discard(chat_id)
