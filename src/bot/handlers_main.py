@@ -386,7 +386,7 @@ class TelegramQuizBot(
         app.add_handler(CallbackQueryHandler(
             self._cb_delquiz, pattern=r"^dq_"))
         app.add_handler(CallbackQueryHandler(
-            self.handle_battle_callback, pattern=r"^bt_(acc|dec|q|t|c|go|rm|p|x):"))
+            self.handle_battle_callback, pattern=r"^bt_(acc|dec|q|t|c|go|rm|p):"))
         app.add_handler(CallbackQueryHandler(
             self.handle_admin_panel_callback, pattern=r"^ap:"))
         app.add_handler(CallbackQueryHandler(
@@ -420,6 +420,10 @@ class TelegramQuizBot(
         # Admin forwards a quiz poll to the DM → find that question
         app.add_handler(MessageHandler(
             filters.ChatType.PRIVATE & filters.POLL, self.handle_forwarded_poll), group=-2)
+
+        # Battle setup: challenger types a question count / time
+        app.add_handler(MessageHandler(
+            filters.TEXT & ~filters.COMMAND, self.handle_battle_input), group=-3)
 
         # Admin input (start photo) runs before every other handler group
         app.add_handler(MessageHandler(

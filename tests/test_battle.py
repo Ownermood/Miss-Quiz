@@ -94,7 +94,8 @@ def fake_context():
     bot.username = "MissQuizBot"
     bot.send_poll = AsyncMock(side_effect=send_poll)
     bot.send_message = AsyncMock()
-    return SimpleNamespace(bot=bot, args=None), sent_polls
+    bot.edit_message_text = AsyncMock()
+    return SimpleNamespace(bot=bot, args=None, user_data={}), sent_polls
 
 
 def user(uid, name):
@@ -108,7 +109,8 @@ def group_update(u, reply_to=None):
 
 
 async def press(app, ctx, uid_user, data):
-    q = SimpleNamespace(data=data, answer=AsyncMock(), edit_message_text=AsyncMock())
+    q = SimpleNamespace(data=data, answer=AsyncMock(), edit_message_text=AsyncMock(),
+                        message=SimpleNamespace(chat=SimpleNamespace(id=-100)))
     await app.handle_battle_callback(SimpleNamespace(callback_query=q, effective_user=uid_user), ctx)
     if q.edit_message_text.await_args:
         app._last_edit = q.edit_message_text.await_args.args[0]
@@ -316,16 +318,17 @@ async def test_setup_only_challenger_can_change_and_settings_apply():
 async def test_timer_choices_and_labels():
     from src.bot.battle import _tlabel, T_CHOICES
     assert [_tlabel(t) for t in T_CHOICES] == ["10s", "15s", "20s", "30s", "1m", "4m"]
+    assert _tlabel(90) == "1m 30s"
     app = FakeBotApp()
     ctx, _ = fake_context()
     a = user(1, "Amit")
     await app.cmd_battle(group_update(a), ctx)
     b = next(iter(app._bt_state().values()))
-    _, kb = app._bt_setup_view(b)
+    _, kb = app._bt_setup_view(b, "t")
     rows = [[x.text for x in r] for r in kb.inline_keyboard]
-    assert ["10s", "15s", "20s"] in rows and ["30s", "1m", "4m"] in rows
+    assert ["10s", "15s", "✅ 20s"] in rows and ["30s", "1m", "4m"] in rows
     styles = {x.text: x.style for r in kb.inline_keyboard for x in r}
-    assert styles["20s"] == "success" and styles["10s"] == "primary"   # current = green
+    assert styles["➡️ Next"] == "success" and styles["✅ 20s"] == "primary"   # only Next is green
     await press(app, ctx, a, f"bt_t:{b.id}:240")
     assert b.secs == 240 and "4m each" in app._last_edit
 
@@ -367,29 +370,73 @@ async def test_rematch_challenges_the_other_player_with_same_settings():
 
 
 
-async def test_setup_one_screen_stepper_summary_and_edit():
+def text_update(u, text, chat_id=-100):
+    msg = SimpleNamespace(text=text, delete=AsyncMock())
+    return SimpleNamespace(effective_user=u, effective_message=msg,
+                           effective_chat=SimpleNamespace(id=chat_id)), msg
+
+
+def test_parse_secs():
+    from src.bot.battle import _parse_secs
+    assert [_parse_secs(x) for x in ("45", "45s", "2m", "1:30", "1m 30s", "hello", "")] == \
+        [45, 45, 120, 90, 90, None, None]
+
+
+async def test_setup_steps_typed_values_summary_and_edit():
+    from telegram.ext import ApplicationHandlerStop
     app = FakeBotApp()
     ctx, _ = fake_context()
     a = user(1, "Amit")
     await app.cmd_battle(group_update(a), ctx)
     b = next(iter(app._bt_state().values()))
     text, kb = app._bt_setup_view(b)
-    flat = [x.text for r in kb.inline_keyboard for x in r]
-    for want in ("🎯 QUESTIONS", "➖1", "➕5", "⏱ TIME PER QUESTION", "1m", "➡️ Next"):
-        assert want in flat                                              # all options on one screen
-    assert "Topic" not in text
-    qmax = app._bt_q_max()
-    await press(app, ctx, a, f"bt_q:{b.id}:{b.n_q + 1}")                 # ➕1 → any number
-    assert b.n_q == 11 and "Questions › 11" in app._last_edit
-    await press(app, ctx, a, f"bt_q:{b.id}:999")                         # clamped to pool / 50
-    assert b.n_q == qmax
-    await press(app, ctx, a, f"bt_q:{b.id}:-4")                          # clamped to minimum
-    assert b.n_q == 3
-    q = await press(app, ctx, a, f"bt_x:{b.id}")                         # label: no change
-    assert b.n_q == 3 and q.answer.await_args.kwargs.get("show_alert") is not True
-    await press(app, ctx, a, f"bt_p:{b.id}:sum")
-    assert "BATTLE SUMMARY" in app._last_edit and "Questions › 3" in app._last_edit
-    await press(app, ctx, a, f"bt_p:{b.id}:main")                        # ✏️ Edit
-    assert "BATTLE SETUP" in app._last_edit and b.state == "setup"
-    q = await press(app, ctx, user(2, "B"), f"bt_q:{b.id}:7")            # not challenger
-    assert q.answer.await_args.kwargs.get("show_alert") is True and b.n_q == 3
+    assert "1️⃣ Questions › 10" in text and "2️⃣ Timer › 20s" in text and "3️⃣ Summary" in text
+    assert [r[0].text for r in kb.inline_keyboard] == \
+        ["🎯 Questions: 10", "⏱ Timer: 20s each", "➡️ Next", "❌ Cancel"]
+    styles = [r[0].style for r in kb.inline_keyboard]
+    assert styles == ["primary", "primary", "success", "danger"]
+
+    await press(app, ctx, a, f"bt_p:{b.id}:q")                          # Questions step
+    assert "👉 Questions" in app._last_edit and "type any number" in app._last_edit
+    await press(app, ctx, a, f"bt_q:{b.id}:15")                         # tap stays on the step
+    assert b.n_q == 15 and "👉 Questions › 15" in app._last_edit
+
+    upd, m = text_update(a, "hi everyone")                              # normal chat ignored
+    await app.handle_battle_input(upd, ctx)
+    assert b.n_q == 15 and not m.delete.await_count
+    upd, m = text_update(a, "12")                                       # typed count
+    with pytest.raises(ApplicationHandlerStop):
+        await app.handle_battle_input(upd, ctx)
+    assert b.n_q == 12 and m.delete.await_count == 1
+    assert "Questions › 12" in ctx.bot.edit_message_text.await_args.args[0]
+    upd, _ = text_update(a, "999")
+    with pytest.raises(ApplicationHandlerStop):
+        await app.handle_battle_input(upd, ctx)
+    assert b.n_q == app._bt_q_max()                                     # clamped
+    upd, _ = text_update(user(2, "B"), "7")                             # other user: no await state
+    await app.handle_battle_input(upd, SimpleNamespace(bot=ctx.bot, user_data={}))
+    assert b.n_q == app._bt_q_max()
+
+    await press(app, ctx, a, f"bt_p:{b.id}:t")                          # Timer step
+    assert "👉 Timer" in app._last_edit
+    upd, _ = text_update(a, "1:30")
+    with pytest.raises(ApplicationHandlerStop):
+        await app.handle_battle_input(upd, ctx)
+    assert b.secs == 90
+    upd, _ = text_update(a, "2")
+    with pytest.raises(ApplicationHandlerStop):
+        await app.handle_battle_input(upd, ctx)
+    assert b.secs == 5                                                  # Telegram minimum
+
+    await press(app, ctx, a, f"bt_p:{b.id}:sum")                        # Summary
+    assert "BATTLE SUMMARY" in app._last_edit and ctx.user_data.get("bt_await") is None
+    upd, m = text_update(a, "20")                                       # typing no longer applies
+    await app.handle_battle_input(upd, ctx)
+    assert b.secs == 5 and not m.delete.await_count
+    await press(app, ctx, a, f"bt_p:{b.id}:t")                          # ✏️ Timer edit
+    await press(app, ctx, a, f"bt_t:{b.id}:30")
+    assert b.secs == 30 and b.state == "setup"
+    q = await press(app, ctx, user(2, "B"), f"bt_q:{b.id}:7")           # not challenger
+    assert q.answer.await_args.kwargs.get("show_alert") is True
+    await press(app, ctx, a, f"bt_go:{b.id}")
+    assert b.state == "pending"
