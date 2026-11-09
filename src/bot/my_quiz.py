@@ -130,6 +130,7 @@ class MyQuizMixin:
         top = [
             _btn(f"✅ Done ({q_count}Q)" if ready else f"Add {MIN_Q - q_count} more…",
                  "mq_done", "success" if ready else "primary"),
+            _btn("📚 My Quizzes", "mq_list", "primary"),
             _btn("❌ Cancel", "mq_cancel", "danger"),
         ]
         return body, InlineKeyboardMarkup([top])

@@ -329,6 +329,9 @@ class TelegramQuizBot(
         blue, green = "primary", "success"
         username = getattr(getattr(self.application, "bot", None), "username", "") or ""
         rows = [
+            # 🌟 TOP BUTTON: Create New Quiz (Full-width, Green with Premium Emoji)
+            [btn("Create New Quiz", "plus", green, callback_data="mq_new")],
+
             [btn("Start Quiz", "play", blue, callback_data="play_quiz"),
              btn("Battle", "fight", blue, callback_data="start_battle")],
             [btn("My Profile", "medal", blue, callback_data="my_profile"),
