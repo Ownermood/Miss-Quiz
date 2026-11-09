@@ -106,26 +106,29 @@ class UserCommandsMixin(object):
                        edit_msg=None):
         from src.bot.premium import btn, e
         text = (
-            f"{e('question')} <b>HELP · MISS QUIZ</b>\n\n"
-            f"<blockquote><b>{e('play')} PLAY\n"
-            f"/quiz — get a question\n"
-            f"/battle — 1v1 with a friend\n"
-            f"/myquiz — make your own quiz\n"
-            f"/categories — all topics</b></blockquote>\n"
-            f"<blockquote><b>{e('stats')} YOUR PROGRESS\n"
-            f"/score — scorecard &amp; rank\n"
-            f"/stats — full analytics\n"
-            f"/achievements — badges</b></blockquote>\n"
-            f"<blockquote><b>{e('users')} IN GROUPS\n"
-            f"Make me admin → a new quiz every hour.\n"
-            f"/startquiz — run a full quiz (admins)\n"
-            f"/quiz and /battle work without admin too.</b></blockquote>\n"
+            f"{e('question')} <b>HELP &amp; FEATURES · MISS QUIZ STUDIO</b>\n\n"
+            f"<blockquote><b>{e('play')} CREATE &amp; PLAY\n"
+            f"/myquiz — Create quiz (PDF/DOCX/Text/Polls), Flashcards &amp; Study Material\n"
+            f"/battle — 1v1 Live Quiz Battle with friends\n"
+            f"/quiz — Instant practice question\n"
+            f"/categories — Browse topics · /clone &amp; /mix quizzes</b></blockquote>\n"
+            f"<blockquote><b>{e('stats')} PROGRESS &amp; REVIEW\n"
+            f"/score — Your XP, Level &amp; Scorecard\n"
+            f"/stats — Subject-wise accuracy &amp; insights\n"
+            f"/result — Personal wrong-answer review in DM\n"
+            f"/compare — Head-to-head stats · /mywords — Safai filter</b></blockquote>\n"
+            f"<blockquote><b>{e('users')} GROUP TOURNAMENTS\n"
+            f"/startquiz — Live 'I'm Ready!' Lobby + Top-3 Winner Certificates\n"
+            f"/schedule — Schedule group quiz · /slow /fast /stopquiz\n"
+            f"Make me admin → automatic hourly group quizzes!</b></blockquote>\n"
             f"<b>{e('signal')} Need help? {COMMUNITY}</b>"
         )
         from src.bot.ui import COMMUNITY_URL
         kb = InlineKeyboardMarkup([
+            [btn("Create New Quiz", "plus", "success", callback_data="mq_new"),
+             btn("My Quizzes", "folder", "primary", callback_data="mq_list")],
             [btn("Play Quiz", "play", "primary", callback_data="play_quiz"),
-             btn("Battle", "fight", "primary", callback_data="start_battle")],
+             btn("1v1 Battle", "fight", "primary", callback_data="start_battle")],
             [btn("Community", "users", "success", url=COMMUNITY_URL)],
             self._nav_row(back_screen="home"),
         ])

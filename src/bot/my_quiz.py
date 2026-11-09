@@ -375,8 +375,9 @@ class MyQuizMixin:
         d = {"qs": [], "seen": set(), "problems": [], "note": "", "stage": "collect", "fname": "", "files": []}
         text, kb = self._mq_collect_view(d)
         if query:
-            await self._bt_edit(query, text, kb)
-            d["chat"], d["msg"] = query.message.chat.id, query.message.message_id
+            sent = await self._bt_edit(query, text, kb)
+            msg_id = getattr(sent, "message_id", None) if isinstance(getattr(sent, "message_id", None), int) else query.message.message_id
+            d["chat"], d["msg"] = query.message.chat.id, msg_id
         else:
             sent = await self._reply(update, text, reply_markup=kb)
             d["chat"], d["msg"] = update.effective_chat.id, getattr(sent, "message_id", None)
@@ -630,6 +631,19 @@ class MyQuizMixin:
             context.user_data.pop("mq_renaming", None)
             context.user_data.pop("mq_attaching_file", None)
             context.user_data.pop("mq_prac", None)
+            if query.message and query.message.chat and query.message.chat.type != "private":
+                bot_user = getattr(context.bot, "username", "") or ""
+                await query.answer("Open my DM to view your quizzes! 📚")
+                if bot_user:
+                    await query.message.reply_text(
+                        "📚 <b>Your custom quizzes &amp; study materials are in my DM:</b>",
+                        parse_mode=ParseMode.HTML,
+                        reply_markup=InlineKeyboardMarkup([[
+                            InlineKeyboardButton("📚 Open My Quizzes", url=f"https://t.me/{bot_user}?start=mq", style="primary"),
+                            InlineKeyboardButton("➕ Create New Quiz", url=f"https://t.me/{bot_user}?start=mq_new", style="success"),
+                        ]])
+                    )
+                return
             await query.answer()
             await self.mq_open_list(update, context, query, int(arg) if arg.isdigit() else 1)
             return
@@ -639,10 +653,18 @@ class MyQuizMixin:
             context.user_data.pop("mq_attaching_file", None)
             context.user_data.pop("mq_prac", None)
             if query.message and query.message.chat and query.message.chat.type != "private":
-                bot_user = getattr(context.bot, "username", "")
+                bot_user = getattr(context.bot, "username", "") or ""
+                await query.answer("Quizzes are created in my DM! ✏️")
                 if bot_user:
-                    await query.answer(url=f"https://t.me/{bot_user}?start=mq_new")
-                    return
+                    await query.message.reply_text(
+                        "✨ <b>CREATE YOUR OWN QUIZ</b>\n"
+                        "<i>Tap below to create a quiz from PDF, DOCX, Text, or Polls in my DM:</i>",
+                        parse_mode=ParseMode.HTML,
+                        reply_markup=InlineKeyboardMarkup([[
+                            InlineKeyboardButton("➕ Create New Quiz in DM", url=f"https://t.me/{bot_user}?start=mq_new", style="success")
+                        ]])
+                    )
+                return
             await query.answer()
             await self.mq_start_draft(query, context, user)
             return

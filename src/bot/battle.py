@@ -958,9 +958,18 @@ class BattleMixin:
                 logger.warning(f"[BATTLE] {b.id} notify {chat_id} failed: {e}")
 
     @staticmethod
-    async def _bt_edit(query, text: str, reply_markup=None) -> None:
+    async def _bt_edit(query, text: str, reply_markup=None):
+        msg = getattr(query, "message", None)
         try:
-            await query.edit_message_text(text, parse_mode=ParseMode.HTML, reply_markup=reply_markup)
+            return await query.edit_message_text(text, parse_mode=ParseMode.HTML, reply_markup=reply_markup)
         except Exception as e:
-            if "not modified" not in str(e).lower():
-                logger.debug(f"[BATTLE] edit failed: {e}")
+            err = str(e).lower()
+            if "not modified" in err:
+                return msg
+            if msg is not None and hasattr(msg, "reply_text"):
+                try:
+                    return await msg.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=reply_markup)
+                except Exception as e2:
+                    logger.debug(f"[BATTLE] reply fallback failed: {e2}")
+            logger.debug(f"[BATTLE] edit failed: {e}")
+            return None

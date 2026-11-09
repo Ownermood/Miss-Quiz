@@ -307,13 +307,13 @@ class TelegramQuizBot(
         from src.bot.premium import e
         q_display = UI.fmt_num(self._q_count())
         return (
-            f"<b>╭──── ❨ 🎓 MISS QUIZ ❩ ────╮</b>\n\n"
+            f"<b>╭──── ❨ 🎓 MISS QUIZ STUDIO ❩ ────╮</b>\n\n"
             f"{e('hi')} <b>Hey {user_mention}!</b>\n"
-            f"<blockquote><b>{e('cool')} Quiz in groups &amp; DM, 1v1 battles with friends "
-            f"and a live leaderboard.</b></blockquote>\n"
-            f"<blockquote><b>{e('bolt')} {q_display} questions · new quiz every hour</b></blockquote>\n"
-            f"<b>╰──────────────────────╯</b>\n\n"
-            f"{e('play')} <b>QUIZ • BATTLE • WIN!</b>"
+            f"<blockquote><b>{e('cool')} Create your own Quizzes from PDF, DOCX, Text &amp; Polls, "
+            f"attach Study Materials &amp; Flashcards, play 1v1 Battles &amp; host Group Tournaments with Winner Certificates!</b></blockquote>\n"
+            f"<blockquote><b>{e('bolt')} {q_display} Live Questions · Hourly Group Quiz · Negative Marking · Instant Scorecard</b></blockquote>\n"
+            f"<b>╰──────────────────────────╯</b>\n\n"
+            f"{e('play')} <b>CREATE • BATTLE • TOURNAMENT • WIN!</b>"
         )
 
     async def _cb_start_battle(self, update: Update, context):
@@ -332,12 +332,21 @@ class TelegramQuizBot(
             # 🌟 TOP BUTTON: Create New Quiz (Full-width, Green with Premium Emoji)
             [btn("Create New Quiz", "plus", green, callback_data="mq_new")],
 
+            # Row 2: My Quizzes (Custom Quizzes + Study Materials) & 1v1 Battle
+            [btn("My Quizzes", "folder", blue, callback_data="mq_list"),
+             btn("1v1 Battle", "fight", blue, callback_data="start_battle")],
+
+            # Row 3: Quick Practice Quiz & Topic Categories
             [btn("Start Quiz", "play", blue, callback_data="play_quiz"),
-             btn("Battle", "fight", blue, callback_data="start_battle")],
+             btn("Categories", "book", blue, callback_data="categories")],
+
+            # Row 4: Profile/Analytics & Help
             [btn("My Profile", "medal", blue, callback_data="my_profile"),
-             btn("Help", "question", blue, callback_data="help")],
+             btn("Help & Features", "question", blue, callback_data="help")],
+
+            # Row 5: Community & Add to Group
             [btn("Community", "users", green, url=COMMUNITY_URL)]
-            + ([btn("Add to Group", "plus", green,
+            + ([btn("Host in Group", "plus", green,
                     url=f"https://t.me/{username}?startgroup&admin=delete_messages+pin_messages")]
                if username else []),
         ]
@@ -543,13 +552,20 @@ class TelegramQuizBot(
         return None
 
     async def _edit(self, msg, text: str, reply_markup=None):
-        """Safe message edit."""
+        """Safe message edit (falls back to reply_text if msg is a photo)."""
+        kwargs = {"parse_mode": ParseMode.HTML, "link_preview_options": _NO_PREVIEW}
+        if reply_markup:
+            kwargs["reply_markup"] = reply_markup
         try:
-            kwargs = {"parse_mode": ParseMode.HTML, "link_preview_options": _NO_PREVIEW}
-            if reply_markup:
-                kwargs["reply_markup"] = reply_markup
-            await msg.edit_text(text, **kwargs)
+            return await msg.edit_text(text, **kwargs)
         except Exception as e:
+            if "not modified" in str(e).lower():
+                return msg
+            if hasattr(msg, "reply_text"):
+                try:
+                    return await msg.reply_text(text, **kwargs)
+                except Exception:
+                    pass
             logger.error(f"_edit error: {e}")
 
     async def _unauthorized(self, update: Update):
@@ -644,6 +660,14 @@ class TelegramQuizBot(
         elif data == "achievements":
             if uid: self._nav_push(uid, "achievements")
             await self.cmd_achievements(update, context, edit_msg=query.message)
+
+        elif data == "categories":
+            if uid: self._nav_push(uid, "categories")
+            await self.cmd_categories(update, context, edit_msg=query.message)
+
+        elif data == "score":
+            if uid: self._nav_push(uid, "score")
+            await self.cmd_score(update, context, edit_msg=query.message)
 
         elif data == "help":
             if uid: self._nav_push(uid, "help")
