@@ -10,7 +10,7 @@ Owner Hinglish mein baat karta hai, jawab bhi Hinglish mein, short aur seedha do
 **Miss Quiz**: Telegram quiz bot (abhi CLAT focus). Goal hai multi-exam aur multi-subject, phir global.
 
 - Python 3.11 (`runtime.txt`), python-telegram-bot v22, MongoDB (pymongo), Flask admin panel, APScheduler
-- Deploy: **VPS (main)** — `deploy/setup_vps.sh` + `deploy/miss-quiz.service` (systemd, user `missquiz`, `/opt/miss-quiz`, polling mode, local MongoDB 127.0.0.1, panel sirf SSH tunnel se). Purane: Render (`render.yaml`), `Procfile`, Docker
+- Deploy: **VPS (main)** — `deploy/setup_vps.sh` + `deploy/miss-quiz.service` (systemd, user `missquiz`, `/opt/miss-quiz`, polling mode, local MongoDB 127.0.0.1, panel sirf SSH tunnel se). Docker: `docker compose up -d` (bot + MongoDB). Render/Procfile/wsgi hata diye (VPS main)
 - Modes: `MODE=polling` (local) / `MODE=webhook` (production) — `main.py`
 
 ## 2. Code ka naksha
@@ -21,7 +21,6 @@ src/core/config.py          Env config. OWNER_ID, WIFU_ID, AUTHORIZED_USERS
 src/core/database.py        DatabaseManager (MongoDB). Collections neeche
 src/core/quiz.py            QuizManager. Questions load + random question
 src/bot/handlers_main.py    TelegramQuizBot class (mixins jodta hai) + saare add_handler
-src/bot/handlers.py         Sirf compatibility shim. Naya code yahan mat likho
 src/bot/commands/           user_cmds.py, quiz_cmds.py, admin_cmds.py (mixins)
 src/bot/dev_commands.py     Developer commands + check_access()
 src/bot/dev_broadcast.py    Broadcast / delbroadcast
@@ -36,9 +35,8 @@ src/bot/tracking.py         User/group tracking
 src/bot/ui.py               UI strings, LINE/THIN, mention helpers
 src/utils/scheduler.py      AutoQuizScheduler. Har group ko auto quiz bhejta hai
 src/web/app.py              Flask: /health, /admin, /webhook, /api/*
-src/web/wsgi.py             Gunicorn entry
 templates/admin.html, static/js/admin.js   Web admin panel
-tests/                      test_config.py, test_quiz_manager.py, test_ui.py
+tests/                      ~220 tests (pytest, mongomock): web security, scheduler, battle, admin panel, parser, files, ...
 ```
 
 **Battle:** `/battle` (group: open ya reply-target; DM: invite link `start=bt_<id>`). 5 questions × 20s, +1 sahi, tie → kam time. Battle answers regular stats mein nahi jaate. `users` pe `$inc`: `battle_wins`, `battle_losses`, `battle_draws`, `battles_played`. DM mein har poll ka owner hai (forwarded poll se cheating band). Restart pe chalti battle khatam.

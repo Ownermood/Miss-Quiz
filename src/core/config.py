@@ -42,7 +42,6 @@ class Config:
         render_url (Optional[str]): Render.com deployment URL (takes precedence)
         host (str): Host address for web server (default: 0.0.0.0)
         port (int): Port number for web server
-        database_path (str): Path to SQLite database file
         database_url (Optional[str]): PostgreSQL database URL
     """
     telegram_token: str
@@ -53,7 +52,6 @@ class Config:
     render_url: Optional[str]
     host: str
     port: int
-    database_path: str
     mongodb_url: Optional[str]
     
     @classmethod
@@ -92,7 +90,6 @@ class Config:
         render_url = os.environ.get("RENDER_URL")
         host = os.environ.get("HOST", "0.0.0.0")
         port = int(os.environ.get("PORT", "5000"))
-        database_path = os.path.abspath(os.environ.get("DATABASE_PATH", "data/quiz_bot.db"))
         mongodb_url = os.environ.get("MONGODB_URL", "mongodb://localhost:27017")
         
         config = cls(
@@ -104,7 +101,6 @@ class Config:
             render_url=render_url,
             host=host,
             port=port,
-            database_path=database_path,
             mongodb_url=mongodb_url
         )
         
@@ -151,20 +147,6 @@ class Config:
             return f"{base_url}/webhook"
         return None
     
-    def get_authorized_users(self) -> List[int]:
-        """Get list of authorized user IDs.
-        
-        Returns a list of Telegram user IDs that have administrative
-        access to the bot. Includes owner_id and wifu_id if set.
-        
-        Returns:
-            List[int]: List of authorized Telegram user IDs
-        """
-        users: List[int] = [self.owner_id] if self.owner_id else []
-        if self.wifu_id:
-            users.append(self.wifu_id)
-        return users
-
 # ---------------------------------------------------------------------------
 # Module-level constants kept for backward-compatibility.
 # New code should use Config.load() and read from the instance instead.
@@ -176,7 +158,6 @@ if OWNER_ID == 0:
         "⛔ OWNER_ID is not set — admin commands will be disabled. "
         "Set the OWNER_ID environment variable to your Telegram user ID."
     )
-DATABASE_PATH: str = os.path.abspath(os.environ.get("DATABASE_PATH", "data/quiz_bot.db"))
 
 WIFU_ID: Optional[int] = None
 _wifu_raw = os.environ.get("WIFU_ID")

@@ -5,12 +5,10 @@ PollMixin — poll persistence and handle_poll_answer.
 import logging
 import os
 from datetime import datetime
-from typing import Optional
 
 from telegram import Update
 from telegram.ext import ContextTypes
 
-from src.bot.ui import get_thread_id, get_tracking_id
 
 logger = logging.getLogger(__name__)
 
@@ -129,7 +127,6 @@ class PollMixin(object):
         correct_id = data.get("correct_option_id")
         chat_id    = data.get("chat_id", 0)
         thread_id  = data.get("thread_id")
-        track_id   = data.get("tracking_id", chat_id)
 
         if correct_id is None or not option_ids:
             # mapping missing — track it

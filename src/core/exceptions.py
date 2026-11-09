@@ -13,7 +13,6 @@ class QuizBotError(Exception):
     Catching this exception will handle all quiz bot-specific errors.
     Use this when you need to catch any quiz bot error generically.
     """
-    pass
 
 
 class ConfigurationError(QuizBotError, ValueError):
@@ -26,7 +25,6 @@ class ConfigurationError(QuizBotError, ValueError):
     
     Inherits from both QuizBotError and ValueError for compatibility.
     """
-    pass
 
 
 class DatabaseError(QuizBotError):
@@ -38,18 +36,6 @@ class DatabaseError(QuizBotError):
     - Database transactions need to be rolled back
     - Data integrity constraints are violated
     """
-    pass
-
-
-class QuestionNotFoundError(QuizBotError):
-    """Raised when no questions are available.
-    
-    This exception is raised when:
-    - The question database is empty
-    - No questions match the requested category
-    - All questions have been recently used in a chat
-    """
-    pass
 
 
 class ValidationError(QuizBotError):
@@ -61,4 +47,3 @@ class ValidationError(QuizBotError):
     - Required fields are missing from input
     - Data types are incorrect
     """
-    pass

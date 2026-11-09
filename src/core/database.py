@@ -5,14 +5,14 @@ MongoDB DatabaseManager for Telegram Quiz Bot
 import logging
 import os
 import math
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict
 from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
 
 try:
     from pymongo import MongoClient, ASCENDING, DESCENDING
-    from pymongo.errors import PyMongoError, BulkWriteError
+    from pymongo.errors import BulkWriteError
     PYMONGO_AVAILABLE = True
 except ImportError:
     PYMONGO_AVAILABLE = False
@@ -129,25 +129,6 @@ class DatabaseManager:
     def get_question_by_id(self, qid: int) -> Optional[Dict]:
         return self.questions_col.find_one({"id": qid}, {"_id": 0})
 
-    def get_question_count(self) -> int:
-        """Live question count straight from the database."""
-        try:
-            return self.questions_col.count_documents({})
-        except Exception as e:
-            logger.error(f"get_question_count error: {e}")
-            return 0
-
-    def get_category_counts(self) -> List[Dict]:
-        """Live per-category question counts, sorted by count descending."""
-        try:
-            return list(self.questions_col.aggregate([
-                {"$group": {"_id": "$category", "count": {"$sum": 1}}},
-                {"$sort": {"count": DESCENDING}},
-            ]))
-        except Exception as e:
-            logger.error(f"get_category_counts error: {e}")
-            return []
-
     def get_db_stats(self) -> Dict:
         """Live database metrics: collections, objects, data/storage size."""
         try:
@@ -162,28 +143,6 @@ class DatabaseManager:
         except Exception as e:
             logger.error(f"get_db_stats error: {e}")
             return {}
-
-    def get_questions_by_category(self, category: str) -> List[Dict]:
-        return list(self.questions_col.find({"category": category}, {"_id": 0}))
-
-    def add_question(self, question: str, options: list, correct_answer: int,
-                     category: str = "General") -> Optional[int]:
-        """Add a question. Returns new DB id or None on failure."""
-        try:
-            new_id = self._next_id("questions")
-            doc = {
-                "id": new_id,
-                "question": question,
-                "options": options,
-                "correct_answer": correct_answer,
-                "category": category,
-                "created_at": datetime.utcnow().isoformat()
-            }
-            self.questions_col.insert_one(doc)
-            return new_id
-        except Exception as e:
-            logger.error(f"add_question error: {e}")
-            return None
 
     def add_questions_batch(self, questions: List[Dict]) -> tuple:
         """Bulk-insert questions in a single MongoDB round trip.
@@ -554,18 +513,6 @@ class DatabaseManager:
         cutoff = (datetime.utcnow() - timedelta(days=days)).isoformat()
         return self.users_col.count_documents({"last_seen": {"$gte": cutoff}})
 
-    def get_new_users(self, days: int = 7) -> int:
-        cutoff = (datetime.utcnow() - timedelta(days=days)).isoformat()
-        return self.users_col.count_documents({"joined_at": {"$gte": cutoff}})
-
-    def get_new_groups(self, days: int = 7) -> int:
-        cutoff = (datetime.utcnow() - timedelta(days=days)).isoformat()
-        return self.groups_col.count_documents({"joined_at": {"$gte": cutoff}})
-
-    def get_most_active_users(self, limit: int = 10) -> List[Dict]:
-        return list(self.users_col.find({}, {"_id": 0})
-                    .sort("total_answers", DESCENDING).limit(limit))
-
     def get_pm_accessible_users(self) -> List[Dict]:
         return list(self.users_col.find({"pm_accessible": True}, {"_id": 0}))
 
@@ -574,18 +521,6 @@ class DatabaseManager:
         return result.deleted_count > 0
 
     # ── Groups ────────────────────────────────────────────────────────────────
-
-    def upsert_group(self, chat_id: int, data: Dict):
-        try:
-            self.groups_col.update_one(
-                {"chat_id": chat_id},
-                {"$set": data, "$setOnInsert": {k: v for k, v in
-                                                 {"joined_at": datetime.utcnow().isoformat()}.items()
-                                                 if k not in data}},
-                upsert=True
-            )
-        except Exception as e:
-            logger.error(f"upsert_group error: {e}")
 
     def get_all_groups(self) -> List[Dict]:
         """Return every group record regardless of active_status.
@@ -714,9 +649,6 @@ class DatabaseManager:
         self.broadcasts_col.insert_one(data)
         return new_id
 
-    def log_broadcast(self, data: Dict):
-        self.save_broadcast(data)
-
     def get_latest_broadcast(self) -> Optional[Dict]:
         return self.broadcasts_col.find_one({}, {"_id": 0},
                                              sort=[("created_at", DESCENDING)])
@@ -822,14 +754,6 @@ class DatabaseManager:
         except Exception as e:
             logger.error(f"get_content_analytics error: {e}")
             return {}
-
-    def get_analytics_data(self) -> Dict:
-        """Merged analytics — kept for backwards compatibility."""
-        d = {}
-        d.update(self.get_user_analytics())
-        d.update(self.get_group_analytics())
-        d.update(self.get_content_analytics())
-        return d
 
     # ── Auto Quiz State ───────────────────────────────────────────────────────
 

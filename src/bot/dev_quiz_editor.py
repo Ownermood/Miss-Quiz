@@ -8,7 +8,6 @@ to be available via the MRO (set by DeveloperCommands).
 """
 
 import logging
-from typing import Optional
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes

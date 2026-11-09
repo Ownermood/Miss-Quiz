@@ -89,7 +89,7 @@ async def _bot_lifecycle():
     global telegram_bot
     from src.core.database import DatabaseManager
     from src.core.quiz import QuizManager
-    from src.bot.handlers import TelegramQuizBot
+    from src.bot.handlers_main import TelegramQuizBot
     from src.utils.scheduler import AutoQuizScheduler
 
     token = os.environ.get("TELEGRAM_TOKEN", "")
@@ -174,7 +174,6 @@ def admin_panel():
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
-    global telegram_bot, event_loop
     bot_ready  = telegram_bot is not None and telegram_bot.application is not None
     loop_alive = event_loop is not None and event_loop.is_running()
     logger.info(f"[WEBHOOK] POST — bot_ready={bot_ready} loop_running={loop_alive}")

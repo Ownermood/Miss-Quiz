@@ -9,11 +9,11 @@ import random
 import logging
 import traceback
 import threading
-from typing import List, Dict, Optional, Any
+from typing import List, Dict, Optional
 from datetime import datetime, timedelta
 from collections import defaultdict, deque
 from src.core.database import DatabaseManager
-from src.core.exceptions import QuestionNotFoundError, ValidationError, DatabaseError
+from src.core.exceptions import ValidationError, DatabaseError
 
 logger = logging.getLogger(__name__)
 
@@ -65,13 +65,9 @@ class QuizManager:
         # Protects self.questions against concurrent import threads
         self._questions_lock = threading.Lock()
 
-        # Cache
-        self._cached_questions       = None
-
         # Tracking
         self.recent_questions  = defaultdict(lambda: deque(maxlen=50))
         self.last_question_time = defaultdict(dict)
-        self.available_questions = defaultdict(list)
 
         raw = self._load_questions()
         self._migrate_option_lengths(raw)   # reuse the same fetch — no 2nd full scan
@@ -339,10 +335,8 @@ class QuizManager:
         DB fetch and list-build run outside the lock; only the pointer
         swap that makes the new list visible is locked."""
         try:
-            self._cached_questions = None
             self.recent_questions.clear()
             self.last_question_time.clear()
-            self.available_questions.clear()
 
             raw           = self.db.get_all_questions()         # outside lock (I/O)
             new_questions = [_fmt_question(q) for q in raw]    # outside lock (CPU)
@@ -418,73 +412,7 @@ class QuizManager:
     def get_score(self, user_id: int) -> int:
         return self.scores.get(user_id, 0)
 
-    def get_user_stats(self, user_id: int) -> Dict:
-        try:
-            uid = str(user_id)
-            if uid not in self.stats:
-                self._init_user_stats(uid)
-
-            s     = self.stats[uid]
-            total = s.get("total_quizzes", 0)
-            corr  = s.get("correct_answers", 0)
-            score = self.get_score(user_id)
-            rate  = round((corr / total * 100), 1) if total > 0 else 0
-
-            today = datetime.now().strftime("%Y-%m-%d")
-            week_start  = (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d")
-            month_start = (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d")
-
-            today_q = s.get("daily_activity", {}).get(today, {}).get("attempts", 0)
-            week_q  = sum(
-                v.get("attempts", 0) for k, v in s.get("daily_activity", {}).items()
-                if k >= week_start
-            )
-            month_q = sum(
-                v.get("attempts", 0) for k, v in s.get("daily_activity", {}).items()
-                if k >= month_start
-            )
-
-            return {
-                "total_quizzes":    total,
-                "correct_answers":  corr,
-                "success_rate":     rate,
-                "current_score":    score,
-                "today_quizzes":    today_q,
-                "week_quizzes":     week_q,
-                "month_quizzes":    month_q,
-                "current_streak":   s.get("current_streak", 0),
-                "longest_streak":   s.get("longest_streak", 0),
-            }
-        except Exception as e:
-            logger.error(f"get_user_stats: {e}")
-            return {
-                "total_quizzes": 0, "correct_answers": 0, "success_rate": 0,
-                "current_score": 0, "today_quizzes": 0, "week_quizzes": 0,
-                "month_quizzes": 0, "current_streak": 0, "longest_streak": 0,
-            }
-
     # ─── Compatibility shims (used by dev_commands) ──────────────────────────
-
-    def get_group_last_activity(self, chat_id: str) -> Optional[str]:
-        for uid_str, s in self.stats.items():
-            g = s.get("groups", {}).get(str(chat_id))
-            if g:
-                return s.get("last_activity_date")
-        return None
-
-    def get_quiz_stats(self) -> Dict:
-        """Return basic quiz stats used by dev_commands after deletion."""
-        db_count = 0
-        try:
-            db_count = self.db.questions_col.count_documents({})
-        except Exception:
-            db_count = len(self.questions)
-        status = "synced" if db_count == len(self.questions) else "out_of_sync"
-        return {
-            "total_quizzes":    len(self.questions),
-            "db_count":         db_count,
-            "integrity_status": status,
-        }
 
     def remove_active_chat(self, chat_id: int):
         """Remove a chat from active_chats (called when bot is kicked from group)."""
@@ -492,7 +420,3 @@ class QuizManager:
             self.active_chats.remove(chat_id)
         except ValueError:
             pass
-
-    def _initialize_available_questions(self, chat_id: int):
-        self.available_questions[chat_id] = list(range(len(self.questions)))
-        random.shuffle(self.available_questions[chat_id])

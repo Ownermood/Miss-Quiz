@@ -1,7 +1,7 @@
 """Tests for QuizManager business logic (in-memory, no DB)."""
 
 import pytest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 from src.core.quiz import QuizManager, _fmt_question
 from src.core.exceptions import ValidationError
 
@@ -12,18 +12,15 @@ def make_manager(questions=None):
     """Create a QuizManager with a mocked DB."""
     db = MagicMock()
     db.get_all_questions.return_value = questions or []
-    db.get_questions_by_category.return_value = []
     mgr = QuizManager.__new__(QuizManager)
     mgr.db                       = db
     mgr.questions                = [_fmt_question(q) for q in (questions or [])]
     mgr.scores                   = {}
     mgr.active_chats             = []
     mgr.stats                    = {}
-    mgr._cached_questions        = None
     from collections import defaultdict, deque
     mgr.recent_questions         = defaultdict(lambda: deque(maxlen=50))
     mgr.last_question_time       = defaultdict(dict)
-    mgr.available_questions      = defaultdict(list)
     import threading
     mgr._questions_lock          = threading.Lock()
     return mgr
@@ -145,7 +142,7 @@ class TestRecordAttempt:
         assert stats.get("correct_answers", 0) == 2
 
 
-# ── get_score / get_user_stats ─────────────────────────────────────────────
+# ── get_score ─────────────────────────────────────────────
 
 class TestGetScore:
 
@@ -159,12 +156,6 @@ class TestGetScore:
         mgr.record_attempt(7, True)
         mgr.record_attempt(7, False)
         assert mgr.get_score(7) == 2
-
-    def test_get_user_stats_keys(self):
-        mgr = make_manager()
-        stats = mgr.get_user_stats(1)
-        for key in ("total_quizzes","correct_answers","success_rate","current_score"):
-            assert key in stats
 
 
 # ── delete_question_by_db_id ───────────────────────────────────────────────

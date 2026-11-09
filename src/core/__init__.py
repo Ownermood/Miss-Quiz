@@ -13,12 +13,3 @@ from src.core import exceptions
 
 __all__ = ["Config", "exceptions"]
 
-
-def get_database_manager():
-    from src.core.database import DatabaseManager
-    return DatabaseManager
-
-
-def get_quiz_manager():
-    from src.core.quiz import QuizManager
-    return QuizManager

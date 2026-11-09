@@ -1,6 +1,5 @@
 """Tests for UI design system helpers."""
 
-import pytest
 from src.bot.ui import UI, get_thread_id, get_tracking_id
 from unittest.mock import MagicMock
 

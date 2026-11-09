@@ -1,6 +1,5 @@
 """Tests for configuration loading and validation."""
 
-import os
 import pytest
 from src.core.config import Config
 from src.core.exceptions import ConfigurationError
@@ -12,7 +11,6 @@ class TestConfig:
         cfg = Config.load(validate=False)
         assert cfg.host == "0.0.0.0"
         assert cfg.port == 5000
-        assert cfg.database_path.endswith("quiz_bot.db")
 
     def test_validate_missing_token_raises(self, monkeypatch):
         monkeypatch.delenv("TELEGRAM_TOKEN", raising=False)

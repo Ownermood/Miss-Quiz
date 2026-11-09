@@ -113,7 +113,7 @@ def run_polling_mode(config: Config):
     send_restart_confirmation_sync(config)
 
     async def _run_all():
-        from src.bot.handlers import TelegramQuizBot
+        from src.bot.handlers_main import TelegramQuizBot
         from src.utils.scheduler import AutoQuizScheduler
 
         bot = TelegramQuizBot(quiz_mgr, db_manager=db_mgr)
@@ -164,7 +164,7 @@ def run_polling_mode(config: Config):
         async with bot.application:
             await bot.application.start()
             # Restore poll mappings from MongoDB + pickle BEFORE polling starts
-            poll_restore_stats = await bot.restore_poll_mappings_to_bot_data()
+            await bot.restore_poll_mappings_to_bot_data()
             scheduler.start()
             await bot.application.updater.start_polling(
                 drop_pending_updates=True,

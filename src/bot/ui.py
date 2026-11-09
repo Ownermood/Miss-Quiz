@@ -29,7 +29,6 @@ class UI:
 
     LINE  = "━" * 30
     THIN  = "─" * 26
-    DOT   = "·"
 
     # ── Progress bar ──────────────────────────────────────────
     @staticmethod
@@ -77,12 +76,6 @@ class UI:
         return "▰▰▰▰▰"
 
     # ── Medal & ranking display ───────────────────────────────
-    MEDALS = ["🥇", "🥈", "🥉"] + ["🏅"] * 20
-
-    @staticmethod
-    def rank_badge(pos: int) -> str:
-        medals = {1: "🥇", 2: "🥈", 3: "🥉"}
-        return medals.get(pos, f"  {pos}.")
 
     # ── Category system ───────────────────────────────────────
 
@@ -171,14 +164,6 @@ class UI:
         return name.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
     # ── Streak display ────────────────────────────────────────
-    @staticmethod
-    def streak_display(n: int) -> str:
-        if n == 0:
-            return "— No streak yet"
-        fires = "🔥" * min(n, 5)
-        suffix = " 🔥" if n > 5 else ""
-        return f"{fires}{suffix} <b>{n} days</b>"
-
     # ── Number formatter ──────────────────────────────────────
     @staticmethod
     def fmt_num(n: int) -> str:
