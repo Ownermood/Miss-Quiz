@@ -24,7 +24,7 @@ Ubuntu 22.04, safe next to other bots (no package upgrades, no firewall changes,
 RAM/CPU capped):
 
 ```bash
-git clone -b ccr-f1e736ea-a5z34q https://github.com/ownermood/miss-quiz.git /opt/miss-quiz
+git clone https://github.com/Ownermood/MissQuiz.git /opt/miss-quiz
 bash /opt/miss-quiz/deploy/setup_vps.sh --check   # shows the plan, changes nothing
 bash /opt/miss-quiz/deploy/setup_vps.sh           # installs and creates the service
 nano /opt/miss-quiz/.env                          # TELEGRAM_TOKEN, OWNER_ID
