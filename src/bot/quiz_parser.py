@@ -653,6 +653,10 @@ _U_TRAIL_QNUM_SPLIT = re.compile(
     r"^(.*\b([A-Za-z]{2,})[\)\]'\"”’]?)\s+((?:Q(?:uestion|ues)?\.?\s*)?\d{1,4}\s*[\.\)])\s*$",
     re.IGNORECASE
 )
+_U_EMBEDDED_Q_SPLIT = re.compile(
+    r"^(.*?\b([A-Za-z]{2,})[\)\]'\"”’]?)\s+((?:(?:Q(?:uestion|ues|n)?|प्रश्न|प्र)\s*[\.\-:#]?\s*\d{1,4}|\d{1,4})\s*[\.\):\-–]\s+[A-Za-z].*)$",
+    re.IGNORECASE
+)
 
 
 def _u_clean_line(line: str) -> str:
@@ -661,13 +665,20 @@ def _u_clean_line(line: str) -> str:
     line = re.sub(r"^[>\-•●▪◦·*]+\s+(?=\S)", "", line)            # quote / bullet marks (incl. '* ')
     line = re.sub(r"(\*\*|__|`)", "", line)                         # markdown bold/code
     line = _U_PDF_NOISE_RE.sub(" ", line)                             # coaching PDF headers/domains/phones
+    line = re.sub(r"([A-Za-z_])([1-4]\.\s+)", r"\1 \2", line)       # unspaced inline numbered options
+    line = re.sub(r"([A-Za-z_])(\([a-dA-D1-4]\))", r"\1 \2", line)   # unspaced paren options
     line = re.sub(r"\s+", " ", line)
     return line.strip()
 
 
 def _u_split_trailing_qnum(part: str) -> List[str]:
     from src.utils.cleaner import _SAFE_PRE_WORDS
-    m = _U_TRAIL_QNUM_SPLIT.match(part.strip())
+    s = part.strip()
+    if not _U_Q.match(s):
+        m_emb = _U_EMBEDDED_Q_SPLIT.match(s)
+        if m_emb and m_emb.group(2).lower() not in _SAFE_PRE_WORDS:
+            return [m_emb.group(1).strip(), m_emb.group(3).strip()]
+    m = _U_TRAIL_QNUM_SPLIT.match(s)
     if m and m.group(2).lower() not in _SAFE_PRE_WORDS:
         return [m.group(1).strip(), m.group(3).strip()]
     return [part]
@@ -898,7 +909,7 @@ def _u_parse_blocks(
             blank_before = False; continue
         if m_q and not (m_q.group(4) or "").strip():
             num = m_q.group(1) or m_q.group(2) or m_q.group(3)
-            if num and (cur is None or len(cur["opts"]) >= 2):
+            if num and (cur is None or len(cur["opts"]) >= 1 or cur.get("ans") is not None or int(num) > 4):
                 new_q(int(num), "")
                 blank_before = False; continue
 
@@ -959,6 +970,29 @@ def _u_is_option_line(s: str) -> bool:
     return bool(re.match(r"^[\(\[]?\s*[A-Da-d1-4]\s*[\)\]\.\:\-]", s.strip()))
 
 
+def _u_find_first_q(lines: List[str], max_idx: int) -> int:
+    """Find index of first question before max_idx, handling multi-line questions."""
+    for i in range(min(max_idx, len(lines))):
+        line = lines[i].strip()
+        if not line:
+            continue
+        m = _U_Q.match(line)
+        if m:
+            opts_found = 0
+            for nxt in range(i + 1, min(i + 10, max_idx)):
+                nl = lines[nxt].strip()
+                if not nl:
+                    continue
+                nm = _U_Q.match(nl)
+                if nm and nm.group(4) and opts_found == 0:
+                    break
+                if _u_is_option_line(nl):
+                    opts_found += 1
+            if opts_found >= 1:
+                return i
+    return 0
+
+
 def _u_find_q_start(lines: List[str], start_idx: int, end_idx: int) -> Optional[int]:
     """Find the line index where questions start after an answer key/explanation block."""
     for j in range(start_idx + 1, end_idx):
@@ -973,11 +1007,11 @@ def _u_find_q_start(lines: List[str], start_idx: int, end_idx: int) -> Optional[
                 if not nxt_line:
                     continue
                 nxt_m = _U_Q.match(nxt_line)
-                if nxt_m and nxt_m.group(4) and opts_found < 2:
+                if nxt_m and nxt_m.group(4) and opts_found == 0:
                     break
                 if _u_is_option_line(nxt_line):
                     opts_found += 1
-            if opts_found >= 2:
+            if opts_found >= 1:
                 return j
     return None
 
@@ -1004,8 +1038,7 @@ def universal_parse(text: str) -> Tuple[List[Dict], List[Dict]]:
 
         for sec_idx in range(len(key_hdr_indices)):
             if sec_idx == 0:
-                first_q = next((i for i, l in enumerate(raw_lines[:key_hdr_indices[0]])
-                                if _U_Q.match(l) and _u_is_option_line(raw_lines[i + 1] if i + 1 < len(raw_lines) else "")), 0)
+                first_q = _u_find_first_q(raw_lines, key_hdr_indices[0])
                 lead_title = raw_lines[0].strip() if first_q > 0 and raw_lines[0].strip() else None
                 q_start = first_q
             else:
@@ -1037,8 +1070,7 @@ def universal_parse(text: str) -> Tuple[List[Dict], List[Dict]]:
         hdr_tail = hdr_m.group(1) if hdr_m and hdr_m.group(1) else ""
         category = hdr_tail.strip() if hdr_tail.strip() else None
 
-        first_q = next((i for i, l in enumerate(raw_lines[:hdr_idx])
-                        if _U_Q.match(l) and _u_is_option_line(raw_lines[i + 1] if i + 1 < len(raw_lines) else "")), 0)
+        first_q = _u_find_first_q(raw_lines, hdr_idx)
         lead_title = raw_lines[0].strip() if first_q > 0 and raw_lines[0].strip() else None
         category = category or lead_title
 

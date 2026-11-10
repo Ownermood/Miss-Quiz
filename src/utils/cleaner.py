@@ -69,6 +69,7 @@ _SAFE_PRE_WORDS = {
     "phase", "level", "group", "tier", "step", "point", "para", "item", "code",
     "year", "ad", "bc", "bce", "ce", "in", "of", "to", "by", "at", "on", "from",
     "for", "is", "was", "are", "were", "under", "between", "and", "or",
+    "question", "ques", "qn", "problem", "exam", "set",
     "jan", "january", "feb", "february", "mar", "march", "apr", "april",
     "may", "jun", "june", "jul", "july", "aug", "august", "sep", "sept",
     "september", "oct", "october", "nov", "november", "dec", "december",

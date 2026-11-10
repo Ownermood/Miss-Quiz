@@ -221,3 +221,47 @@ Explanations
     assert qs[3]["correct_answer"] == 1
     assert "formula for water" in (qs[3].get("explanation") or "")
 
+
+def test_embedded_question_in_option_line():
+    doc = """
+308. Which one of the following is a human right as well as a fundamental right under the
+Constitution of India?
+(a) Right to Information
+(b) Right to Education
+(c) Right to Work
+(d) Right to Housing 309. Which Article of the Constitution envisages free and compulsory education for all children until they complete the age of fourteen years?
+(a) Article 45
+(b) Article 19
+(c) Article 29
+(d) Article 32
+
+Answer Key:
+308. (b)
+309. (a)
+"""
+    qs, probs = _up(doc)
+    assert len(qs) == 2, f"Expected 2 questions, got {len(qs)}: {probs}"
+    assert qs[0]["question"] == "Which one of the following is a human right as well as a fundamental right under the Constitution of India?"
+    assert qs[0]["options"] == ["Right to Information", "Right to Education", "Right to Work", "Right to Housing"]
+    assert qs[0]["correct_answer"] == 1
+
+    assert qs[1]["question"] == "Which Article of the Constitution envisages free and compulsory education for all children until they complete the age of fourteen years?"
+    assert qs[1]["options"] == ["Article 45", "Article 19", "Article 29", "Article 32"]
+    assert qs[1]["correct_answer"] == 0
+
+
+def test_unspaced_numbered_option_cleaning():
+    doc = """
+1. Red Fort was built by
+1. Shah Jahan
+2. Akbar
+3. Babur
+4. Humayun
+Answer: 1
+"""
+    qs, probs = _up(doc)
+    assert len(qs) == 1
+    assert qs[0]["options"] == ["Shah Jahan", "Akbar", "Babur", "Humayun"]
+    assert qs[0]["correct_answer"] == 0
+
+
