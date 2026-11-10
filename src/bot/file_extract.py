@@ -82,7 +82,7 @@ def _ocr_image_bytes(data: bytes) -> Optional[str]:
         return None
 
 
-def _ocr_pdf(data: bytes, max_pages: int = 15) -> Optional[str]:
+def _ocr_pdf(data: bytes, max_pages: int = 60) -> Optional[str]:
     if not shutil.which("tesseract"):
         return None
     try:
@@ -452,7 +452,7 @@ def _extract(filename: str, data: bytes, _depth: int = 0) -> Tuple[List[Dict], s
             import pdfplumber
             with pdfplumber.open(io.BytesIO(data)) as pdf:
                 plumber_pages = []
-                for p in pdf.pages[:60]:
+                for p in pdf.pages[:400]:
                     try:
                         plumber_pages.append(p.extract_text() or "")
                     except Exception:

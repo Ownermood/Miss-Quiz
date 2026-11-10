@@ -579,6 +579,28 @@ class MyQuizMixin:
                 return
             d["stage"] = "collect"
 
+        # Custom count typed after "✏️ Custom Number" on the file picker
+        if d["stage"] in ("pick", "pick_custom") and d.get("pending"):
+            plain = (msg.text or "").strip().replace(",", "")
+            if plain.isdigit():
+                n = int(plain)
+                total = len(d["pending"])
+                if n < 1:
+                    await self._mq_show(context, d, *self._mq_pick_view(d, f"⚠️ Enter a number between 1 and {total}."))
+                    return
+                self._mq_apply_pick(d, min(n, total))
+                await self._mq_show(context, d, *self._mq_collect_view(d))
+                return
+            if d["stage"] == "pick_custom" and not (msg.document or msg.photo or msg.poll):
+                await self._mq_show(context, d, *self._mq_pick_view(
+                    d, f"⚠️ Send only a number (1–{len(d['pending'])}), e.g. 25"))
+                return
+            d["stage"] = "collect"
+
+        # A new file while an earlier pick is still open → add the earlier one fully
+        if d.get("pending"):
+            self._mq_apply_pick(d, len(d["pending"]))
+
         wait_msg = None
         if msg.document or msg.photo:
             try:
@@ -600,18 +622,35 @@ class MyQuizMixin:
                 d.setdefault("files", []).append(f_entry)
             if not d.get("fname") and msg.document and f_entry["kind"] == "document":
                 d["fname"] = f_entry["file_name"].rsplit(".", 1)[0].replace("_", " ")[:40]
-        added = 0
+
+        # New, non-duplicate questions in file order
+        fresh, local_seen = [], set()
         for q in qs:
             key = q["question"].lower()
-            if key in d["seen"]:
+            if key in d["seen"] or key in local_seen:
                 continue
+            local_seen.add(key)
+            fresh.append(q)
+        d["problems"] = (d["problems"] + probs)[-50:]
+
+        # File with more than 10 questions → let the user choose how many to add
+        if (msg.document or msg.photo) and len(fresh) > 10:
+            room = MAX_Q_PER_SET - len(d["qs"])
+            d["pending"] = fresh[:max(0, room)]
+            d["pending_src"] = (f_entry or {}).get("file_name") or "file"
+            d["stage"] = "pick"
+            d["note"] = ""
+            await self._mq_show(context, d, *self._mq_pick_view(d))
+            return
+
+        added = 0
+        for q in fresh:
             if len(d["qs"]) >= MAX_Q_PER_SET:
                 note = f"A quiz can have up to {MAX_Q_PER_SET} questions — the rest were skipped."
                 break
-            d["seen"].add(key)
+            d["seen"].add(q["question"].lower())
             d["qs"].append(q)
             added += 1
-        d["problems"] = (d["problems"] + probs)[-50:]
         if not added and not note:
             note = ("No new questions in that (already added)." if qs else
                     "No questions found in that. Use a layout like the example below.")
@@ -620,6 +659,55 @@ class MyQuizMixin:
         if note.startswith("No questions found"):
             text_out += "\n" + EXAMPLE
         await self._mq_show(context, d, text_out, kb)
+
+    # ── file question-count picker (10 / 20 / 30 / 50 / 100 / custom / full) ──
+
+    @staticmethod
+    def _mq_pick_view(d: Dict, warn: str = "") -> Tuple[str, InlineKeyboardMarkup]:
+        total = len(d.get("pending") or [])
+        src = html.escape(str(d.get("pending_src") or "file"))
+        custom = d.get("stage") == "pick_custom"
+        body = (
+            "📄 <b>FILE READ SUCCESSFULLY</b>\n"
+            f"<blockquote>📎 File › <b>{src}</b>\n"
+            f"✅ Questions found › <b>{total} Qs</b>"
+            + (f"\n📝 Already in quiz › <b>{len(d['qs'])} Qs</b>" if d.get("qs") else "")
+            + "</blockquote>\n"
+        )
+        if warn:
+            body += f"{html.escape(warn)}\n\n"
+        if custom:
+            body += f"✏️ <b>Type how many questions to add</b> (1–{total}):\n<i>Example: 25</i>"
+            rows = [[_btn(f"📥 Full File · All {total} Qs", "mq_pick:0", "success")],
+                    [_btn("⬅️ Back", "mq_pickb", None), _btn("❌ Discard File", "mq_pickx", "danger")]]
+            return body, InlineKeyboardMarkup(rows)
+        body += "<i>How many questions do you want to add? (taken in file order)</i>"
+        opts = [n for n in (10, 20, 30, 50, 100) if n < total]
+        btns = [_btn(f"{n} Qs", f"mq_pick:{n}", "primary") for n in opts]
+        rows = [btns[i:i + 3] for i in range(0, len(btns), 3)]
+        rows.append([_btn(f"📥 Full File · All {total} Qs", "mq_pick:0", "success")])
+        rows.append([_btn("✏️ Custom Number", "mq_pickc", None), _btn("❌ Discard File", "mq_pickx", "danger")])
+        return body, InlineKeyboardMarkup(rows)
+
+    @staticmethod
+    def _mq_apply_pick(d: Dict, n: int) -> int:
+        pending = list(d.get("pending") or [])
+        n = len(pending) if n <= 0 else min(n, len(pending))
+        added = 0
+        for q in pending[:n]:
+            if len(d["qs"]) >= MAX_Q_PER_SET:
+                break
+            key = q["question"].lower()
+            if key in d["seen"]:
+                continue
+            d["seen"].add(key)
+            d["qs"].append(q)
+            added += 1
+        d.pop("pending", None)
+        d.pop("pending_src", None)
+        d["stage"] = "collect"
+        d["note"] = f"Added {added} of {len(pending)} questions from the file."
+        return added
 
     # ── shared message reader (draft / add-more / rewrite) ───────────────
 
@@ -895,6 +983,35 @@ class MyQuizMixin:
                     return
                 await self._mq_flashcard_view(query, qs, idx, rev)
                 return
+
+        if action in ("mq_pick", "mq_pickc", "mq_pickb", "mq_pickx"):
+            if not d or not d.get("pending"):
+                await query.answer("This file selection has ended.", show_alert=True)
+                return
+            d["msg"] = query.message.message_id
+            if action == "mq_pickc":
+                d["stage"] = "pick_custom"
+                await query.answer("Type a number in chat ✏️")
+                await self._bt_edit(query, *self._mq_pick_view(d))
+                return
+            if action == "mq_pickb":
+                d["stage"] = "pick"
+                await query.answer()
+                await self._bt_edit(query, *self._mq_pick_view(d))
+                return
+            if action == "mq_pickx":
+                d.pop("pending", None)
+                d.pop("pending_src", None)
+                d["stage"] = "collect"
+                d["note"] = "File questions discarded."
+                await query.answer("Discarded.")
+                await self._bt_edit(query, *self._mq_collect_view(d))
+                return
+            n = int(arg) if arg.isdigit() else 0
+            added = self._mq_apply_pick(d, n)
+            await query.answer(f"✅ Added {added} questions")
+            await self._bt_edit(query, *self._mq_collect_view(d))
+            return
 
         if action in ("mq_done", "mq_qsave", "mq_name", "mq_cancel", "mq_back"):
             if not d:
