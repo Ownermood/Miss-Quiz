@@ -327,8 +327,9 @@ class BattleMixin:
             b.chat_id, b.thread_id = chat.id, get_thread_id(update)
 
         text, kb = self._bt_setup_view(b, "mode", getattr(context.bot, "username", ""))
-        if update.callback_query:
-            sent = await self._bt_edit(update.callback_query, text, kb)
+        cq = getattr(update, "callback_query", None)
+        if cq:
+            sent = await self._bt_edit(cq, text, kb)
             b.msg_id = getattr(sent, "message_id", None) or getattr(msg, "message_id", None)
         else:
             sent = await self._reply(update, text, reply_markup=kb)

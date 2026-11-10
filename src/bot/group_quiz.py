@@ -381,7 +381,9 @@ class GroupQuizMixin:
         if skip_lobby is None:
             skip_lobby = (START_DELAY == 0)
         if self.db and hasattr(self.db, "get_group_open_thread"):
-            thread_id = await self._gq_db("get_group_open_thread", chat_id, thread_id, default=thread_id)
+            res_tid = await self._gq_db("get_group_open_thread", chat_id, thread_id, default=thread_id)
+            if isinstance(res_tid, int) or res_tid is None:
+                thread_id = res_tid
         random.shuffle(questions)
         chat_title = ""
         try:

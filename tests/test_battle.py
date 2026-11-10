@@ -644,14 +644,14 @@ async def test_create_own_quiz_text_poll_dedupe_name_and_save():
     ctx.bot.delete_message = AsyncMock()
     a = user(1, "Amit")
     await app.mq_start_draft(None, ctx, a, dm_update(a))
-    assert "CREATE YOUR QUIZ" in app.replies[-1][0]
+    assert "CREATE NEW QUIZ" in app.replies[-1][0]
 
     with pytest.raises(ApplicationHandlerStop):
         await app.handle_myquiz_input(dm_update(a, text=QTEXT), ctx)
     d = ctx.user_data["mq_draft"]
     assert len(d["qs"]) == 3
     panel = ctx.bot.send_message.await_args.args[1]
-    assert "Questions added › 3" in panel and "Skipped 1" in panel
+    assert "Questions ready › <b>3 Qs</b>" in panel and "Skipped › <b>1</b>" in panel
 
     with pytest.raises(ApplicationHandlerStop):                         # same text again: no duplicates
         await app.handle_myquiz_input(dm_update(a, text=QTEXT), ctx)
@@ -695,13 +695,13 @@ async def test_create_needs_min_questions_cancel_and_limit():
         await app.handle_myquiz_input(dm_update(a, text="just chatting"), ctx)
     assert "No questions found" in ctx.bot.send_message.await_args.args[1]
     q = await press_mq(app, ctx, a, "mq_done")
-    assert q.answer.await_args.kwargs.get("show_alert") is True        # < 3 questions
+    assert q.answer.await_args.kwargs.get("show_alert") is True        # 0 questions → can't save
     await press_mq(app, ctx, a, "mq_cancel")
     assert "mq_draft" not in ctx.user_data
     for i in range(25):                                                 # no limit any more
         real.create_quiz_set(1, f"S{i}", [], 20)
     await app.mq_start_draft(None, ctx, a, dm_update(a))
-    assert "CREATE YOUR QUIZ" in app.replies[-1][0] and "mq_draft" in ctx.user_data
+    assert "CREATE NEW QUIZ" in app.replies[-1][0] and "mq_draft" in ctx.user_data
 
 
 async def test_my_quizzes_page_numbers():

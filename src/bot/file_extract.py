@@ -412,7 +412,18 @@ def _extract(filename: str, data: bytes, _depth: int = 0) -> Tuple[List[Dict], s
                         if len(norm) >= 4:
                             edge_counts[norm] += 1
             min_rep = 2 if len(split_pages) <= 4 else max(2, len(split_pages) // 3)
-            repeated_norms = {k for k, v in edge_counts.items() if v >= min_rep}
+            # Lines that also appear often in the middle of pages are content
+            # (e.g. 'Answer: B', 'D) None of these'), not headers/footers.
+            total_counts: Counter = Counter()
+            for lines in split_pages:
+                for ln in lines:
+                    total_counts[re.sub(r"\d+", "#", ln.lower()).strip()] += 1
+            content_re = re.compile(
+                r"^(?:[\(\[]?[a-j1-9#][\)\]\.:]\s+|q(?:ue(?:stion)?|n)?\s*[\.\-:#]?\s*[\d#]|[\d#]{1,4}\s*[\.\):]"
+                r"|(?:correct\s*)?(?:answer|ans|उत्तर|explanation|solution|sol|exp)\b)",
+                re.I)
+            repeated_norms = {k for k, v in edge_counts.items()
+                              if v >= min_rep and total_counts[k] <= v * 1.5 and not content_re.match(k)}
             cleaned_pages = []
             for lines in split_pages:
                 kept = []

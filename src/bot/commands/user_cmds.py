@@ -110,8 +110,8 @@ class UserCommandsMixin(object):
     async def cmd_help(self, update: Update, context: ContextTypes.DEFAULT_TYPE,
                        edit_msg=None):
         from src.bot.premium import btn, e
-        user = update.effective_user
-        chat = update.effective_chat
+        user = getattr(update, "effective_user", None)
+        chat = getattr(update, "effective_chat", None)
         is_admin_dm = bool(chat and chat.type == "private" and user and await self._is_authorized(user.id))
 
         admin_block = (

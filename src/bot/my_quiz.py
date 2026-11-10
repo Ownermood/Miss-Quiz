@@ -620,7 +620,7 @@ class MyQuizMixin:
         if f_entry:
             if f_entry["file_id"] not in {x.get("file_id") for x in d.get("files", [])}:
                 d.setdefault("files", []).append(f_entry)
-            if not d.get("fname") and msg.document and f_entry["kind"] == "document":
+            if (not d.get("fname") or not d.get("qs")) and qs and msg.document and f_entry["kind"] == "document":
                 d["fname"] = f_entry["file_name"].rsplit(".", 1)[0].replace("_", " ")[:40]
 
         # New, non-duplicate questions in file order

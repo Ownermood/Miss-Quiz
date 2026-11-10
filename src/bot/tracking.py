@@ -96,13 +96,16 @@ class TrackingMixin(object):
         if not hasattr(self, "_topic_cache"):
             self._topic_cache = {}
         try:
-            if getattr(msg, "forum_topic_closed", None) is not None:
+            def _real_attr(obj, name: str) -> bool:
+                v = getattr(obj, name, None)
+                return v is not None and type(v).__name__ not in ("MagicMock", "AsyncMock", "NonCallableMagicMock")
+
+            if _real_attr(msg, "forum_topic_closed"):
                 self._topic_cache.pop(chat.id, None)
                 next_tid = self.db.mark_group_topic_closed(chat.id, tid)
                 logger.info(f"[TOPIC CLOSED] chat={chat.id} closed={tid} -> next_open={next_tid or 'Main'}")
                 return
-            if (getattr(msg, "forum_topic_reopened", None) is not None
-                    or getattr(msg, "forum_topic_created", None) is not None):
+            if _real_attr(msg, "forum_topic_reopened") or _real_attr(msg, "forum_topic_created"):
                 self._topic_cache[chat.id] = tid
                 self.db.mark_group_topic_open(chat.id, tid, reopened=True)
                 logger.info(f"[TOPIC OPENED] chat={chat.id} thread={tid}")

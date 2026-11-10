@@ -995,11 +995,14 @@ class DatabaseManager:
         try:
             doc = self.groups_col.find_one(
                 {"chat_id": chat_id},
-                {"open_threads": 1, "closed_threads": 1, "_id": 0}
+                {"open_threads": 1, "closed_threads": 1, "message_thread_id": 1, "_id": 0}
             ) or {}
+            cur_tid = doc.get("message_thread_id")
             closed = [thread_id] + [t for t in (doc.get("closed_threads") or []) if t != thread_id]
             closed = closed[:50]
             open_list = [t for t in (doc.get("open_threads") or []) if t != thread_id and t not in closed]
+            if cur_tid and isinstance(cur_tid, int) and cur_tid != thread_id and cur_tid not in closed and cur_tid not in open_list:
+                open_list.insert(0, cur_tid)
             next_open = open_list[0] if open_list else None
             update_ops: Dict = {
                 "$set": {

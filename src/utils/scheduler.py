@@ -240,9 +240,9 @@ class AutoQuizScheduler:
                 )
                 if self.db:
                     try:
-                        self.db.mark_group_topic_closed(chat, tid)
+                        self.db.clear_group_thread(chat, tid)
                     except Exception as ex:
-                        logger.warning(f"[SCHEDULER] mark_group_topic_closed failed for {chat}: {ex}")
+                        logger.warning(f"[SCHEDULER] clear_group_thread failed for {chat}: {ex}")
 
         return await send(**kw), None
 
@@ -317,7 +317,7 @@ class AutoQuizScheduler:
             try:
                 await self._send_in_topic(
                     tg.send_message, chat_id,
-                    g.get("message_thread_id") if "open_threads" in g else None,
+                    g.get("message_thread_id"),
                     open_threads=g.get("open_threads"),
                     closed_threads=g.get("closed_threads"),
                     **kw
@@ -362,7 +362,7 @@ class AutoQuizScheduler:
             group_targets = [
                 (
                     g["chat_id"],
-                    g.get("message_thread_id") if "open_threads" in g else None,
+                    g.get("message_thread_id"),
                     g.get("bot_is_admin"),
                     g.get("open_threads"),
                     g.get("closed_threads"),

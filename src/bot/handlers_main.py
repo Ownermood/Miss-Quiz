@@ -560,7 +560,9 @@ class TelegramQuizBot(
         tid    = get_thread_id(update)
         if chat and chat.type in ("group", "supergroup") and self.db and hasattr(self.db, "get_group_open_thread"):
             try:
-                tid = await asyncio.to_thread(self.db.get_group_open_thread, chat.id, tid)
+                res_tid = await asyncio.to_thread(self.db.get_group_open_thread, chat.id, tid)
+                if isinstance(res_tid, int) or res_tid is None:
+                    tid = res_tid
             except Exception:
                 pass
         kwargs = {"parse_mode": parse_mode, "link_preview_options": _NO_PREVIEW}

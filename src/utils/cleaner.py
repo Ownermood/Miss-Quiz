@@ -22,7 +22,7 @@ _LEADING_COUNTER_RE = re.compile(
 
 # 3. Leading question number (for questions only, NOT options): "1.", "476.", "Q1:", "Question 2 -"
 _Q_PREFIX_RE = re.compile(
-    r"^\s*(?:(?:Q(?:uestion|ues|n)?|प्रश्न|प्र)\s*[\.\-:#]?\s*\d{1,4}\s*[\.\):\-–]*|\d{1,4}\s*[\.\):\-–]+)\s*",
+    r"^\s*(?:(?:Q(?:uestion|ues|n)?|प्रश्न|प्र)\s*[\.\-:#]?\s*\d{1,4}\s*(?:[\.\):\-–]+\s*|\s+)|\d{1,4}\s*[\.\):\-–]+\s*)(?=\S)",
     re.IGNORECASE
 )
 

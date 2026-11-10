@@ -27,7 +27,9 @@ class QuizCommandsMixin(object):
         thread_id = get_thread_id(update)
         if chat.type in ("group", "supergroup") and self.db and hasattr(self.db, "get_group_open_thread"):
             try:
-                thread_id = await asyncio.to_thread(self.db.get_group_open_thread, chat.id, thread_id)
+                res_tid = await asyncio.to_thread(self.db.get_group_open_thread, chat.id, thread_id)
+                if isinstance(res_tid, int) or res_tid is None:
+                    thread_id = res_tid
             except Exception:
                 pass
         track_id  = get_tracking_id(chat.id, thread_id)
