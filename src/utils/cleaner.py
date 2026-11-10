@@ -80,8 +80,17 @@ _TRAILING_OPT_QNUM_RE = re.compile(
 
 
 def _strip_trailing_opt_qnum(opt: str) -> str:
-    """Strip a leaked next-question number at the end of an option (e.g. 'Mobile 694.')."""
-    m = _TRAILING_OPT_QNUM_RE.match(opt.strip())
+    """Strip a leaked next-question number or leaked question sentence from an option
+    (e.g. 'Mobile 694.' or 'Right to Housing 309. Which Article...')."""
+    s = opt.strip()
+    m_body = re.search(r'\s+(?:Q(?:uestion|ues)?\.?\s*)?(\d{1,4})\.\s+([A-Z].*)$', s)
+    if m_body:
+        pre_text = s[:m_body.start()].strip()
+        last_word = re.split(r'\s+', pre_text)[-1].lower() if pre_text else ""
+        if last_word not in _SAFE_PRE_WORDS:
+            return pre_text
+
+    m = _TRAILING_OPT_QNUM_RE.match(s)
     if m:
         last_word = m.group(2).lower()
         if last_word not in _SAFE_PRE_WORDS:

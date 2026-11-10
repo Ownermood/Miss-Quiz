@@ -46,6 +46,7 @@ replit.nix
 # Project specific
 data/*.json
 !data/questions.json
+!data/static_gk_1000_clean.json
 *.db
 data/bot.lock
 

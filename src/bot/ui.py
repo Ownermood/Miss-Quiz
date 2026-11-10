@@ -113,6 +113,10 @@ class UI:
         "history":    ("📜", "History"),
         "geography":  ("🗺️", "Geography"),
         "economics":  ("💰", "Economics"),
+        "economic":   ("💰", "Economics"),
+        "finance":    ("💰", "Economics"),
+        "tech":       ("🔬", "Science & Technology"),
+        "computer":   ("🔬", "Computer & IT"),
         "default":    ("📚", "General"),
     })
 

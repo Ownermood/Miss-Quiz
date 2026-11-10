@@ -23,6 +23,7 @@ from telegram.constants import ParseMode
 from telegram.ext import ApplicationHandlerStop, ContextTypes
 
 from src.utils.cleaner import clean_text
+from src.bot.ui import UI
 
 logger = logging.getLogger(__name__)
 
@@ -1633,14 +1634,16 @@ class MyQuizMixin:
                 s.current_correct = correct
 
                 q_text = str(q.get("question") or "").strip()
-                head = f"[{i+1}/{total}] "
+                cat = q.get("category") or ""
+                cat_e = UI.cat_emoji(cat) if cat else "💡"
+                head = f"[{i+1}/{total}] {cat_e} "
                 if len(head) + len(q_text) > 295:
                     await context.bot.send_message(
                         chat_id=user_id,
-                        text=f"❓ <b>Question {i+1}/{total}</b>\n\n{html.escape(q_text)}",
+                        text=f"❓ <b>Question {i+1}/{total} {cat_e}</b>\n\n{html.escape(q_text)}",
                         parse_mode=ParseMode.HTML,
                     )
-                    poll_q = f"[{i+1}/{total}] Read question above ⬆️"
+                    poll_q = f"[{i+1}/{total}] {cat_e} Read question above ⬆️"
                 else:
                     poll_q = head + q_text
 

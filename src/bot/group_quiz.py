@@ -498,10 +498,11 @@ class GroupQuizMixin:
             return True                                    # broken question: just skip it
         if not 0 <= correct < len(opts):
             correct = 0
-        head = f"[{num}/{n}] "
+        cat_e = UI.cat_emoji(q.get("category", "")) if q.get("category") else "💡"
+        head = f"[{num}/{n}] {cat_e} "
         qtext = str(q.get("question") or "")
         if len(head) + len(qtext) > 300:                   # long question: text first
-            await self._gq_send(context, s, f"❓ <b>Q{num}/{n}</b>\n{html.escape(qtext)}")
+            await self._gq_send(context, s, f"❓ <b>Q{num}/{n} {cat_e}</b>\n{html.escape(qtext)}")
             qtext = "Read the question above ⬆️"
         kw = dict(chat_id=s.chat_id, question=head + qtext, options=opts, type=Poll.QUIZ,
                   correct_option_id=correct, is_anonymous=False, open_period=s.secs)
