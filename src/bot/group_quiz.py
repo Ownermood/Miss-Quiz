@@ -1096,6 +1096,11 @@ class GroupQuizMixin:
 
     async def cmd_stopquiz(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         user, chat, msg = update.effective_user, update.effective_chat, update.effective_message
+        if chat and chat.type == "private" and hasattr(self, "_mq_stop_solo") and user:
+            stopped = self._mq_stop_solo(user.id)
+            if stopped:
+                await self._reply(update, "⏹ <b>Solo Quiz stopped.</b>")
+                return
         s = ACTIVE.get(chat.id) if chat else None
         if not s:
             await self._reply(update, "ℹ️ <b>No quiz is running here.</b>")

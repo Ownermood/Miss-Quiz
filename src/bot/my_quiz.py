@@ -14,16 +14,52 @@ import io
 import logging
 import random
 import secrets
+import time
 import urllib.parse
 from typing import Dict, List, Optional, Tuple
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputFile, Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputFile, Poll, Update
 from telegram.constants import ParseMode
 from telegram.ext import ApplicationHandlerStop, ContextTypes
 
 from src.utils.cleaner import clean_text
 
 logger = logging.getLogger(__name__)
+
+class SoloQuizSession:
+    def __init__(self, user_id: int, qs: Dict):
+        self.user_id = user_id
+        self.set_id = str(qs.get("id", ""))
+        self.title = str(qs.get("title", "Quiz"))
+        self.questions = list(qs.get("questions") or [])
+        if qs.get("shuffle"):
+            random.shuffle(self.questions)
+        self.secs = max(5, min(600, int(qs.get("secs") or 15)))
+        self.status = "running"
+        self.idx = 0
+        self.correct = 0
+        self.wrong = 0
+        self.skipped = 0
+        self.start_time = time.monotonic()
+        self.wake = asyncio.Event()
+        self.poll_id: Optional[str] = None
+        self.current_correct: int = 0
+        self.task: Optional[asyncio.Task] = None
+
+    def record_answer(self, poll_id: str, uid: int, option_ids: List[int]) -> bool:
+        if poll_id != self.poll_id or self.status != "running":
+            return False
+        if option_ids:
+            chosen = option_ids[0]
+            if chosen == self.current_correct:
+                self.correct += 1
+            else:
+                self.wrong += 1
+        else:
+            self.skipped += 1
+        self.wake.set()
+        return True
+
 
 MIN_Q         = 1                   # questions needed to save
 MAX_Q_PER_SET = 5000                # safety only (MongoDB document size)
@@ -397,12 +433,12 @@ class MyQuizMixin:
         # Row 1: Primary Launch Modes (Green CTA)
         if bot_username:
             rows.append([
-                _btn("▶️ Play Solo (DM)", f"mq_prac:{sid}", "success"),
+                _btn("▶️ Play Solo (Quiz)", f"mq_prac:{sid}", "success"),
                 InlineKeyboardButton("👥 Host in Group", style="success",
                                      url=f"https://t.me/{bot_username}?startgroup=gq_{sid}"),
             ])
         else:
-            rows.append([_btn("▶️ Play Solo (DM)", f"mq_prac:{sid}", "success")])
+            rows.append([_btn("▶️ Play Solo (Quiz)", f"mq_prac:{sid}", "success")])
 
         # Row 2: 1v1 Battle & Interactive Flashcards (Clean Dark Glass)
         rows.append([
@@ -985,6 +1021,14 @@ class MyQuizMixin:
             await query.answer("Quiz session expired. Reopen from My Quizzes.", show_alert=True)
             return
 
+        if action == "mq_stop_solo":
+            stopped = self._mq_stop_solo(user.id)
+            if stopped:
+                await query.answer("Quiz stopped ⏹")
+            else:
+                await query.answer("No active quiz to stop.")
+            return
+
         # Flashcard mode responses: mq_flash:<sid>:<idx>:<reveal 0|1>
         if action == "mq_flash":
             parts = query.data.split(":")
@@ -1507,24 +1551,185 @@ class MyQuizMixin:
 
     # ── practice mode (DM) ────────────────────────────────────────────────
 
+    def _mq_active_solo_map(self) -> Dict[int, SoloQuizSession]:
+        if not hasattr(self, "_mq_active_solo"):
+            self._mq_active_solo: Dict[int, SoloQuizSession] = {}
+        return self._mq_active_solo
+
+    def _mq_solo_polls_map(self) -> Dict[str, SoloQuizSession]:
+        if not hasattr(self, "_mq_solo_polls"):
+            self._mq_solo_polls: Dict[str, SoloQuizSession] = {}
+        return self._mq_solo_polls
+
+    def mq_on_poll_answer(self, poll_id: str, user, option_ids) -> bool:
+        session = self._mq_solo_polls_map().get(poll_id)
+        if not session or session.status != "running":
+            return False
+        return session.record_answer(poll_id, user.id, list(option_ids or []))
+
+    def _mq_stop_solo(self, user_id: int) -> bool:
+        session = self._mq_active_solo_map().get(user_id)
+        if session and session.status == "running":
+            session.status = "stopped"
+            session.wake.set()
+            return True
+        return False
+
     async def _mq_practice_start(self, query, context, user, qs: Dict):
         questions = list(qs.get("questions") or [])
         if not questions:
             await query.answer("This quiz has no questions.", show_alert=True)
             return
-        if qs.get("shuffle"):
-            random.shuffle(questions)
-        prac = {
-            "set_id": qs["id"],
-            "title": qs.get("title", "Practice"),
-            "questions": questions,
-            "idx": 0,
-            "correct": 0,
-            "wrong": 0,
-        }
-        context.user_data["mq_prac"] = prac
-        await query.answer("Starting Quiz in Private! ▶️")
-        await self._mq_practice_show_q(query, context, prac)
+
+        old = self._mq_active_solo_map().get(user.id)
+        if old and old.status == "running":
+            old.status = "stopped"
+            old.wake.set()
+
+        s = SoloQuizSession(user.id, qs)
+        self._mq_active_solo_map()[user.id] = s
+        await query.answer("Starting Telegram Quiz! 🚀")
+
+        task = asyncio.create_task(self._mq_run_solo_poll_quiz(s, context))
+        s.task = task
+
+    async def _mq_run_solo_poll_quiz(self, s: SoloQuizSession, context: ContextTypes.DEFAULT_TYPE):
+        user_id = s.user_id
+        total = len(s.questions)
+        try:
+            stop_kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("⏹ Stop Quiz", callback_data=f"mq_stop_solo:{s.set_id}", style="danger")]
+            ])
+            intro = (
+                f"🚀 <b>Starting Telegram Quiz!</b>\n"
+                f"<blockquote><b>📝 {html.escape(s.title)}\n"
+                f"• Questions › {total} Qs\n"
+                f"• Timer     › {s.secs} sec per question\n"
+                f"• Format    › Native Telegram Quiz Poll</b></blockquote>\n"
+                f"<i>Answer each question before the timer runs out!</i>"
+            )
+            await context.bot.send_message(
+                chat_id=user_id,
+                text=intro,
+                parse_mode=ParseMode.HTML,
+                reply_markup=stop_kb
+            )
+            await asyncio.sleep(1.0)
+
+            for i in range(total):
+                if s.status != "running":
+                    break
+
+                q = s.questions[i]
+                s.idx = i + 1
+                s.wake.clear()
+
+                opts = [str(o)[:100] for o in q.get("options") or []][:10]
+                if len(opts) < 2:
+                    continue
+                correct = int(q.get("correct_answer", 0))
+                if not 0 <= correct < len(opts):
+                    correct = 0
+                s.current_correct = correct
+
+                q_text = str(q.get("question") or "").strip()
+                head = f"[{i+1}/{total}] "
+                if len(head) + len(q_text) > 295:
+                    await context.bot.send_message(
+                        chat_id=user_id,
+                        text=f"❓ <b>Question {i+1}/{total}</b>\n\n{html.escape(q_text)}",
+                        parse_mode=ParseMode.HTML,
+                    )
+                    poll_q = f"[{i+1}/{total}] Read question above ⬆️"
+                else:
+                    poll_q = head + q_text
+
+                exp = str(q.get("explanation") or "").strip()
+                kw = dict(
+                    chat_id=user_id,
+                    question=poll_q,
+                    options=opts,
+                    type=Poll.QUIZ,
+                    correct_option_id=correct,
+                    is_anonymous=False,
+                    open_period=s.secs,
+                )
+                if exp:
+                    kw["explanation"] = exp[:200]
+
+                try:
+                    poll_msg = await context.bot.send_poll(**kw)
+                except Exception as e:
+                    logger.warning(f"[MYQUIZ] Solo poll send failed: {e}")
+                    await context.bot.send_message(chat_id=user_id, text=f"⚠️ Failed to send question {i+1}: {e}")
+                    break
+
+                pid = str(poll_msg.poll.id)
+                s.poll_id = pid
+                self._mq_solo_polls_map()[pid] = s
+
+                answered = False
+                try:
+                    await asyncio.wait_for(s.wake.wait(), timeout=s.secs + 1.0)
+                    answered = True
+                except asyncio.TimeoutError:
+                    pass
+
+                self._mq_solo_polls_map().pop(pid, None)
+
+                if s.status != "running":
+                    break
+
+                if answered:
+                    await asyncio.sleep(2.0)
+                else:
+                    s.skipped += 1
+                    await asyncio.sleep(1.0)
+
+            if s.status == "stopped":
+                await context.bot.send_message(
+                    chat_id=user_id,
+                    text=f"⏹ <b>Quiz Stopped.</b> Completed {max(0, s.idx-1)} of {total} questions.",
+                    parse_mode=ParseMode.HTML,
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("🔁 Play Again", callback_data=f"mq_prac:{s.set_id}", style="success"),
+                         InlineKeyboardButton("📚 My Quizzes", callback_data="mq_list", style="primary")]
+                    ])
+                )
+            else:
+                elapsed = int(time.monotonic() - s.start_time)
+                mins, secs = divmod(elapsed, 60)
+                time_str = f"{mins}m {secs}s" if mins else f"{secs}s"
+                acc = round(100 * s.correct / total) if total else 0
+
+                await self._mq_db("inc_quiz_set_plays", s.set_id, s.correct, total)
+
+                res_text = (
+                    f"🎉 <b>QUIZ COMPLETED!</b>\n"
+                    f"<blockquote><b>📝 {html.escape(s.title)}\n"
+                    f"• Score    › {s.correct} / {total} ✅\n"
+                    f"• Wrong    › {s.wrong} ❌\n"
+                    f"• Skipped  › {s.skipped} ⏱\n"
+                    f"• Accuracy › {acc}% 📊\n"
+                    f"• Time     › {time_str} ⏱</b></blockquote>\n"
+                    f"<i>Great session! Tap below to play again or return to quizzes.</i>"
+                )
+                kb = InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🔁 Play Again", callback_data=f"mq_prac:{s.set_id}", style="success")],
+                    [InlineKeyboardButton("⬅️ Back to Quiz", callback_data=f"mq_open:{s.set_id}", style="danger"),
+                     InlineKeyboardButton("📚 My Quizzes", callback_data="mq_list", style="primary")],
+                ])
+                await context.bot.send_message(
+                    chat_id=user_id,
+                    text=res_text,
+                    parse_mode=ParseMode.HTML,
+                    reply_markup=kb,
+                )
+        except Exception as e:
+            logger.error(f"[MYQUIZ] Solo quiz crashed: {e}", exc_info=True)
+        finally:
+            if self._mq_active_solo_map().get(user_id) is s:
+                self._mq_active_solo_map().pop(user_id, None)
 
     async def _mq_practice_show_q(self, query_or_update, context, prac: Dict, explanation_note: str = ""):
         idx = prac["idx"]

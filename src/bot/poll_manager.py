@@ -129,6 +129,10 @@ class PollMixin(object):
                 self.battle_on_poll_answer(str(poll_id), user_id, option_ids):
             await asyncio.to_thread(self.ensure_user_registered, answer.user, None, "poll-answer")
             return
+        if hasattr(self, "mq_on_poll_answer") and \
+                self.mq_on_poll_answer(str(poll_id), answer.user, option_ids):
+            await asyncio.to_thread(self.ensure_user_registered, answer.user, None, "poll-answer")
+            return
 
         data = context.bot_data.get(f"poll_{poll_id}", {})
         await asyncio.to_thread(self._store_poll_answer, update, context, answer.user, data)
