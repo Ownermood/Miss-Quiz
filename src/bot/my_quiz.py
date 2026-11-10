@@ -25,17 +25,19 @@ from src.utils.cleaner import clean_text
 
 logger = logging.getLogger(__name__)
 
-MIN_Q         = 3                   # questions needed to save
+MIN_Q         = 1                   # questions needed to save
 MAX_Q_PER_SET = 5000                # safety only (MongoDB document size)
 MAX_FILE      = 20 * 1024 * 1024    # Telegram: bots can't download files over 20 MB
 PER_PAGE      = 8                   # quizzes per list page
 
-HELP = ("<blockquote>📄 Paste questions as text\n"
-        "📎 Send any file: PDF, DOCX, PPTX, TXT, CSV, XLSX, JSON, HTML, ZIP…\n"
-        "🗳 Forward quiz polls (auto-cleaned!)\n"
-        "🧹 Auto-cleans [1/100], @channel_names, PDF headers &amp; phone numbers\n"
-        "📚 Uploaded PDF/DOCX is automatically saved in <b>Study Materials</b>!</blockquote>\n"
-        "<i>Each question needs options and the answer. Send as many as you like, then tap Done.</i>")
+HELP = (
+    "<blockquote><b>How to add questions:</b>\n"
+    "• 📄 <b>Send a File</b> — PDF, DOCX, TXT, CSV, XLSX or JSON\n"
+    "• 📋 <b>Paste Text</b> — Questions with options (A–D) &amp; Answer\n"
+    "• 🗳 <b>Forward Polls</b> — Forward any quiz polls here\n"
+    "• 📚 <b>Study Material</b> — Uploaded PDF/DOCX is saved automatically</blockquote>\n"
+    "<i>Send your file, text, or quiz polls below:</i>"
+)
 EXAMPLE = ("<blockquote>1. Capital of India?\nA) Mumbai\nB) Delhi\nC) Pune\nAnswer: B</blockquote>")
 
 
@@ -296,24 +298,36 @@ class MyQuizMixin:
         q_count = len(d["qs"])
         f_count = len(d.get("files") or [])
         skipped = len(d.get("problems") or [])
-        body = (
-            f"✏️ <b>CREATE YOUR QUIZ</b>\n"
-            f"<blockquote>✅ Questions added › <b>{q_count}</b>" +
-            (f"\n⚠️ Skipped {skipped} (missing answer or options)" if skipped else "") +
-            (f"\n📎 Study file attached › <b>{html.escape(d['fname'])}</b> ({f_count} file)" if d.get("fname") else "") +
-            "</blockquote>\n"
-        )
+        if q_count > 0 or skipped > 0 or d.get("fname"):
+            status_lines = [f"✅ Questions ready › <b>{q_count} Qs</b>"]
+            if skipped:
+                status_lines.append(f"⚠️ Skipped › <b>{skipped}</b> (missing answer/options)")
+            if d.get("fname"):
+                status_lines.append(f"📎 Study file › <b>{html.escape(d['fname'])}</b> ({f_count} file)")
+            body = (
+                "✏️ <b>CREATE NEW QUIZ</b>\n"
+                "<blockquote>" + "\n".join(status_lines) + "</blockquote>\n"
+            )
+        else:
+            body = "✏️ <b>CREATE NEW QUIZ</b>\n"
+
         if d.get("note"):
             body += f"💡 <i>{html.escape(d['note'])}</i>\n\n"
         else:
             body += HELP + "\n\n"
-        ready = q_count >= MIN_Q
-        done = _btn(f"✅ Done · Save {q_count} Questions" if ready else f"➕ Add {MIN_Q - q_count} more to save",
-                    "mq_done", "success" if ready else None)
-        return body, InlineKeyboardMarkup([
-            [done],
-            [_btn("📚 My Quizzes", "mq_list", None), _btn("❌ Cancel", "mq_cancel", "danger")],
-        ])
+
+        rows: List[List[InlineKeyboardButton]] = []
+        if q_count >= MIN_Q:
+            if d.get("fname"):
+                rows.append([_btn(f"⚡ Quick Save “{d['fname'][:22]}” ({q_count} Qs)", "mq_qsave", "success")])
+                rows.append([_btn("✏️ Custom Name & Save", "mq_done", "primary")])
+            else:
+                rows.append([_btn(f"✅ Save Quiz ({q_count} Qs)", "mq_done", "success")])
+            rows.append([_btn("📚 My Quizzes", "mq_list", None), _btn("❌ Cancel", "mq_cancel", "danger")])
+        else:
+            rows.append([_btn("📚 My Quizzes", "mq_list", None), _btn("❌ Cancel", "mq_cancel", "danger")])
+            rows.append([_btn("🏠 Home", "nav_home", "primary")])
+        return body, InlineKeyboardMarkup(rows)
 
     @staticmethod
     def _mq_list_view(sets: List[Dict], page: int, pages: int, total: int = 0) -> Tuple[str, InlineKeyboardMarkup]:
@@ -565,7 +579,22 @@ class MyQuizMixin:
                 return
             d["stage"] = "collect"
 
-        qs, probs, note, f_entry = await self._mq_read_msg(context, user, msg)
+        wait_msg = None
+        if msg.document or msg.photo:
+            try:
+                wait_msg = await context.bot.send_message(
+                    d["chat"], "⏳ <i>Reading file &amp; extracting questions…</i>", parse_mode=ParseMode.HTML
+                )
+            except Exception:
+                wait_msg = None
+        try:
+            qs, probs, note, f_entry = await self._mq_read_msg(context, user, msg)
+        finally:
+            if wait_msg:
+                try:
+                    await context.bot.delete_message(d["chat"], wait_msg.message_id)
+                except Exception:
+                    pass
         if f_entry:
             if f_entry["file_id"] not in {x.get("file_id") for x in d.get("files", [])}:
                 d.setdefault("files", []).append(f_entry)
@@ -867,7 +896,7 @@ class MyQuizMixin:
                 await self._mq_flashcard_view(query, qs, idx, rev)
                 return
 
-        if action in ("mq_done", "mq_name", "mq_cancel", "mq_back"):
+        if action in ("mq_done", "mq_qsave", "mq_name", "mq_cancel", "mq_back"):
             if not d:
                 await query.answer("This quiz draft has ended.", show_alert=True)
                 return
@@ -886,6 +915,15 @@ class MyQuizMixin:
                 d["msg"] = query.message.message_id
                 await query.answer()
                 await self._bt_edit(query, *self._mq_collect_view(d))
+                return
+            if action == "mq_qsave":
+                if len(d["qs"]) < MIN_Q:
+                    await query.answer(f"Add at least {MIN_Q} question first.", show_alert=True)
+                    return
+                await query.answer("Saving quiz… ✅")
+                d["msg"] = query.message.message_id
+                title = (d.get("fname") or "My Quiz").strip()[:60]
+                await self._mq_save(context, user, d, title)
                 return
             if action == "mq_done":
                 if len(d["qs"]) < MIN_Q:

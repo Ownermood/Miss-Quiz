@@ -14,10 +14,12 @@ Images & scanned PDFs: OCR when Tesseract is installed on the server
 """
 
 import csv
+import gc
 import html
 import io
 import json
 import re
+import shutil
 import zipfile
 from html.parser import HTMLParser
 from typing import Dict, List, Optional, Tuple
@@ -53,6 +55,8 @@ def decode_text(data: bytes) -> str:
 
 def _ocr_images(images) -> Optional[str]:
     """Text from PIL images, or None when OCR isn't available."""
+    if not shutil.which("tesseract"):
+        return None
     try:
         import pytesseract
         langs = set(pytesseract.get_languages(config=""))
@@ -69,6 +73,8 @@ def _ocr_images(images) -> Optional[str]:
 
 
 def _ocr_image_bytes(data: bytes) -> Optional[str]:
+    if not shutil.which("tesseract"):
+        return None
     try:
         from PIL import Image
         return _ocr_images([Image.open(io.BytesIO(data))])
@@ -76,14 +82,38 @@ def _ocr_image_bytes(data: bytes) -> Optional[str]:
         return None
 
 
-def _ocr_pdf(data: bytes, max_pages: int = 40) -> Optional[str]:
+def _ocr_pdf(data: bytes, max_pages: int = 15) -> Optional[str]:
+    if not shutil.which("tesseract"):
+        return None
     try:
         import pypdfium2 as pdfium
+        import pytesseract
+        langs = set(pytesseract.get_languages(config=""))
+        lang = "+".join(l for l in ("eng", "hin") if l in langs) or None
         pdf = pdfium.PdfDocument(data)
-        pages = [pdf[i].render(scale=2).to_pil() for i in range(min(len(pdf), max_pages))]
+        out = []
+        n_pages = min(len(pdf), max_pages)
+        for i in range(n_pages):
+            page = pdf[i]
+            bitmap = page.render(scale=1.5)
+            pil_im = bitmap.to_pil()
+            try:
+                txt = pytesseract.image_to_string(pil_im, lang=lang) if lang else pytesseract.image_to_string(pil_im)
+                out.append(txt)
+            finally:
+                try:
+                    pil_im.close()
+                    bitmap.close()
+                    page.close()
+                except Exception:
+                    pass
+        try:
+            pdf.close()
+        except Exception:
+            pass
+        return "\n\n".join(out)
     except Exception:
         return None
-    return _ocr_images(pages)
 
 
 def _questions_found(text: str) -> int:
@@ -398,21 +428,47 @@ def _extract(filename: str, data: bytes, _depth: int = 0) -> Tuple[List[Dict], s
                 cleaned_pages.append("\n".join(kept))
             return "\n".join(cleaned_pages)
 
-        # two text engines: keep whichever reads more questions (layouts differ a lot)
+        # Fast, low-memory pass with pypdf first; only fall back to pdfplumber
+        # (with per-page cache flushing to prevent OOM on multi-page PDFs) if pypdf finds 0 questions.
         candidates = []
         try:
             from pypdf import PdfReader
             reader = PdfReader(io.BytesIO(data))
-            candidates.append(_clean_pdf_pages([(p.extract_text() or "") for p in reader.pages]))
+            pypdf_pages = []
+            for p in reader.pages:
+                try:
+                    pypdf_pages.append(p.extract_text() or "")
+                except Exception:
+                    pypdf_pages.append("")
+            pypdf_text = _clean_pdf_pages(pypdf_pages)
+            del pypdf_pages, reader
+            if len(pypdf_text.strip()) >= 20:
+                if _questions_found(pypdf_text) >= 1:
+                    return [], pypdf_text, ""
+                candidates.append(pypdf_text)
         except Exception:
             pass
         try:
             import pdfplumber
             with pdfplumber.open(io.BytesIO(data)) as pdf:
-                candidates.append(_clean_pdf_pages([(p.extract_text() or "") for p in pdf.pages]))
+                plumber_pages = []
+                for p in pdf.pages[:60]:
+                    try:
+                        plumber_pages.append(p.extract_text() or "")
+                    except Exception:
+                        plumber_pages.append("")
+                    finally:
+                        try:
+                            p.flush_cache()
+                        except Exception:
+                            pass
+                plumber_text = _clean_pdf_pages(plumber_pages)
+                del plumber_pages
+                if len(plumber_text.strip()) >= 20:
+                    candidates.append(plumber_text)
+            gc.collect()
         except Exception:
             pass
-        candidates = [c for c in candidates if len(c.strip()) >= 20]
         if candidates:
             return [], max(candidates, key=lambda t: (_questions_found(t), len(t))), ""
         text = _ocr_pdf(data)                           # scanned PDF

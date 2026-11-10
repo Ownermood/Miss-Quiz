@@ -595,7 +595,7 @@ _HI_LETTERS = "कखगघङचछजझ"
 _ROMAN = ["i", "ii", "iii", "iv", "v", "vi", "vii", "viii", "ix", "x"]
 
 _U_Q = re.compile(
-    r"^(?:(?:q(?:uestion|ues|n)?|प्रश्न|प्र)\s*[\.\-:#]?\s*(\d+)\s*[\.\):\-–]?|(\d+)\s*[\.\):–]|(\d+)\s+-|q\s*[\.\):\-–])\s*(.*)$",
+    r"^(?:(?:q(?:uestion|ues|n)?|प्रश्न|प्र)\s*[\.\-:#]?\s*(\d+)\s*[\.\):\-–]?|[\(\[]?(\d{1,4})[\)\]\.:–]|(\d{1,4})\s+-|q\s*[\.\):\-–])\s*(.*)$",
     re.IGNORECASE)
 _U_OPT = re.compile(
     r"^(?:option\s*)?[\(\[]?\s*([A-Ja-j]|[1-9]|10|i{1,3}|iv|v|vi{0,3}|ix|x|[" + _HI_LETTERS + r"])\s*[\)\]\.:\-–]\s*(.*)$",
@@ -615,13 +615,20 @@ _U_KEY_HDR = re.compile(
     re.IGNORECASE)
 _U_KEY_ITEM = re.compile(r"(?:q(?:ue(?:stion)?|n)?\.?\s*)?(\d+)\s*[\.\):\-–—=|]?\s*\(?([A-Ja-j]|\d{1,2}|[" + _HI_LETTERS + r"])\)?(?=[\s,;|.\)]|$)",
                          re.IGNORECASE)
-_U_KEY_LINE = re.compile(r"^\s*(?:" + _U_KEY_ITEM.pattern + r"[\s,;|.]*)+$", re.IGNORECASE)
 _U_MARK = re.compile(r"(\s*(?:\*{1,2}|✅|✔️?|☑️?|✓|\(correct\)|\[correct\]|\(ans\)|\[ans\]|←\s*correct|<-+\s*correct))\s*$",
                      re.IGNORECASE)
 _U_INLINE_OPT = re.compile(r"(?:^|\s)[\(\[]?([A-Ja-j])[\)\]\.]\s+")
 _U_INLINE_ANS = re.compile(
-    r"(?<![Cc]orrect)(?<!CORRECT)(?<![Rr]ight)(?<!RIGHT)\s(?=(?:correct\s*answer|right\s*answer|answer|ans)\s*[:\-–])",
+    r"(?<![Cc]orrect)(?<!CORRECT)(?<![Rr]ight)(?<!RIGHT)(?:\s+|(?<=[\)\]])\s*)(?=[\(\[]?\s*(?:correct\s*(?:answer|option|choice)|right\s*answer|answer|ans|उत्तर)\s*[\.\:\-–=])",
     re.IGNORECASE)
+
+
+def _u_is_key_line(ln: str) -> bool:
+    """Linear-time check whether a line consists solely of answer-key pairs ('1-a 2-b 3-c' / '1. B')."""
+    if not _U_KEY_ITEM.search(ln):
+        return False
+    rem = _U_KEY_ITEM.sub("", ln)
+    return not re.sub(r"[\s,;|.\-–—]+", "", rem)
 
 
 def _u_strip_symbols(line: str) -> str:
@@ -672,6 +679,10 @@ def _u_split_inline(line: str) -> List[str]:
     line = _U_INLINE_ANS.sub("\n", line)
     out = []
     for part in line.split("\n"):
+        part = re.sub(
+            r"^[\(\[]\s*((?:correct\s*(?:answer|option|choice)|right\s*answer|answer|ans|उत्तर)\s*[\.\:\-–=].*?)[\)\]]\s*$",
+            r"\1", part.strip(), flags=re.IGNORECASE
+        )
         ms = list(_U_INLINE_OPT.finditer(part))
         letters = [m.group(1).lower() for m in ms]
         seq_start = next((i for i, l in enumerate(letters) if l == "a"), None)
@@ -770,7 +781,7 @@ def _u_answer_key(lines: List[str]) -> Tuple[List[str], Dict[int, str]]:
             ln = ln.replace("|", " ").strip()
             if not ln:
                 continue
-            if _U_KEY_LINE.match(ln):                          # '1-a 2-b 3-c' / '1. B'
+            if _u_is_key_line(ln):                             # '1-a 2-b 3-c' / '1. B'
                 pairs = _U_KEY_ITEM.findall(ln)
             else:                                              # '1. (b) because Article 21…'
                 mm = _U_KEY_ITEM.match(ln)
