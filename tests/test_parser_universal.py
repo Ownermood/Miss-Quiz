@@ -159,3 +159,65 @@ def test_answer_key_variants(key):
 def test_math_symbols_at_start_are_kept():
     qs, _ = _up("1. √16 = ?\n(a) 2\n(b) 4\nAnswer: b")
     assert qs[0]["question"].startswith("√16")
+
+
+def test_multisection_document_with_separate_answer_keys_and_explanations():
+    doc = """
+SECTION 1
+1. What is the capital of France?
+A. Berlin
+B. Paris
+C. Rome
+
+2. What is 5 x 5?
+A. 20
+B. 25
+C. 30
+
+ANSWER KEY — SECTION 1
+1. B
+2. B
+
+Explanations
+1. Paris is the capital and largest city of France.
+2. 5 multiplied by 5 equals 25.
+
+SECTION 2
+1. Which planet is closest to the Sun?
+A. Venus
+B. Mercury
+C. Mars
+
+2. What is H2O?
+A. Hydrogen peroxide
+B. Water
+C. Oxygen
+
+ANSWER KEY — SECTION 2
+1. B
+2. B
+
+Explanations
+1. Mercury is the smallest and closest planet to the Sun.
+2. H2O is the chemical formula for water.
+"""
+    qs, probs = _up(doc)
+    assert len(qs) == 4, f"Expected 4 questions, got {len(qs)}: {probs}"
+    assert qs[0]["question"] == "What is the capital of France?"
+    assert qs[0]["correct_answer"] == 1
+    assert "Paris is the capital" in (qs[0].get("explanation") or "")
+    assert qs[0].get("category") == "SECTION 1"
+
+    assert qs[1]["question"] == "What is 5 x 5?"
+    assert qs[1]["correct_answer"] == 1
+    assert "equals 25" in (qs[1].get("explanation") or "")
+
+    assert qs[2]["question"] == "Which planet is closest to the Sun?"
+    assert qs[2]["correct_answer"] == 1
+    assert "Mercury is the smallest" in (qs[2].get("explanation") or "")
+    assert qs[2].get("category") == "SECTION 2"
+
+    assert qs[3]["question"] == "What is H2O?"
+    assert qs[3]["correct_answer"] == 1
+    assert "formula for water" in (qs[3].get("explanation") or "")
+

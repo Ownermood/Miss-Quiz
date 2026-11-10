@@ -769,6 +769,44 @@ def _u_text_match(text: str, opts: List[str]) -> Optional[int]:
     return hits[0] if len(hits) == 1 else None
 
 
+def _u_extract_key_and_exp(lines: List[str], header_tail: str = "") -> Tuple[Dict[int, str], Dict[int, str]]:
+    """Extract answers {num: letter} and explanations {num: text} from an answer block."""
+    key: Dict[int, str] = {}
+    exp_lines: Dict[int, List[str]] = {}
+    in_exp = False
+    cur_exp_q: Optional[int] = None
+
+    all_lines = ([header_tail] if header_tail else []) + lines
+    for ln in all_lines:
+        s = ln.strip()
+        if not s:
+            continue
+        if re.search(r"^(?:explanations?|solutions?|व्याख्या)\b", s, re.IGNORECASE):
+            in_exp = True
+            cur_exp_q = None
+            continue
+        if in_exp:
+            m = re.match(r"^(?:Q|q)?\s*(\d{1,3})[\.\:\-\)]\s+(.+)$", s)
+            if m:
+                cur_exp_q = int(m.group(1))
+                txt = m.group(2).strip()
+                exp_lines[cur_exp_q] = [txt] if txt else []
+            elif cur_exp_q is not None and not re.match(r"^\d+$", s):
+                exp_lines[cur_exp_q].append(s)
+        else:
+            ln_c = s.replace("|", " ").strip()
+            if _u_is_key_line(ln_c):
+                pairs = _U_KEY_ITEM.findall(ln_c)
+            else:
+                mm = _U_KEY_ITEM.match(ln_c)
+                pairs = [mm.groups()] if mm else []
+            for n, a in pairs:
+                key.setdefault(int(n), a)
+
+    explanations = {k: re.sub(r"\s+", " ", " ".join(v)).strip() for k, v in exp_lines.items() if " ".join(v).strip()}
+    return key, explanations
+
+
 def _u_answer_key(lines: List[str]) -> Tuple[List[str], Dict[int, str]]:
     """Find an 'Answer Key' section (usually at the end) → (other lines, {num: answer})."""
     key: Dict[int, str] = {}
@@ -776,31 +814,21 @@ def _u_answer_key(lines: List[str]) -> Tuple[List[str], Dict[int, str]]:
         m = _U_KEY_HDR.match(line)
         if not m:
             continue
-        found: Dict[int, str] = {}
-        for ln in ([m.group(1)] if m.group(1) else []) + lines[i + 1:]:
-            ln = ln.replace("|", " ").strip()
-            if not ln:
-                continue
-            if _u_is_key_line(ln):                             # '1-a 2-b 3-c' / '1. B'
-                pairs = _U_KEY_ITEM.findall(ln)
-            else:                                              # '1. (b) because Article 21…'
-                mm = _U_KEY_ITEM.match(ln)
-                pairs = [mm.groups()] if mm else []
-            for n, a in pairs:
-                found.setdefault(int(n), a)                    # first mention wins
+        found, _ = _u_extract_key_and_exp(lines[i + 1:], m.group(1) or "")
         if found:
             return lines[:i], found
     return lines, key
 
 
-def universal_parse(text: str) -> Tuple[List[Dict], List[Dict]]:
-    text = (text or "").replace("﻿", "").replace("\r\n", "\n").replace("\r", "\n")
-    raw_lines: List[str] = []
-    for ln in text.split("\n"):
-        c = _u_clean_line(ln)
-        raw_lines.extend(_u_split_inline(c) if c else [""])
-    lines, key = _u_answer_key(raw_lines)
-
+def _u_parse_blocks(
+    lines: List[str],
+    key: Optional[Dict[int, str]] = None,
+    exp_dict: Optional[Dict[int, str]] = None,
+    default_category: Optional[str] = None,
+) -> Tuple[List[Dict], List[Dict]]:
+    """Parse question blocks from a list of question lines, resolving against key/exp_dict."""
+    key = key or {}
+    exp_dict = exp_dict or {}
     blocks: List[Dict] = []
     cur: Optional[Dict] = None
     blank_before = True
@@ -915,9 +943,108 @@ def universal_parse(text: str) -> Tuple[List[Dict], List[Dict]]:
             continue
         item = _make(qtext, opts, correct)
         exp = re.sub(r"\s+", " ", " ".join(b["exp"])).strip()
+        if not exp and exp_dict and b["num"] in exp_dict:
+            exp = exp_dict[b["num"]]
         if exp:
             item["explanation"] = exp
-        if b["meta"].get("category"):
-            item["category"] = b["meta"]["category"][:40]
+        cat = b["meta"].get("category") or default_category
+        if cat:
+            item["category"] = cat[:40]
         questions.append(item)
     return questions, problems
+
+
+def _u_is_option_line(s: str) -> bool:
+    """Check if a line looks like an option line (A. ..., (b) ..., 1. ..., etc.)."""
+    return bool(re.match(r"^[\(\[]?\s*[A-Da-d1-4]\s*[\)\]\.\:\-]", s.strip()))
+
+
+def _u_find_q_start(lines: List[str], start_idx: int, end_idx: int) -> Optional[int]:
+    """Find the line index where questions start after an answer key/explanation block."""
+    for j in range(start_idx + 1, end_idx):
+        line = lines[j].strip()
+        if not line:
+            continue
+        m = _U_Q.match(line)
+        if m and (m.group(1) == "1" or m.group(2) == "1" or m.group(3) == "1"):
+            opts_found = 0
+            for nxt in range(j + 1, min(j + 12, end_idx)):
+                nxt_line = lines[nxt].strip()
+                if not nxt_line:
+                    continue
+                nxt_m = _U_Q.match(nxt_line)
+                if nxt_m and nxt_m.group(4) and opts_found < 2:
+                    break
+                if _u_is_option_line(nxt_line):
+                    opts_found += 1
+            if opts_found >= 2:
+                return j
+    return None
+
+
+def universal_parse(text: str) -> Tuple[List[Dict], List[Dict]]:
+    text = (text or "").replace("﻿", "").replace("\r\n", "\n").replace("\r", "\n")
+    raw_lines: List[str] = []
+    for ln in text.split("\n"):
+        c = _u_clean_line(ln)
+        raw_lines.extend(_u_split_inline(c) if c else [""])
+
+    key_hdr_indices = [i for i, line in enumerate(raw_lines) if _U_KEY_HDR.match(line)]
+
+    # Case 1: Multi-section document with multiple answer key sections
+    if len(key_hdr_indices) > 1:
+        q1_starts: List[Optional[int]] = []
+        for k_idx, k_line in enumerate(key_hdr_indices):
+            next_k = key_hdr_indices[k_idx + 1] if k_idx + 1 < len(key_hdr_indices) else len(raw_lines)
+            q1 = _u_find_q_start(raw_lines, k_line, next_k)
+            q1_starts.append(q1)
+
+        all_questions: List[Dict] = []
+        all_problems: List[Dict] = []
+
+        for sec_idx in range(len(key_hdr_indices)):
+            if sec_idx == 0:
+                first_q = next((i for i, l in enumerate(raw_lines[:key_hdr_indices[0]])
+                                if _U_Q.match(l) and _u_is_option_line(raw_lines[i + 1] if i + 1 < len(raw_lines) else "")), 0)
+                lead_title = raw_lines[0].strip() if first_q > 0 and raw_lines[0].strip() else None
+                q_start = first_q
+            else:
+                lead_title = None
+                q_start = q1_starts[sec_idx - 1] or (key_hdr_indices[sec_idx - 1] + 1)
+
+            q_end = key_hdr_indices[sec_idx]
+            ans_start = key_hdr_indices[sec_idx]
+            ans_end = (q1_starts[sec_idx] if sec_idx < len(key_hdr_indices) - 1 and q1_starts[sec_idx] is not None
+                       else (key_hdr_indices[sec_idx + 1] if sec_idx < len(key_hdr_indices) - 1 else len(raw_lines)))
+
+            hdr_m = _U_KEY_HDR.match(raw_lines[ans_start])
+            hdr_tail = hdr_m.group(1) if hdr_m and hdr_m.group(1) else ""
+            category = hdr_tail.strip() if hdr_tail.strip() else lead_title
+
+            sec_key, sec_exp = _u_extract_key_and_exp(raw_lines[ans_start + 1:ans_end], hdr_tail)
+            q_lines = raw_lines[q_start:q_end]
+
+            qs, probs = _u_parse_blocks(q_lines, sec_key, sec_exp, default_category=category)
+            all_questions.extend(qs)
+            all_problems.extend(probs)
+
+        return all_questions, all_problems
+
+    # Case 2: Single answer key header
+    if len(key_hdr_indices) == 1:
+        hdr_idx = key_hdr_indices[0]
+        hdr_m = _U_KEY_HDR.match(raw_lines[hdr_idx])
+        hdr_tail = hdr_m.group(1) if hdr_m and hdr_m.group(1) else ""
+        category = hdr_tail.strip() if hdr_tail.strip() else None
+
+        first_q = next((i for i, l in enumerate(raw_lines[:hdr_idx])
+                        if _U_Q.match(l) and _u_is_option_line(raw_lines[i + 1] if i + 1 < len(raw_lines) else "")), 0)
+        lead_title = raw_lines[0].strip() if first_q > 0 and raw_lines[0].strip() else None
+        category = category or lead_title
+
+        key, exp_dict = _u_extract_key_and_exp(raw_lines[hdr_idx + 1:], hdr_tail)
+        q_lines = raw_lines[first_q:hdr_idx]
+        return _u_parse_blocks(q_lines, key, exp_dict, default_category=category)
+
+    # Case 3: No answer key header (inline answers, marked options, etc.)
+    return _u_parse_blocks(raw_lines)
