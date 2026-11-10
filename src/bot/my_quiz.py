@@ -759,7 +759,7 @@ class MyQuizMixin:
         ud = getattr(context, "user_data", None)
         if ud is None:
             return
-        for k in ("mq_renaming", "mq_attaching_file", "mq_prac", "mq_edit_q", "mq_adding"):
+        for k in ("mq_renaming", "mq_attaching_file", "mq_edit_q", "mq_adding"):
             ud.pop(k, None)
 
     async def _mq_set_questions(self, sid: str, owner: int, questions: List[Dict]) -> None:
@@ -964,11 +964,26 @@ class MyQuizMixin:
                 await self._mq_practice_answer(query, context, user, sid, q_idx, chosen)
                 return
         if action == "mq_p_next":
+            sid = arg
             prac = context.user_data.get("mq_prac")
+            if not prac or (sid and prac.get("set_id") != sid):
+                qs = await self._mq_db("get_quiz_set", sid)
+                if isinstance(qs, dict) and qs.get("questions"):
+                    prac = {
+                        "set_id": sid,
+                        "title": qs.get("title", "Practice"),
+                        "questions": list(qs.get("questions") or []),
+                        "idx": 0,
+                        "correct": 0,
+                        "wrong": 0,
+                    }
+                    context.user_data["mq_prac"] = prac
             if prac:
                 await query.answer()
                 await self._mq_practice_show_q(query, context, prac)
                 return
+            await query.answer("Quiz session expired. Reopen from My Quizzes.", show_alert=True)
+            return
 
         # Flashcard mode responses: mq_flash:<sid>:<idx>:<reveal 0|1>
         if action == "mq_flash":
@@ -1554,7 +1569,7 @@ class MyQuizMixin:
 
         rows = []
         for i, opt in enumerate(opts):
-            label = f"{chr(65+i)}) {opt[:40]}"
+            label = f"{chr(65+i)}) {opt[:60]}"
             rows.append([_btn(label, f"mq_p_ans:{prac['set_id']}:{idx}:{i}", None)])
         rows.append([_btn("❌ Exit Quiz", f"mq_open:{prac['set_id']}", "danger")])
 
@@ -1570,8 +1585,24 @@ class MyQuizMixin:
 
     async def _mq_practice_answer(self, query, context, user, set_id: str, idx: int, chosen: int):
         prac = context.user_data.get("mq_prac")
-        if not prac or prac.get("set_id") != set_id or prac.get("idx") != idx:
-            await query.answer("Question expired or already answered.", show_alert=True)
+        if not prac or prac.get("set_id") != set_id:
+            qs = await self._mq_db("get_quiz_set", set_id)
+            if isinstance(qs, dict) and qs.get("questions"):
+                prac = {
+                    "set_id": set_id,
+                    "title": qs.get("title", "Practice"),
+                    "questions": list(qs.get("questions") or []),
+                    "idx": idx,
+                    "correct": 0,
+                    "wrong": 0,
+                }
+                context.user_data["mq_prac"] = prac
+            else:
+                await query.answer("Quiz session expired or not found.", show_alert=True)
+                return
+
+        if prac.get("idx") != idx:
+            await query.answer("Already answered! Click Next Question ➡️", show_alert=True)
             return
 
         q = prac["questions"][idx]
@@ -1599,16 +1630,36 @@ class MyQuizMixin:
             [_btn("❌ Exit Quiz", f"mq_open:{set_id}", "danger")],
         ])
 
+        opts_display = []
+        for i, opt in enumerate(opts):
+            letter = chr(65 + i)
+            esc_opt = html.escape(opt)
+            if i == correct and i == chosen:
+                opts_display.append(f"<b>{letter}) {esc_opt}</b>  ✅ <i>(Your Correct Answer)</i>")
+            elif i == correct:
+                opts_display.append(f"<b>{letter}) {esc_opt}</b>  ✅ <i>(Correct Answer)</i>")
+            elif i == chosen:
+                opts_display.append(f"<b>{letter}) {esc_opt}</b>  ❌ <i>(Your Choice)</i>")
+            else:
+                opts_display.append(f"{letter}) {esc_opt}")
+
         q_text = html.escape(str(q.get("question") or ""))
+        options_text = "\n".join(opts_display)
+        head = f"▶️  <b>SOLO PRACTICE  ·  Q{idx+1} of {total}</b>\n<blockquote><b>📝 {html.escape(prac['title'])}</b></blockquote>\n"
         text = (
-            f"▶️ <b>PRIVATE QUIZ</b> [Q{idx+1}/{total}]\n"
-            f"<b>{html.escape(prac['title'])}</b>\n"
-            f"━━━━━━━━━━━━━━━━━━\n"
+            f"{head}"
             f"❓ <b>{q_text}</b>\n\n"
+            f"{options_text}\n\n"
             f"{exp_note}"
         )
         await query.answer("Correct! 🎉" if is_right else "Wrong! ❌")
-        await query.edit_message_text(text, parse_mode=ParseMode.HTML, reply_markup=kb)
+        try:
+            await query.edit_message_text(text, parse_mode=ParseMode.HTML, reply_markup=kb)
+        except Exception:
+            try:
+                await query.message.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=kb)
+            except Exception as e:
+                logger.error(f"[MYQUIZ] Failed to edit or send practice answer: {e}")
 
     async def _mq_battle(self, query, context, user, qs: Dict) -> None:
         from src.bot.battle import Battle
