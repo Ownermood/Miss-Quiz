@@ -144,7 +144,6 @@ def generate_certificate_image(
     f_cert_title = _load_font(_FONT_PATHS_BOLD, 28)
     f_awarded = _load_font(_FONT_PATHS_REGULAR, 20)
     f_winner = _load_font(_FONT_PATHS_SERIF, 54)
-    f_desc = _load_font(_FONT_PATHS_REGULAR, 22)
     f_desc_bold = _load_font(_FONT_PATHS_BOLD, 22)
     f_meta = _load_font(_FONT_PATHS_REGULAR, 18)
     f_box_lbl = _load_font(_FONT_PATHS_BOLD, 15)

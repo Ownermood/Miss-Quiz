@@ -135,7 +135,7 @@ class AdminPanelMixin:
     def _panel_kb(self, is_owner: bool) -> InlineKeyboardMarkup:
         admin_row = [btn("Admins List", "users", None, callback_data="ap:team")]
         if is_owner:
-            admin_row.append(btn("Restart Bot", "warn", RED, callback_data="ap:restart"))
+            admin_row.append(btn("Restart Bot", "warn", GREEN, callback_data="ap:restart"))
 
         rows = [
             # 1. Primary Question Bank Action (Green)

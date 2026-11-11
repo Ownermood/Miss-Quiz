@@ -412,8 +412,8 @@ class BattleMixin:
             create = B("➕ Create Own Quiz", f"bt_new:{b.id}", "success")
         foot = [B("🏠 Home", "nav_home", "primary"), cancel] if b.mode == "dm" else [cancel]
         rows = [[create],
-                [B("📚 My Quizzes", f"bt_my:{b.id}", None), B("🤖 Bot Quiz", f"bt_p:{b.id}:bot", None)],
-                [B("⚙️ Customize", f"bt_p:{b.id}:cust", None)],
+                [B("📚 My Quizzes", f"bt_my:{b.id}", "primary"), B("🤖 Bot Quiz", f"bt_p:{b.id}:bot", "primary")],
+                [B("⚙️ Customize", f"bt_p:{b.id}:cust", "primary")],
                 foot]
         return text, InlineKeyboardMarkup(rows)
 

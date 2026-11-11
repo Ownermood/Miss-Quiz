@@ -509,20 +509,10 @@ class TelegramQuizBot(
         except Exception as e:
             logger.warning(f"set_my_commands: {e}")
 
+        # Admins use /start → Admin Panel (owner's rule): no per-admin menus, and
+        # old ones from earlier versions are removed.
         from telegram import BotCommandScopeChat
         from src.core.config import AUTHORIZED_USERS
-        admin_cmds = user_cmds + [
-            BotCommand("admin",        "🔑 Open Admin Control Panel"),
-            BotCommand("check",        "🩺 Bot & System Health Monitor"),
-            BotCommand("cleanup",      "🧹 Sanitize DB & Clear Stale Quizzes"),
-            BotCommand("addadmin",     "👑 Quick 1-Line Admin Promotion"),
-            BotCommand("addquiz",      "➕ Add Questions to Bot Bank"),
-            BotCommand("editquiz",     "✏️ Edit Bot Question Bank"),
-            BotCommand("delquiz",      "🗑 Delete Question from Bank"),
-            BotCommand("broadcast",    "📡 Broadcast Message to All"),
-            BotCommand("reload",       "🔄 Reload Questions from DB"),
-            BotCommand("restart",      "♻️ Restart Bot Process"),
-        ]
         admin_ids = set(AUTHORIZED_USERS)
         if self.db:
             try:
@@ -532,9 +522,9 @@ class TelegramQuizBot(
                 logger.warning(f"set_my_commands: developers lookup failed: {e}")
         for uid in admin_ids:
             try:
-                await self.application.bot.set_my_commands(admin_cmds, scope=BotCommandScopeChat(chat_id=uid))
+                await self.application.bot.delete_my_commands(scope=BotCommandScopeChat(chat_id=uid))
             except Exception as e:
-                logger.debug(f"set_my_commands for admin {uid}: {e}")
+                logger.debug(f"delete_my_commands for admin {uid}: {e}")
 
     # ─── Core helpers ─────────────────────────────────────────
 
