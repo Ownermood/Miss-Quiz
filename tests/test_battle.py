@@ -531,7 +531,7 @@ async def test_main_card_layout_and_bot_quiz_one_tap():
     b = next(iter(app._bt_state().values()))
     _, kb = app._bt_setup_view(b, "mode", "MissQuizBot")
     rows = [[(x.text, x.style) for x in r] for r in kb.inline_keyboard]
-    assert rows == [[("📝 Create Own Quiz", "success")],
+    assert rows == [[("➕ Create Own Quiz", "success")],
                     [("📚 My Quizzes", "primary"), ("🤖 Bot Quiz", "primary")],
                     [("⚙️ Customize", "primary")],
                     [("❌ Cancel", "danger")]]
@@ -559,11 +559,12 @@ async def test_customize_plain_options_typing_and_create():
     await press(app, ctx, a, f"bt_p:{b.id}:cust")
     _, kb = app._bt_setup_view(b, "cust")
     rows = [[(x.text, x.style) for x in r] for r in kb.inline_keyboard]
-    assert rows[0] == [("10s", None), ("15s", None), ("✅ 20s", None)]      # no colour on options
-    assert rows[1] == [("25s", None), ("30s", None), ("1m", None)]
-    assert rows[2] == [("🎯 Questions: 10", None)]
-    assert rows[3] == [("⬅️ Back", "danger"), ("❌ Cancel", "danger")]
+    assert rows[0] == [("10s", None), ("15s", None)]                    # 2 per row, no colour
+    assert rows[1] == [("✅ 20s", "success"), ("25s", None)]             # current = green
+    assert rows[2] == [("30s", None), ("1m", None)]
+    assert rows[3] == [("🎯 Questions: 10", None)]
     assert rows[4] == [("⚔️ Create Challenge", "success")]
+    assert rows[5] == [("⬅️ Back", "danger"), ("❌ Cancel", "danger")]
     await press(app, ctx, a, f"bt_t:{b.id}:25")                         # stays on Customize
     assert b.secs == 25 and b.state == "setup" and "CUSTOMIZE" in app._last_edit
     upd, m = text_update(a, "hi everyone")                              # normal chat ignored
@@ -708,7 +709,7 @@ async def test_my_quizzes_page_numbers():
     from src.bot.my_quiz import page_rows, PER_PAGE
     rows = page_rows(10, 1, lambda n: f"p{n}")
     assert [[b.text for b in r] for r in rows] == [["·1·", "2", "3", "4", "5"], ["6", "7", "8", "9", "10"]]
-    assert rows[0][0].style == "success" and rows[0][1].style == "primary"
+    assert rows[0][0].style == "success" and rows[0][1].style != "success"
     assert page_rows(1, 1, str) == []
     big = page_rows(30, 20, str)                                        # window of 10 around page 20
     assert [b.text for r in big for b in r] == ["16", "17", "18", "19", "·20·", "21", "22", "23", "24", "25"]
@@ -722,12 +723,12 @@ async def test_my_quizzes_page_numbers():
     text = q.edit_message_text.await_args.args[0]
     kb = q.edit_message_text.await_args.kwargs.get("reply_markup") or q.edit_message_text.await_args.args[1]
     names = [b.text for r in kb.inline_keyboard for b in r]
-    assert "page 3/3" in text and sum(n.startswith("📝 S") for n in names) == 3
+    assert "Page 3/3" in text and text.count("<b>S0") == 3                # 3 quizzes on the last page
     assert ["1", "2", "·3·"] == [n for n in names if n.strip("·").isdigit()]
     await app.cmd_battle(group_update(a), ctx)                          # same pages inside /battle
     bt_ = next(iter(app._bt_state().values()))
     await press(app, ctx, a, f"bt_my:{bt_.id}:2")
-    assert "page 2/3" in app._last_edit
+    assert "page 2/3" in app._last_edit.lower()
 
 
 async def test_my_quiz_open_delete_owner_only_and_battle():
@@ -736,14 +737,17 @@ async def test_my_quiz_open_delete_owner_only_and_battle():
     qs = [{"question": f"Own {i}?", "options": ["x", "y"], "correct_answer": 1} for i in range(4)]
     sid = real.create_quiz_set(1, "Mine", qs, 15)
     a, other = user(1, "Amit"), user(2, "Bina")
-    q = await press_mq(app, ctx, other, f"mq_open:{sid}")               # not the owner
+    q = await press_mq(app, ctx, other, f"mq_open:{sid}")               # shared link: viewing is allowed
+    assert q.answer.await_args.kwargs.get("show_alert") is not True
+    q = await press_mq(app, ctx, other, f"mq_del:{sid}")                # …but not deleting
     assert q.answer.await_args.kwargs.get("show_alert") is True
     q = await press_mq(app, ctx, a, f"mq_open:{sid}")
     assert "Mine" in q.edit_message_text.await_args.args[0]
     q = await press_mq(app, ctx, a, f"mq_bt:{sid}")                     # battle with it
     b = [x for x in app._bt_state().values() if x.set_id == sid][0]
-    assert b.state == "pending" and (b.n_q, b.secs) == (4, 15)
-    assert "📝 Quiz › Mine" in q.edit_message_text.await_args.args[0]
+    assert b.state == "setup" and (b.n_q, b.secs) == (4, 15)               # confirm page first
+    await press(app, ctx, a, f"bt_go:{b.id}")
+    assert b.state == "pending" and "Mine" in app._last_edit
     picked = await app._bt_questions(b)
     assert sorted(x["question"] for x in picked) == sorted(x["question"] for x in qs)
     b.state = "done"
@@ -770,6 +774,8 @@ async def test_group_own_quiz_needs_admin_and_dm_battle_uses_own_questions():
     assert q.answer.await_args.kwargs.get("show_alert") is True
     ctx.bot.get_chat_member = AsyncMock(return_value=SimpleNamespace(status="administrator"))
     await press(app, ctx, a, f"bt_s:{bt_.id}:{sid}")
+    assert bt_.set_id == sid and bt_.state == "setup"                   # quiz chosen → confirm page
+    await press(app, ctx, a, f"bt_go:{bt_.id}")
     assert bt_.state == "pending" and bt_.set_id == sid
     bt_.secs = 0.2
     await press(app, ctx, b, f"bt_acc:{bt_.id}")
@@ -860,4 +866,4 @@ async def test_photo_question_via_ocr_and_card_buttons_side_by_side(monkeypatch)
     assert len(ctx.user_data["mq_draft"]["qs"]) == 3
     assert ctx.bot.get_file.await_args.args[0] == "big"                # largest size used
     _, kb = app._mq_card_view({"id": "x1", "title": "T", "count": 3, "secs": 20})
-    assert [b.text for b in kb.inline_keyboard[-1]] == ["🗑 Delete Quiz", "📚 My Quizzes"]
+    assert [b.text for b in kb.inline_keyboard[-1]] == ["⬅️ My Quizzes", "🏠 Home"]

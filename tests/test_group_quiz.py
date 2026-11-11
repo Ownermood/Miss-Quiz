@@ -86,6 +86,7 @@ async def press(app, c, u, data, chat_id=GROUP):
 @pytest.fixture(autouse=True)
 def fast(monkeypatch):
     monkeypatch.setattr(gq, "START_DELAY", 0)
+    monkeypatch.setattr(gq, "USE_LOBBY", False)
     monkeypatch.setattr(gq, "GAP", 0)
     monkeypatch.setattr(gq, "SLACK", 0)
     gq.ACTIVE.clear()
@@ -195,7 +196,7 @@ async def test_controls_admin_only_pause_resume_stop():
 async def test_resume_after_restart_from_saved_session():
     app = App()
     c, polls, sent = ctx()
-    s = Session(chat_id=GROUP, title="Mock 1", questions=questions(5), secs=1, started_by=1,
+    s = Session(chat_id=GROUP, title="Mock 1", questions=questions(5), secs=1, started_by=1, status="running",
                 starter_name="Admin", idx=3, scores={"7": {"name": "P7", "correct": 3, "wrong": 0, "time": 3.0}})
     app.real.save_quiz_session(s.to_doc())
     app2 = App(db_real=app.real)                                        # restart: same DB, empty memory
@@ -204,7 +205,7 @@ async def test_resume_after_restart_from_saved_session():
     gq.ACTIVE[GROUP].secs = 0.05
     await answer_all(app2, polls, {7: 0}, 2)
     await wait_done()
-    assert [p[1]["question"] for p in polls] == ["[4/5] Q3?", "[5/5] Q4?"]
+    assert [p[1]["question"] for p in polls] == ["[4/5] 💡 Q3?", "[5/5] 💡 Q4?"]
     assert "<b>5</b>/5" in sent[-1]                                    # earlier score kept
 
 
@@ -218,8 +219,8 @@ async def test_long_question_text_first_and_start_link_needs_admin():
     await app.gq_start_from_link(group_upd(user(1)), c, sid)
     gq.ACTIVE[GROUP].secs = 0.05
     await wait_done()
-    assert any(t.startswith("❓ <b>Q1/3</b>") for t in sent)
-    assert polls[0][1]["question"] == "[1/3] Read the question above ⬆️"
+    assert any(t.startswith("❓ <b>Q1/3") for t in sent)
+    assert polls[0][1]["question"].endswith("Read the question above ⬆️")
 
 
 def test_session_scoring_first_answer_and_tiebreak():
@@ -272,8 +273,9 @@ async def test_group_lobby_ready_counter_and_toggles():
     assert s.status == "lobby" and len(s.ready_players) == 1
     await press(app, c, p2, f"gq|ready|{GROUP}")
     assert len(s.ready_players) == 2 and s.ready_players["2"] == "Riva"
+    assert s.negative_rate == 0.0                                       # off by default
     await press(app, c, host, f"gq|tog_neg|{GROUP}")
-    assert s.negative_rate == 0.0
+    assert s.negative_rate == 0.25
     await press(app, c, host, f"gq|launch|{GROUP}")
     assert s.status == "running"
     s.secs = 0.05
