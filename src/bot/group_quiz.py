@@ -68,7 +68,7 @@ class Session:
     answered:  set = field(default_factory=set)
     wake:      asyncio.Event = field(default_factory=asyncio.Event)
     skip:      bool = False
-    negative_rate: float = 0.25            # -0.25 marks per wrong answer
+    negative_rate: float = 0.0             # marks cut per wrong answer (host can turn on −0.25 in the lobby)
     marks_per_q:   float = 1.0             # +1.0 marks per correct answer
     user_history:  Dict[str, List[Dict]] = field(default_factory=dict) # uid → list of answered questions
     ready_players: Dict[str, str] = field(default_factory=dict)        # uid_str → player display name
@@ -98,7 +98,7 @@ class Session:
             thread_id=d.get("thread_id"), set_id=d.get("set_id", ""),
             idx=int(d.get("idx") or 0), status=d.get("status", "running"),
             scores=d.get("scores") or {}, ctrl_msg_id=d.get("ctrl_msg_id"),
-            negative_rate=float(d.get("negative_rate") if d.get("negative_rate") is not None else 0.25),
+            negative_rate=float(d.get("negative_rate") or 0.0),
             marks_per_q=float(d.get("marks_per_q") or 1.0),
             user_history=d.get("user_history") or {},
             ready_players=d.get("ready_players") or {},
@@ -161,6 +161,7 @@ def _kb(s: Session) -> InlineKeyboardMarkup:
                                  [InlineKeyboardButton("⏹ Stop", callback_data=f"gq|stop|{c}", style="danger")]])
 
 
+USE_LOBBY     = True     # "I'm ready" lobby before a group quiz (tests switch it off)
 LOBBY_TIMEOUT = 120      # auto-start lobby after 120s if host hasn't tapped Start Now
 
 
@@ -251,7 +252,7 @@ class GroupQuizMixin:
             return default
 
     async def _gq_save(self, s: Session) -> None:
-        if s.status in ("running", "paused"):
+        if s.status in ("lobby", "running", "paused"):
             await self._gq_db("save_quiz_session", s.to_doc())
         else:
             await self._gq_db("delete_quiz_session", s.chat_id)
@@ -375,11 +376,11 @@ class GroupQuizMixin:
 
     async def _gq_begin(self, context, chat_id: int, thread_id, user, title: str,
                         questions: List[Dict], secs: int, set_id: str = "",
-                        negative_rate: float = 0.25, skip_lobby: Optional[bool] = None) -> Optional[Session]:
+                        negative_rate: float = 0.0, skip_lobby: Optional[bool] = None) -> Optional[Session]:
         if is_active(chat_id):
             return None
         if skip_lobby is None:
-            skip_lobby = (START_DELAY == 0)
+            skip_lobby = not USE_LOBBY
         if self.db and hasattr(self.db, "get_group_open_thread"):
             res_tid = await self._gq_db("get_group_open_thread", chat_id, thread_id, default=thread_id)
             if isinstance(res_tid, int) or res_tid is None:
@@ -408,14 +409,20 @@ class GroupQuizMixin:
         else:
             sent = await self._gq_send(context, s, _lobby_text(s), _lobby_kb(s))
             s.ctrl_msg_id = getattr(sent, "message_id", None)
+            await self._gq_save(s)                       # lobby survives a restart too
             logger.info(f"[GQUIZ] {chat_id} opened lobby '{title}' ({len(questions)} Q, {s.secs}s) by {user.id}")
-            if LOBBY_TIMEOUT > 0:
-                async def _auto_lobby_watchdog():
-                    await asyncio.sleep(LOBBY_TIMEOUT)
-                    if ACTIVE.get(chat_id) is s and s.status == "lobby":
-                        await self._gq_launch_from_lobby(context, s)
-                asyncio.create_task(_auto_lobby_watchdog())
+            self._gq_lobby_watchdog(context, s)
         return s
+
+    def _gq_lobby_watchdog(self, context, s: Session) -> None:
+        if LOBBY_TIMEOUT <= 0:
+            return
+
+        async def _auto():
+            await asyncio.sleep(LOBBY_TIMEOUT)
+            if ACTIVE.get(s.chat_id) is s and s.status == "lobby":
+                await self._gq_launch_from_lobby(context, s)
+        asyncio.create_task(_auto())
 
     async def _gq_launch_from_lobby(self, context, s: Session) -> None:
         if s.status != "lobby":
@@ -998,6 +1005,7 @@ class GroupQuizMixin:
                 await query.answer(f"✅ You are already marked Ready! ({len(s.ready_players)} players in lobby)", show_alert=False)
                 return
             s.ready_players[uid_s] = p_name
+            await self._gq_save(s)
             await query.answer(f"🔥 You're Ready! ({len(s.ready_players)} joined)")
             try:
                 await query.message.edit_text(_lobby_text(s), parse_mode=ParseMode.HTML, reply_markup=_lobby_kb(s))
@@ -1204,6 +1212,14 @@ class GroupQuizMixin:
             if s.status == "paused":
                 s.paused_at = time.monotonic()
             ACTIVE[s.chat_id] = s
+            if s.status == "lobby":                          # reopen the lobby with fresh buttons
+                sent = await self._gq_send(context, s, _lobby_text(s, "♻️ <b>I restarted — the lobby is open again.</b>"),
+                                           _lobby_kb(s))
+                s.ctrl_msg_id = getattr(sent, "message_id", None) or s.ctrl_msg_id
+                await self._gq_save(s)
+                self._gq_lobby_watchdog(context, s)
+                n += 1
+                continue
             await self._gq_send(context, s, f"♻️ <b>I restarted — continuing “{html.escape(s.title)}” "
                                             f"from Q{s.idx + 1}.</b>")
             asyncio.create_task(self._gq_run(s, context))

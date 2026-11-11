@@ -358,7 +358,7 @@ class DatabaseManager:
         self.quiz_sessions_col.delete_one({"chat_id": chat_id})
 
     def list_quiz_sessions(self) -> List[Dict]:
-        return list(self.quiz_sessions_col.find({"status": {"$in": ["running", "paused"]}}, {"_id": 0}))
+        return list(self.quiz_sessions_col.find({"status": {"$in": ["lobby", "running", "paused"]}}, {"_id": 0}))
 
     # ── Open battle challenges (setup/pending) ──
     def save_battle(self, doc: Dict) -> None:
