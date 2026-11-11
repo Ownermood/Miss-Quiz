@@ -426,12 +426,13 @@ class GroupQuizMixin:
         asyncio.create_task(_auto())
 
     async def _gq_pin(self, context, s: Session) -> None:
-        """Pin the lobby (= control panel) quietly. Needs 'Pin messages' right;
+        """Pin the lobby (= control panel) WITH a notification, so every member
+        hears about the quiz once. Needs 'Pin messages' right;
         the 'pinned a message' notice is deleted by gq_on_pin_notice."""
         if not s.ctrl_msg_id:
             return
         try:
-            await context.bot.pin_chat_message(s.chat_id, s.ctrl_msg_id, disable_notification=True)
+            await context.bot.pin_chat_message(s.chat_id, s.ctrl_msg_id, disable_notification=False)
             s.pinned = True
         except Exception as e:
             logger.debug(f"[GQUIZ] {s.chat_id} pin skipped: {e}")

@@ -316,6 +316,7 @@ async def test_lobby_pinned_notice_deleted_settings_page_and_unpin_on_cancel():
     host = user(1, "Host")
     s = await app._gq_begin(c, GROUP, None, host, "Mock", questions(3), 10, "", skip_lobby=False)
     c.bot.pin_chat_message.assert_awaited_once()
+    assert c.bot.pin_chat_message.await_args.kwargs["disable_notification"] is False   # everyone notified
     assert s.pinned and app.real.list_quiz_sessions()[0]["pinned"] is True
     kb = gq._lobby_kb(s)
     assert [[b.text for b in r] for r in kb.inline_keyboard] == [
