@@ -435,7 +435,7 @@ class MyQuizMixin:
             q_cnt = s.get("count") or 0
             item_rows.append([_btn(f"📝 {s.get('title', 'Quiz')[:26]} · {q_cnt}Q", f"mq_open:{s['id']}", None)])
         nav_rows = page_rows(pages, page, lambda p: f"mq_list:{p}")
-        foot = [_btn("➕ Create New", "mq_new", "success"), _btn("🏠 Home", "nav_home", "primary")]
+        foot = [_btn("🏠 Home", "nav_home", "primary"), _btn("➕ Create New", "mq_new", "success")]   # main action on the right
         return body, InlineKeyboardMarkup(item_rows + nav_rows + [foot])
 
     async def _mq_page(self, owner: int, page: int = 1):
