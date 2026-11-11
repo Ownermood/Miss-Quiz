@@ -643,9 +643,10 @@ def _u_strip_symbols(line: str) -> str:
 
 
 _U_PDF_NOISE_RE = re.compile(
-    r"(?:https?://\S+|www\.\S+|\b[a-zA-Z0-9\-]{3,}\.(?:com|in|org|edu|net|co\.in|ac\.in|gov\.in|info|io)\b(?:/\S*)?"
+    # only clear noise: links, "Branch-9876543210" contacts, page markers. A bare
+    # domain or number inside a question/option is real content and stays.
+    r"(?:https?://\S+|www\.\S+"
     r"|\b[A-Za-z]{2,25}\s*[-:]+\s*(?:\+?91[\s\-]?)?(?:\d{10,12}|\d{3,5}\-\d{5,8})\b"
-    r"|(?:(?<=\s)|^)(?:\+?91[\s\-]?)?[6-9]\d{9}\b"
     r"|\bPage\s*(?:No\.?\s*)?[\-:]?\s*\d{1,4}(?:\s*(?:of|/)\s*\d{1,4})?\b)",
     re.IGNORECASE
 )

@@ -124,8 +124,9 @@ def parse_questions(text: str, items: Optional[List[Dict]] = None,
     out = []
     for it in raw:
         raw_q = " ".join(str(it.get("question") or "").split())
-        q = clean_text(raw_q, custom_words, is_option=False)
-        opts = [clean_text(str(o).strip(), custom_words, is_option=True) for o in it.get("options") or []]
+        q = clean_text(raw_q, custom_words, is_option=False) or raw_q
+        opts = [clean_text(str(o).strip(), custom_words, is_option=True) or str(o).strip()
+                for o in it.get("options") or []]       # never let cleaning empty a real option
         c = it.get("correct_answer")
         where = f"“{q[:30]}”"
         if len(q) < 3:
