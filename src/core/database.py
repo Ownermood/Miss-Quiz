@@ -334,6 +334,10 @@ class DatabaseManager:
             inc_fields["total_q_correct"] = int(correct)
         self.quiz_sets_col.update_one({"id": str(sid)}, {"$inc": inc_fields})
 
+    def set_quiz_progress(self, sid: str, chat_id: int, next_index: int) -> None:
+        """Big quiz played in parts: where this chat continues next time."""
+        self.quiz_sets_col.update_one({"id": str(sid)}, {"$set": {f"progress.{int(chat_id)}": int(next_index)}})
+
     def get_quiz_set(self, sid: str) -> Optional[Dict]:
         return self.quiz_sets_col.find_one({"id": str(sid)}, {"_id": 0})
 

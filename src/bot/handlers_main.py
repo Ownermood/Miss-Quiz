@@ -481,6 +481,10 @@ class TelegramQuizBot(
             filters.ChatType.PRIVATE & ~filters.COMMAND,
             self.handle_admin_input), group=-1)
 
+        # Delete the "bot pinned a message" notice (group quiz lobby is pinned)
+        app.add_handler(MessageHandler(
+            filters.StatusUpdate.PINNED_MESSAGE & filters.ChatType.GROUPS, self.gq_on_pin_notice), group=-5)
+
         # Global error handler — catches any unhandled exception in any handler
         app.add_error_handler(self._global_error_handler)
 

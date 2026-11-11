@@ -30,7 +30,7 @@ class App(GroupQuizMixin, BattleMixin):
             real.quiz_sets_col = client.db.quiz_sets
             real.quiz_sessions_col = client.db.quiz_sessions
         for fn in ("create_quiz_set", "get_quiz_set", "list_quiz_sets", "save_quiz_session",
-                   "delete_quiz_session", "list_quiz_sessions"):
+                   "delete_quiz_session", "list_quiz_sessions", "set_quiz_progress"):
             setattr(self.db, fn, getattr(real, fn))
         self.real = real
         self.replies = []
@@ -76,7 +76,7 @@ def group_upd(u, chat_id=GROUP):
 
 
 async def press(app, c, u, data, chat_id=GROUP):
-    msg = SimpleNamespace(chat=SimpleNamespace(id=chat_id), delete=AsyncMock(),
+    msg = SimpleNamespace(chat=SimpleNamespace(id=chat_id), delete=AsyncMock(), edit_text=AsyncMock(),
                           message_thread_id=None, is_topic_message=False)
     q = SimpleNamespace(data=data, answer=AsyncMock(), message=msg)
     await app.handle_group_quiz_callback(SimpleNamespace(callback_query=q, effective_user=u), c)
@@ -280,3 +280,59 @@ async def test_group_lobby_ready_counter_and_toggles():
     assert s.status == "running"
     s.secs = 0.05
     await wait_done()
+
+
+async def test_big_quiz_plays_in_parts_and_continues_next_time():
+    app = App()
+    c, polls, sent = ctx(admins=(1,))
+    sid = app.real.create_quiz_set(1, "Mega Bank", questions(300), 20)
+    admin = user(1, "Admin")
+    q = await press(app, c, admin, f"gq|set|1|{sid}")                     # picker → part menu
+    msg = q.message
+    text = msg.edit_text.await_args.args[0]
+    kb = msg.edit_text.await_args.kwargs["reply_markup"]
+    labels = [b.text for r in kb.inline_keyboard for b in r]
+    assert "Total › 300" in text and "▶️ 200 Q · Q1–Q200" in labels and not gq.is_active(GROUP)
+    await press(app, c, admin, f"gq|part|1|{sid}|200|0")
+    s = gq.ACTIVE[GROUP]
+    assert len(s.questions) == 200 and s.part_start == 0 and "Q1–Q200" in s.title
+    s.secs = 0.01
+    await answer_all(app, polls, {7: 0}, 200)
+    await wait_done()
+    assert app.real.get_quiz_set(sid)["progress"][str(GROUP)] == 200          # saved for next time
+    text, kb = await app._gq_part_view(1, sid, app.real.get_quiz_set(sid), GROUP)
+    labels = [b.text for r in kb.inline_keyboard for b in r]
+    assert "from Q201" in text and "▶️ 100 Q · Q201–Q300" in labels and "🔁 Start again from Q1" in labels
+    q = await press(app, c, user(2), f"gq|part|1|{sid}|100|200")           # someone else's menu
+    assert q.answer.await_args.kwargs.get("show_alert") is True
+
+
+async def test_lobby_pinned_notice_deleted_settings_page_and_unpin_on_cancel():
+    app = App()
+    c, polls, sent = ctx(admins=(1,))
+    c.bot.pin_chat_message = AsyncMock()
+    c.bot.unpin_chat_message = AsyncMock()
+    c.bot.id = 999
+    host = user(1, "Host")
+    s = await app._gq_begin(c, GROUP, None, host, "Mock", questions(3), 10, "", skip_lobby=False)
+    c.bot.pin_chat_message.assert_awaited_once()
+    assert s.pinned and app.real.list_quiz_sessions()[0]["pinned"] is True
+    kb = gq._lobby_kb(s)
+    assert [[b.text for b in r] for r in kb.inline_keyboard] == [
+        ["🙋 I'm Ready (1)"], ["▶️ Start Now", "⏰ Start in 30s"], ["⚙️ Settings", "❌ Cancel"]]
+    await press(app, c, host, f"gq|lset|{GROUP}")
+    assert s.lobby_page == "settings"
+    await press(app, c, host, f"gq|tog_neg|{GROUP}")
+    assert s.negative_rate == 0.25 and "✅ Negative −0.25" in str(gq._lobby_kb(s).inline_keyboard)
+    await press(app, c, host, f"gq|lback|{GROUP}")
+    assert s.lobby_page == "main"
+    # the "pinned a message" notice from the bot is deleted, a user's is not
+    notice = SimpleNamespace(from_user=SimpleNamespace(id=999), delete=AsyncMock())
+    await app.gq_on_pin_notice(SimpleNamespace(effective_message=notice), c)
+    notice.delete.assert_awaited_once()
+    other = SimpleNamespace(from_user=SimpleNamespace(id=5), delete=AsyncMock())
+    await app.gq_on_pin_notice(SimpleNamespace(effective_message=other), c)
+    other.delete.assert_not_awaited()
+    await press(app, c, host, f"gq|cancel_lobby|{GROUP}")
+    c.bot.unpin_chat_message.assert_awaited_once()
+    assert not gq.is_active(GROUP)
