@@ -350,21 +350,26 @@ class MyQuizMixin:
             body = "✏️ <b>CREATE NEW QUIZ</b>\n"
 
         if d.get("note"):
-            body += f"💡 <i>{html.escape(d['note'])}</i>\n\n"
+            body += f"💡 <i>{html.escape(d['note'])}</i>\n"
+        if not q_count:
+            body += ("<blockquote>1️⃣ Send your questions here — a file (PDF, DOCX, TXT, CSV, XLSX…), "
+                     "pasted text, or forwarded quiz polls\n"
+                     "2️⃣ I show how many questions I found\n"
+                     "3️⃣ Tap Save — done!</blockquote>\n<i>Send them now 👇</i>")
+        elif q_count < MIN_Q:
+            body += f"<i>Add at least {MIN_Q} questions, then tap Save.</i>"
         else:
-            body += HELP + "\n\n"
+            body += "<i>Send more, or tap Save.</i>"
 
+        # One clear action at a time: Save when there is something to save, else only Cancel.
         rows: List[List[InlineKeyboardButton]] = []
         if q_count >= MIN_Q:
             if d.get("fname"):
-                rows.append([_btn(f"⚡ Quick Save “{d['fname'][:22]}” ({q_count} Qs)", "mq_qsave", "success")])
-                rows.append([_btn("✏️ Custom Name & Save", "mq_done", "primary")])
+                rows.append([_btn(f"✅ Save as “{d['fname'][:22]}” ({q_count} Qs)", "mq_qsave", "success")])
+                rows.append([_btn("✏️ Save with another name", "mq_done", "primary")])
             else:
                 rows.append([_btn(f"✅ Save Quiz ({q_count} Qs)", "mq_done", "success")])
-            rows.append([_btn("📚 My Quizzes", "mq_list", None), _btn("❌ Cancel", "mq_cancel", "danger")])
-        else:
-            rows.append([_btn("📚 My Quizzes", "mq_list", None), _btn("❌ Cancel", "mq_cancel", "danger")])
-            rows.append([_btn("🏠 Home", "nav_home", "primary")])
+        rows.append([_btn("❌ Cancel", "mq_cancel", "danger")])
         return body, InlineKeyboardMarkup(rows)
 
     @staticmethod

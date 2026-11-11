@@ -867,3 +867,14 @@ async def test_photo_question_via_ocr_and_card_buttons_side_by_side(monkeypatch)
     assert ctx.bot.get_file.await_args.args[0] == "big"                # largest size used
     _, kb = app._mq_card_view({"id": "x1", "title": "T", "count": 3, "secs": 20})
     assert [b.text for b in kb.inline_keyboard[-1]] == ["⬅️ My Quizzes", "🏠 Home"]
+
+
+def test_create_quiz_panel_one_clear_action():
+    from src.bot.my_quiz import MyQuizMixin, MIN_Q
+    t, kb = MyQuizMixin._mq_collect_view({"qs": [], "problems": []})
+    assert [[b.text for b in r] for r in kb.inline_keyboard] == [["❌ Cancel"]]   # no My Quizzes/Home
+    assert "1️⃣" in t and "3️⃣ Tap Save" in t
+    qs = [{"question": f"Q{i}", "options": ["a", "b"], "correct_answer": 0} for i in range(max(MIN_Q, 3))]
+    t, kb = MyQuizMixin._mq_collect_view({"qs": qs, "problems": []})
+    rows = [[(b.text, b.style) for b in r] for r in kb.inline_keyboard]
+    assert rows[0][0][1] == "success" and rows[0][0][0].startswith("✅ Save Quiz") and rows[-1] == [("❌ Cancel", "danger")]
