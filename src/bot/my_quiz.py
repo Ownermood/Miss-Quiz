@@ -760,14 +760,14 @@ class MyQuizMixin:
         if custom:
             body += f"✏️ <b>Type how many questions to add</b> (1–{total}):\n<i>Example: 25</i>"
             rows = [[_btn(f"📥 Full File · All {total} Qs", "mq_pick:0", "success")],
-                    [_btn("⬅️ Back", "mq_pickb", None), _btn("❌ Discard File", "mq_pickx", "danger")]]
+                    [_btn("❌ Discard File", "mq_pickx", "danger"), _btn("⬅️ Back", "mq_pickb", None)]]
             return body, InlineKeyboardMarkup(rows)
         body += "<i>How many questions do you want to add? (taken in file order)</i>"
         opts = [n for n in (10, 20, 30, 50, 100) if n < total]
-        btns = [_btn(f"{n} Qs", f"mq_pick:{n}", "primary") for n in opts]
+        btns = [_btn(f"{n} Qs", f"mq_pick:{n}", None) for n in opts]          # plain: just choices
         rows = [btns[i:i + 3] for i in range(0, len(btns), 3)]
         rows.append([_btn(f"📥 Full File · All {total} Qs", "mq_pick:0", "success")])
-        rows.append([_btn("✏️ Custom Number", "mq_pickc", None), _btn("❌ Discard File", "mq_pickx", "danger")])
+        rows.append([_btn("❌ Discard File", "mq_pickx", "danger"), _btn("✏️ Custom Number", "mq_pickc", None)])
         return body, InlineKeyboardMarkup(rows)
 
     @staticmethod
