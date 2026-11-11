@@ -601,7 +601,7 @@ def _quiz_app():
     real.quiz_sets_col = mongomock.MongoClient().db.quiz_sets
     real.battles_col = mongomock.MongoClient().db.battles
     for name in ("create_quiz_set", "get_quiz_set", "list_quiz_sets", "count_quiz_sets",
-                 "delete_quiz_set", "save_battle", "get_battle", "delete_battle", "open_battles_of"):
+                 "delete_quiz_set", "update_quiz_set", "save_battle", "get_battle", "delete_battle", "open_battles_of"):
         setattr(app.db, name, getattr(real, name))
     return app, real
 
@@ -665,12 +665,22 @@ async def test_create_own_quiz_text_poll_dedupe_name_and_save():
     assert len(d["qs"]) == 4
 
     q = await press_mq(app, ctx, a, "mq_done")
-    assert d["stage"] == "name" and "NAME YOUR QUIZ" in q.edit_message_text.await_args.args[0]
-    with pytest.raises(ApplicationHandlerStop):
+    assert d["stage"] == "name" and "STEP 1/4" in q.edit_message_text.await_args.args[0]
+    with pytest.raises(ApplicationHandlerStop):                         # typed name → step 2
         await app.handle_myquiz_input(dm_update(a, text="  Polity   Set 1 "), ctx)
+    assert d["title"] == "Polity Set 1" and "STEP 2/4" in ctx.bot.send_message.await_args.args[1]
+    q = await press_mq(app, ctx, a, "mq_wt:30")                         # timer
+    assert "STEP 3/4" in q.edit_message_text.await_args.args[0]
+    q = await press_mq(app, ctx, a, "mq_wb:neg")                        # back to timer
+    assert "STEP 2/4" in q.edit_message_text.await_args.args[0]
+    await press_mq(app, ctx, a, "mq_wt:30")
+    await press_mq(app, ctx, a, "mq_wn:0.25")                           # negative
+    await press_mq(app, ctx, a, "mq_ws:1")                              # shuffle → saved
     assert "mq_draft" not in ctx.user_data
     sets = real.list_quiz_sets(1)
     assert len(sets) == 1 and sets[0]["title"] == "Polity Set 1" and sets[0]["count"] == 4
+    full = real.get_quiz_set(sets[0]["id"])
+    assert (full["secs"], full["negative_rate"], full["shuffle"]) == (30, 0.25, True)
     assert "Saved!" in ctx.bot.send_message.await_args.args[1]
     assert app.quiz_manager.questions[0]["question"] == "Q0?"           # bot pool untouched
 
@@ -809,7 +819,8 @@ async def test_create_own_quiz_from_file_and_too_big_file():
     d = ctx.user_data["mq_draft"]
     assert len(d["qs"]) == 3 and d["fname"] == "Polity Set"
     await press_mq(app, ctx, a, "mq_done")
-    await press_mq(app, ctx, a, "mq_name")                              # use the file name
+    for step in ("mq_name", "mq_wt:20", "mq_wn:0", "mq_ws:0"):           # suggested name + defaults
+        await press_mq(app, ctx, a, step)
     assert real.list_quiz_sets(1)[0]["title"] == "Polity Set"
 
 
@@ -873,8 +884,8 @@ def test_create_quiz_panel_one_clear_action():
     from src.bot.my_quiz import MyQuizMixin, MIN_Q
     t, kb = MyQuizMixin._mq_collect_view({"qs": [], "problems": []})
     assert [[b.text for b in r] for r in kb.inline_keyboard] == [["❌ Cancel"]]   # no My Quizzes/Home
-    assert "1️⃣" in t and "3️⃣ Tap Save" in t
+    assert "1️⃣" in t and "3️⃣ Tap Next" in t
     qs = [{"question": f"Q{i}", "options": ["a", "b"], "correct_answer": 0} for i in range(max(MIN_Q, 3))]
     t, kb = MyQuizMixin._mq_collect_view({"qs": qs, "problems": []})
     rows = [[(b.text, b.style) for b in r] for r in kb.inline_keyboard]
-    assert rows[0][0][1] == "success" and rows[0][0][0].startswith("✅ Save Quiz") and rows[-1] == [("❌ Cancel", "danger")]
+    assert rows[0][0][1] == "success" and rows[0][0][0].startswith("➡️ Next: Set up quiz") and rows[-1] == [("❌ Cancel", "danger")]

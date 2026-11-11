@@ -355,22 +355,58 @@ class MyQuizMixin:
             body += ("<blockquote>1️⃣ Send your questions here — a file (PDF, DOCX, TXT, CSV, XLSX…), "
                      "pasted text, or forwarded quiz polls\n"
                      "2️⃣ I show how many questions I found\n"
-                     "3️⃣ Tap Save — done!</blockquote>\n<i>Send them now 👇</i>")
+                     "3️⃣ Tap Next — name, timer, marking — done!</blockquote>\n<i>Send them now 👇</i>")
         elif q_count < MIN_Q:
-            body += f"<i>Add at least {MIN_Q} questions, then tap Save.</i>"
+            body += f"<i>Add at least {MIN_Q} questions, then tap Next.</i>"
         else:
-            body += "<i>Send more, or tap Save.</i>"
+            body += "<i>Send more, or tap Next.</i>"
 
         # One clear action at a time: Save when there is something to save, else only Cancel.
         rows: List[List[InlineKeyboardButton]] = []
         if q_count >= MIN_Q:
-            if d.get("fname"):
-                rows.append([_btn(f"✅ Save as “{d['fname'][:22]}” ({q_count} Qs)", "mq_qsave", "success")])
-                rows.append([_btn("✏️ Save with another name", "mq_done", "primary")])
-            else:
-                rows.append([_btn(f"✅ Save Quiz ({q_count} Qs)", "mq_done", "success")])
+            rows.append([_btn(f"➡️ Next: Set up quiz ({q_count} Qs)", "mq_done", "success")])
         rows.append([_btn("❌ Cancel", "mq_cancel", "danger")])
         return body, InlineKeyboardMarkup(rows)
+
+    # ── setup steps after questions are ready (one message, edited) ──────
+
+    WZ_TIMERS = (10, 15, 20, 30, 45, 60)
+    WZ_NEG = (0.25, 0.33, 0.5)
+
+    @staticmethod
+    def _mq_wizard_view(d: Dict, step: str) -> Tuple[str, InlineKeyboardMarkup]:
+        n = len(d["qs"])
+        title = d.get("title") or d.get("default") or "My Quiz"
+        secs, neg = int(d.get("secs") or 20), float(d.get("neg") or 0)
+        summary = (f"<blockquote>✅ Questions › {n}\n🏷 Name › {html.escape(title)}"
+                   + (f"\n⏱ Timer › {secs}s" if step in ("neg", "shuf") else "")
+                   + (f"\n⚖️ Negative › {'−' + format(neg, 'g') if neg else 'OFF'}" if step == "shuf" else "")
+                   + "</blockquote>\n")
+        back_cancel = [_btn("⬅️ Back", f"mq_wb:{step}", "danger"), _btn("❌ Cancel", "mq_cancel", "danger")]
+        if step == "name":
+            text = (f"🏷 <b>STEP 1/4 · NAME</b>\n<blockquote>✅ Questions › {n}</blockquote>\n"
+                    f"Suggested › <b>{html.escape(title)}</b>\n<i>Tap to use it, or type a new name in chat.</i>")
+            rows = [[_btn(f"✅ Use “{title[:28]}”", "mq_name", "success")],
+                    [_btn("⬅️ Add more", "mq_back", "danger"), _btn("❌ Cancel", "mq_cancel", "danger")]]
+        elif step == "timer":
+            text = ("⏱ <b>STEP 2/4 · TIMER</b>\n" + summary +
+                    "<i>Time for each question (20s suits most quizzes).</i>")
+            opts = [_btn(("✅ " if t == secs else "") + (f"{t}s" if t < 60 else "1m"), f"mq_wt:{t}", None)
+                    for t in MyQuizMixin.WZ_TIMERS]
+            rows = [opts[:3], opts[3:], back_cancel]
+        elif step == "neg":
+            text = ("⚖️ <b>STEP 3/4 · NEGATIVE MARKING</b>\n" + summary +
+                    "<i>Marks cut for each wrong answer. Most quizzes use none.</i>")
+            rows = [[_btn("✅ No negative" if not neg else "No negative", "mq_wn:0", "success")],
+                    [_btn(("✅ " if neg == v else "") + f"−{v:g}", f"mq_wn:{v}", None) for v in MyQuizMixin.WZ_NEG],
+                    back_cancel]
+        else:
+            text = ("🔀 <b>STEP 4/4 · ORDER</b>\n" + summary +
+                    "<i>Shuffle = every game asks the questions in a new order (stops copying).</i>")
+            rows = [[_btn("🔀 Shuffle questions & Save", "mq_ws:1", "success")],
+                    [_btn("📋 Keep file order & Save", "mq_ws:0", "primary")],
+                    back_cancel]
+        return text, InlineKeyboardMarkup(rows)
 
     @staticmethod
     def _mq_list_view(sets: List[Dict], page: int, pages: int, total: int = 0) -> Tuple[str, InlineKeyboardMarkup]:
@@ -414,7 +450,7 @@ class MyQuizMixin:
         secs = int(qs.get("secs") or 20)
         total_time = _fmt_total_time(q_count * secs)
         shuffle_str = "ON" if qs.get("shuffle") else "OFF"
-        neg_val = float(qs.get("negative_rate") if qs.get("negative_rate") is not None else 0.25)
+        neg_val = float(qs.get("negative_rate") or 0)
         neg_str = f"-{neg_val} marks" if neg_val > 0 else "No Negative"
         attempts = int(qs.get("plays") or 0)
         files_cnt = len(qs.get("source_files") or [])
@@ -618,7 +654,9 @@ class MyQuizMixin:
         if d["stage"] == "name":
             plain = (msg.text or "").strip()
             if plain and "\n" not in plain and not msg.document and not msg.poll and not msg.photo:
-                await self._mq_save(context, user, d, " ".join(plain.split())[:60])
+                d["title"] = " ".join(plain.split())[:60]
+                d["stage"] = "wizard"
+                await self._mq_show(context, d, *self._mq_wizard_view(d, "timer"))
                 return
             d["stage"] = "collect"
 
@@ -968,11 +1006,15 @@ class MyQuizMixin:
         qs_list = list(d["qs"])
         files_list = list(d.get("files") or [])
         context.user_data.pop("mq_draft", None)
-        sid = await self._mq_db("create_quiz_set", user.id, title[:60], qs_list, 20)
+        secs, neg, shuf = int(d.get("secs") or 20), float(d.get("neg") or 0), bool(d.get("shuffle", False))
+        sid = await self._mq_db("create_quiz_set", user.id, title[:60], qs_list, secs)
         if not isinstance(sid, str) or not sid:
             sid = secrets.token_hex(4)
-        if files_list and self.db and hasattr(self.db, "update_quiz_set"):
-            await self._mq_db("update_quiz_set", sid, user.id, {"source_files": files_list})
+        extra = {"negative_rate": neg, "shuffle": shuf}
+        if files_list:
+            extra["source_files"] = files_list
+        if self.db and hasattr(self.db, "update_quiz_set"):
+            await self._mq_db("update_quiz_set", sid, user.id, extra)
         now_iso = datetime.datetime.utcnow().isoformat()
         doc = {
             "id": sid,
@@ -980,9 +1022,10 @@ class MyQuizMixin:
             "title": title[:60],
             "count": len(qs_list),
             "questions": qs_list,
-            "secs": 20,
+            "secs": secs,
             "plays": 0,
-            "shuffle": False,
+            "shuffle": shuf,
+            "negative_rate": neg,
             "source_files": files_list,
             "created_at": now_iso,
         }
@@ -1079,7 +1122,7 @@ class MyQuizMixin:
             await self._bt_edit(query, *self._mq_collect_view(d))
             return
 
-        if action in ("mq_done", "mq_qsave", "mq_name", "mq_cancel", "mq_back"):
+        if action in ("mq_done", "mq_qsave", "mq_name", "mq_cancel", "mq_back", "mq_wt", "mq_wn", "mq_ws", "mq_wb"):
             if not d:
                 await query.answer("This quiz draft has ended.", show_alert=True)
                 return
@@ -1115,20 +1158,44 @@ class MyQuizMixin:
                 n = await self._mq_db("count_quiz_sets", user.id, default=0)
                 d["stage"] = "name"
                 d["default"] = d.get("fname") or f"My Quiz {(n if isinstance(n, int) else 0) + 1}"
+                d.setdefault("secs", 20)
+                d.setdefault("neg", 0.0)
                 d["msg"] = query.message.message_id
                 await query.answer()
-                await self._bt_edit(
-                    query,
-                    f"🏷  <b>NAME YOUR QUIZ</b>\n<blockquote><b>✅ {len(d['qs'])} questions ready</b></blockquote>\n"
-                    f"<i>Type a name in chat, or tap the suggested title below:</i>",
-                    InlineKeyboardMarkup([[_btn(f"✅ Use “{d['default'][:28]}”", "mq_name", "success")],
-                                          [_btn("⬅️ Add More", "mq_back", "danger"),
-                                           _btn("❌ Cancel", "mq_cancel", "danger")]]))
+                await self._bt_edit(query, *self._mq_wizard_view(d, "name"))
+                return
+            d["msg"] = query.message.message_id
+            if action == "mq_name":                      # suggested name → timer
+                d["title"] = d.get("title") or d.get("default") or "My Quiz"
+                d["stage"] = "wizard"
+                await query.answer()
+                await self._bt_edit(query, *self._mq_wizard_view(d, "timer"))
+                return
+            if action == "mq_wt":
+                d["secs"] = max(5, min(int(arg) if arg.isdigit() else 20, 600))
+                await query.answer()
+                await self._bt_edit(query, *self._mq_wizard_view(d, "neg"))
+                return
+            if action == "mq_wn":
+                try:
+                    d["neg"] = max(0.0, min(float(arg), 1.0))
+                except ValueError:
+                    d["neg"] = 0.0
+                await query.answer()
+                await self._bt_edit(query, *self._mq_wizard_view(d, "shuf"))
+                return
+            if action == "mq_ws":
+                d["shuffle"] = arg == "1"
+                await query.answer("Saving quiz… ✅")
+                await self._mq_save(context, user, d, d.get("title") or d.get("default") or "My Quiz")
+                return
+            if action == "mq_wb":                        # back one step
+                prev = {"timer": "name", "neg": "timer", "shuf": "neg"}.get(arg, "name")
+                d["stage"] = "name" if prev == "name" else "wizard"
+                await query.answer()
+                await self._bt_edit(query, *self._mq_wizard_view(d, prev))
                 return
             await query.answer()
-            if d["stage"] == "name":
-                d["msg"] = query.message.message_id
-                await self._mq_save(context, user, d, d.get("default") or "My Quiz")
             return
 
         if action == "mq_list":
