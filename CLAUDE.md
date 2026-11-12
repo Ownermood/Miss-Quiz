@@ -37,8 +37,9 @@ src/bot/tracking.py         User/group tracking
 src/bot/ui.py               UI strings, LINE/THIN, mention helpers
 src/utils/scheduler.py      AutoQuizScheduler. Har group ko auto quiz bhejta hai
 src/web/app.py              Flask: /health, /admin, /webhook, /api/*
+src/web/miniapp.py          Telegram Mini App (/app + /app/api/quiz|check|submit): quiz_sets ko Practice/Exam mein khelo. Har call pe initData HMAC verify (24h, fail-closed); answer pehle kabhi nahi jaata; submit pe plays +1 (20s mein ek baar). Quiz card pe 📱 Open in App sirf DM + `MINI_APP_URL` (https) set ho to. Page: templates/miniapp.html (Telegram theme rang, sab text escape)
 templates/admin.html, static/js/admin.js   Web admin panel
-tests/                      ~310 tests (pytest, mongomock): web security, scheduler, battle, admin panel, parser, files, ...
+tests/                      ~320 tests (pytest, mongomock): web security, scheduler, battle, admin panel, parser, files, ...
 ```
 
 **Battle:** `/battle` (group: open ya reply-target; DM: invite link `start=bt_<id>`). Main card: 📝 Create Own Quiz (green; group mein DM link) · 📚 My Quizzes | 🤖 Bot Quiz · ⚙️ Customize · Cancel. Bot Quiz = Classic 10Q·20s / Quick 5Q·15s / Marathon 20Q·30s / Last (users.battle_pref), 1 tap. Customize = timer 10s 15s 20s / 25s 30s 1m + 🎯 Questions (bina rang ke option buttons, tap ya type) + Back/Cancel + Create Challenge. My Quizzes = apne quiz (`quiz_sets`) se 1 tap challenge; group mein sirf group admin (getChatMember). Challenge card pe ✏️ Change (accept se pehle). +1 sahi, tie → kam time. Battle answers regular stats mein nahi jaate. `users` pe `$inc`: `battle_wins`, `battle_losses`, `battle_draws`, `battles_played`. DM mein har poll ka owner hai (forwarded poll se cheating band). Khule challenge (setup/pending) `battles` collection mein save hote hain (TTL 24h, `_bt_save`/`_bt_get`), to update/restart ke baad bhi buttons aur invite link chalte hain; sirf chalti (running) battle restart pe khatam. Purana button dabao to "This battle has ended" + ⚔️ New Battle. DM invite: Send to a friend = inline mode (`handle_battle_inline`, query `bt_<id>`, sirf challenger; bold + premium card + Accept url `start=bt_<id>_go` jo seedha battle shuru karta hai; premium reject ho to plain). Inline mode band ho (@BotFather /setinline) to share-URL fallback (plain text). + Copy link; friend ko Accept/Decline card, accept pe challenger ka card edit, decline pe challenger ko msg.
@@ -68,7 +69,7 @@ python -m pytest -q -o addopts=""                     # bina coverage ke (fast)
 MODE=polling python main.py                           # local run (TELEGRAM_TOKEN, OWNER_ID, MONGODB_URL chahiye)
 ```
 
-Env vars: `.env.example` dekho. `PREMIUM_EMOJI=1` sirf tab jab bot owner ke paas Telegram Premium ho (warna normal emoji). Extra: `ADMIN_API_KEY`, `WEBHOOK_SECRET_TOKEN`, `WEBHOOK_URL`/`RENDER_URL`, `WIFU_ID`.
+Env vars: `.env.example` dekho. `PREMIUM_EMOJI=1` sirf tab jab bot owner ke paas Telegram Premium ho (warna normal emoji). Extra: `ADMIN_API_KEY`, `WEBHOOK_SECRET_TOKEN`, `MINI_APP_URL` (Mini App ka public https base), `WEBHOOK_URL`/`RENDER_URL`, `WIFU_ID`.
 
 ## 4. Kaam karne ke rules (sakht)
 

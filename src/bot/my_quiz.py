@@ -12,13 +12,14 @@ import datetime
 import html
 import io
 import logging
+import os
 import random
 import secrets
 import time
 import urllib.parse
 from typing import Dict, List, Optional, Tuple
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputFile, Poll, Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputFile, Poll, Update, WebAppInfo
 from telegram.constants import ParseMode
 from telegram.ext import ApplicationHandlerStop, ContextTypes
 
@@ -80,6 +81,11 @@ EXAMPLE = ("<blockquote>1. Capital of India?\nA) Mumbai\nB) Delhi\nC) Pune\nAnsw
 
 def _btn(text: str, data: str, style: Optional[str] = None) -> InlineKeyboardButton:
     return InlineKeyboardButton(text, callback_data=data, style=style)
+
+
+def _is_private(update) -> bool:
+    chat = getattr(update, "effective_chat", None)
+    return getattr(chat, "type", "") == "private"
 
 
 def _fmt_total_time(total_secs: int) -> str:
@@ -443,7 +449,8 @@ class MyQuizMixin:
         return await load_page(call("list_quiz_sets"), call("count_quiz_sets"), owner, page)
 
     @staticmethod
-    def _mq_card_view(qs: Dict, saved: bool = False, bot_username: str = "", is_owner: bool = True):
+    def _mq_card_view(qs: Dict, saved: bool = False, bot_username: str = "", is_owner: bool = True,
+                      private: bool = False):
         sid = str(qs.get("id", ""))
         title = html.escape(str(qs.get("title", "Quiz")))
         q_count = int(qs.get("count") or len(qs.get("questions") or []))
@@ -482,6 +489,12 @@ class MyQuizMixin:
             ])
         else:
             rows.append([_btn("▶️ Play Solo (Quiz)", f"mq_prac:{sid}", "success")])
+
+        # Mini App player (web_app buttons only work in private chats; off unless MINI_APP_URL is set)
+        app_base = os.environ.get("MINI_APP_URL", "").strip().rstrip("/")
+        if private and app_base.startswith("https://"):
+            rows.append([InlineKeyboardButton(
+                "📱 Open in App", web_app=WebAppInfo(url=f"{app_base}/app?sid={urllib.parse.quote(sid)}"))])
 
         # Row 2: 1v1 Battle & Interactive Flashcards (Clean Dark Glass)
         rows.append([
@@ -541,7 +554,8 @@ class MyQuizMixin:
             await self._reply(update, "❌ <b>This quiz was not found or has been deleted by its creator.</b>")
             return
         is_owner = bool(user and qs.get("owner") == user.id)
-        text, kb = self._mq_card_view(qs, bot_username=context.bot.username, is_owner=is_owner)
+        text, kb = self._mq_card_view(qs, bot_username=context.bot.username, is_owner=is_owner,
+                                      private=_is_private(update))
         await self._reply(update, text, reply_markup=kb)
 
     async def mq_open_list(self, update: Update, context, query=None, page: int = 1):
@@ -1031,7 +1045,8 @@ class MyQuizMixin:
             "created_at": now_iso,
         }
         logger.info(f"[MYQUIZ] saved {sid} '{title}' ({len(qs_list)} Q, {len(files_list)} files) for {user.id}")
-        card_text, kb = self._mq_card_view(doc, saved=True, bot_username=context.bot.username, is_owner=True)
+        card_text, kb = self._mq_card_view(doc, saved=True, bot_username=context.bot.username, is_owner=True,
+                                           private=True)  # the create wizard runs only in DM
         await self._mq_show(context, d, card_text, kb)
 
     # ── callbacks ────────────────────────────────────────────────────────
@@ -1272,7 +1287,8 @@ class MyQuizMixin:
         if action == "mq_open":
             self._mq_clear_modes(context)
             await query.answer()
-            await self._bt_edit(query, *self._mq_card_view(qs, bot_username=context.bot.username, is_owner=is_owner))
+            await self._bt_edit(query, *self._mq_card_view(qs, bot_username=context.bot.username, is_owner=is_owner,
+                                                           private=_is_private(update)))
 
         elif action == "mq_ql":
             self._mq_clear_modes(context)

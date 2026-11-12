@@ -26,6 +26,9 @@ if not _raw_secret:
     _raw_secret = _sec.token_hex(32)
 app.secret_key = _raw_secret
 
+from src.web.miniapp import bp as _miniapp_bp  # noqa: E402  Telegram Mini App (/app)
+app.register_blueprint(_miniapp_bp)
+
 # Module-level singletons
 quiz_manager   = None
 telegram_bot   = None
