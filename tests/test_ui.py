@@ -131,3 +131,21 @@ class TestThreadHelpers:
     def test_get_tracking_id_with_thread(self):
         tid = get_tracking_id(-100123, 5)
         assert tid != -100123
+
+
+def test_calm_style_one_green_no_blue_back_red_home_dropped():
+    from telegram import InlineKeyboardButton as B, InlineKeyboardMarkup as M
+    from src.bot.premium import style_markup
+    kb = M([[B("✅ 20s", callback_data="a", style="success"), B("25s", callback_data="b")],
+            [B("⚔️ Create Challenge", callback_data="c", style="success")],
+            [B("📚 My Quizzes", callback_data="d", style="primary")],
+            [B("❌ Cancel", callback_data="x", style="danger")],
+            [B("⬅️ Back", callback_data="e"), B("🏠 Home", callback_data="nav_home", style="primary")]])
+    rows = [[(b.text, b.style) for b in r] for r in style_markup(kb).inline_keyboard]
+    assert rows == [[("✅ 20s", None), ("25s", None)],
+                    [("⚔️ Create Challenge", "success")],                # the one main action
+                    [("📚 My Quizzes", None)],                            # no blue
+                    [("❌ Cancel", "danger")],
+                    [("⬅️ Back", "danger")]]                              # Home dropped next to Back
+    home_only = M([[B("🏠 Home", callback_data="nav_home", style="primary")]])
+    assert [b.text for r in style_markup(home_only).inline_keyboard for b in r] == ["🏠 Home"]  # kept when no Back

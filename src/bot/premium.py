@@ -382,20 +382,53 @@ def style_request(data: dict, endpoint: str) -> dict:
 _BACK_RE = _re.compile(r"\bback\b", _re.IGNORECASE)
 
 
+_HOME_RE = _re.compile(r"\bhome\b", _re.IGNORECASE)
+
+
 def style_markup(markup):
-    """Always on: every 'Back' button without a style becomes red (danger)."""
+    """Always on, for every keyboard the bot sends — one calm look everywhere:
+    - 'Back' buttons are red; a 'Home' button next to a Back is dropped (one way out)
+    - no blue: options are plain
+    - only ONE green per screen: the first full-width green row (main action);
+      other greens (e.g. a ✅ selected option) become plain
+    Red (Cancel / Delete / Admin Panel) is kept."""
     from telegram import InlineKeyboardButton, InlineKeyboardMarkup
     if not isinstance(markup, InlineKeyboardMarkup):
         return markup
+    rows_in = [list(r) for r in markup.inline_keyboard]
+    has_back = any(_BACK_RE.search(b.text or "") for r in rows_in for b in r)
+    greens = [(ri, bi) for ri, r in enumerate(rows_in) for bi, b in enumerate(r) if b.style == "success"]
+    keep = next(((ri, bi) for ri, bi in greens if len(rows_in[ri]) == 1), greens[0] if greens else None)
+
+    def restyle(b, style):
+        d = b.to_dict()
+        if style:
+            d["style"] = style
+        else:
+            d.pop("style", None)
+        return InlineKeyboardButton.de_json(d, None)
+
     rows, changed = [], False
-    for row in markup.inline_keyboard:
+    for ri, row in enumerate(rows_in):
         new_row = []
-        for b in row:
-            if not b.style and _BACK_RE.search(b.text or ""):
-                d = b.to_dict(); d["style"] = "danger"
-                b = InlineKeyboardButton.de_json(d, None); changed = True
+        for bi, b in enumerate(row):
+            text = b.text or ""
+            if has_back and _HOME_RE.search(text) and not _BACK_RE.search(text) and b.callback_data:
+                changed = True
+                continue                                    # Back already leads out
+            style = b.style
+            if not style and _BACK_RE.search(text):
+                style = "danger"
+            elif style == "primary":
+                style = None
+            elif style == "success" and (ri, bi) != keep:
+                style = None
+            if style != b.style:
+                b = restyle(b, style)
+                changed = True
             new_row.append(b)
-        rows.append(new_row)
+        if new_row:
+            rows.append(new_row)
     return InlineKeyboardMarkup(rows) if changed else markup
 
 
