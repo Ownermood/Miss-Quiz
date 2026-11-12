@@ -70,11 +70,49 @@ h1{font-size:27px;line-height:1.2;margin:4px 0 18px;font-weight:700;letter-spaci
 .tag.ok{background:var(--okbg);color:var(--ok)}.tag.bad{background:var(--badbg);color:var(--bad)}.tag.skip{background:color-mix(in srgb,var(--warn) 15%,transparent);color:var(--warn)}
 .line{font-size:14.5px;word-break:break-word}.line.mut{color:var(--mut)}
 .center{text-align:center;padding:64px 20px;color:var(--mut)}
-.spin{width:28px;height:28px;border:3px solid var(--line);border-top-color:var(--pen);border-radius:50%;margin:0 auto 14px;animation:s .8s linear infinite}
-@keyframes s{to{transform:rotate(360deg)}}
-@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}.spin{border-top-color:var(--pen)}}
+
+/* ---------- motion layer ---------- */
+.opt,.mode,.btn,.chip{position:relative;overflow:hidden;isolation:isolate}
+.ink{position:absolute;border-radius:50%;pointer-events:none;background:var(--pen);z-index:-1}
+.mode.main .ink,.btn.go .ink,.chip.on .ink{background:var(--pent)}
+#fx{position:fixed;inset:0;pointer-events:none;z-index:50;overflow:hidden;transition:box-shadow .4s}
+#fx.hurry{box-shadow:inset 0 0 46px color-mix(in srgb,var(--bad) 30%,transparent);animation:vig 1s ease-in-out infinite}
+@keyframes vig{0%,100%{box-shadow:inset 0 0 46px color-mix(in srgb,var(--bad) 28%,transparent)}35%{box-shadow:inset 0 0 90px 8px color-mix(in srgb,var(--bad) 55%,transparent)}}
+.dot{position:absolute;display:block;width:9px;height:9px;margin:-4.5px 0 0 -4.5px;border-radius:50%}
+.cf{position:absolute;width:24px;height:24px;margin:-12px 0 0 -12px;border-radius:50%;display:grid;place-items:center;font:700 11px/1 Lexend,sans-serif;color:#fff}
+.cf.o{background:transparent!important;border:2px solid var(--omr);color:var(--omr)}
+.opt .k{border:0;position:relative}
+.opt .k svg{position:absolute;inset:0;width:100%;height:100%;transform:rotate(-90deg);overflow:visible}
+.opt .k circle{fill:none;stroke:var(--omr);stroke-width:1.6;stroke-dasharray:90;stroke-dashoffset:0}
+.opt.pick .k circle{stroke:var(--pen)}.opt.ok .k circle{stroke:var(--ok)}.opt.bad .k circle{stroke:var(--bad)}
+.q .w,h1 .w{display:inline-block;max-width:100%}
+h1 .w{overflow:hidden;vertical-align:top;padding-bottom:.08em;margin-bottom:-.08em}h1 .w>span{display:inline-block}
+.timer{position:relative;width:46px;height:46px;min-width:0;padding:0;border:0;border-radius:50%;display:grid;place-items:center;font-size:14.5px}
+.timer svg{position:absolute;inset:0;transform:rotate(-90deg)}
+.timer circle{fill:none;stroke-width:3}.timer .trk{stroke:var(--line)}
+.timer .arc{stroke:var(--pen);stroke-linecap:round;stroke-dasharray:119.4;animation:drain var(--d) linear forwards}
+@keyframes drain{to{stroke-dashoffset:119.4}}
+.timer.low{background:transparent;color:var(--bad);animation:beat 1s infinite}.timer.low .arc{stroke:var(--bad)}
+.timer.stop .arc,.timer.stop{animation-play-state:paused}
+@keyframes beat{0%,100%{transform:scale(1)}14%{transform:scale(1.16)}28%{transform:scale(1)}42%{transform:scale(1.08)}}
+.bar i{position:relative;transition:width .6s cubic-bezier(.2,.8,.2,1)}
+.bar{overflow:visible}.bar i::after{content:"";position:absolute;right:-3px;top:50%;width:9px;height:9px;margin-top:-4.5px;border-radius:50%;background:var(--pen);box-shadow:0 0 0 4px color-mix(in srgb,var(--pen) 22%,transparent)}
+.mode.main i{position:relative}
+.mode.main i::after{content:"";position:absolute;inset:-1.5px;border-radius:50%;border:2px solid var(--pent);opacity:0;animation:ping 2.6s cubic-bezier(.2,.7,.3,1) 1.4s infinite}
+@keyframes ping{0%{transform:scale(1);opacity:.7}60%,100%{transform:scale(1.7);opacity:0}}
+.sc{display:flex;justify-content:space-between;align-items:center;gap:12px}
+.gauge{position:relative;width:92px;height:92px;flex:none;display:grid;place-items:center;font-weight:700;font-size:19px;font-variant-numeric:tabular-nums}
+.gauge svg{position:absolute;inset:0;transform:rotate(-90deg)}
+.gauge circle{fill:none;stroke-width:7}.gauge .trk{stroke:var(--line)}.gauge .arc{stroke:var(--pen);stroke-linecap:round;stroke-dasharray:213.6}
+.gauge small{font-size:12px;color:var(--mut);font-weight:500}
+.rv.pre{opacity:0}
+.ld{display:inline-flex;gap:9px;margin-bottom:16px}
+.ld i{width:20px;height:20px;border-radius:50%;border:1.6px solid var(--omr);animation:fillb 1.6s ease-in-out infinite}
+.ld i:nth-child(2){animation-delay:.2s}.ld i:nth-child(3){animation-delay:.4s}.ld i:nth-child(4){animation-delay:.6s}
+@keyframes fillb{0%,12%{background:transparent;transform:scale(1)}26%{background:var(--pen);border-color:var(--pen);transform:scale(1.18)}36%,64%{background:var(--pen);border-color:var(--pen);transform:scale(1)}82%,100%{background:transparent}}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}.ld i{background:var(--pen)}}
 </style></head>
-<body><div class="wrap" id="app"><div class="center"><div class="spin"></div>Loading quiz…</div></div>
+<body><div class="wrap" id="app"><div class="center"><div class="ld"><i></i><i></i><i></i><i></i></div><br>Loading quiz…</div></div><div id="fx"></div>
 <script>
 (() => {
 const tg = window.Telegram && window.Telegram.WebApp;
@@ -83,6 +121,107 @@ const KEYS = "ABCDEFGHIJ", PART = 100;
 const esc = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const haptic = t => { try { t === "ok" || t === "bad" ? tg.HapticFeedback.notificationOccurred(t === "ok" ? "success" : "error") : tg.HapticFeedback.impactOccurred("light"); } catch (e) {} };
 const params = new URLSearchParams(location.search);
+// ---- motion engine (Web Animations API, no library). Off when reduced motion is on. ----
+const RM = !Element.prototype.animate || matchMedia("(prefers-reduced-motion: reduce)").matches;
+const EASE = "cubic-bezier(.2,.8,.2,1)", BOUNCE = "cubic-bezier(.34,1.56,.64,1)";
+const fxl = document.getElementById("fx");
+const words = (s, h) => esc(s).split(/(\s+)/).map(w => !w || /^\s+$/.test(w) ? w : h ? `<span class="w"><span>${w}</span></span>` : `<span class="w">${w}</span>`).join("");
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim() || "#2b47c9";
+const fx = {
+  leaving: false,
+  anim(el, kf, o) { return !RM && el && el.animate ? el.animate(kf, Object.assign({easing: EASE, fill: "backwards"}, o)) : null; },
+  rise(els, base, step, dist) { [...els].forEach((el, i) => fx.anim(el, [{opacity: 0, transform: `translateY(${dist || 18}px)`}, {opacity: 1, transform: "none"}], {duration: 520, delay: base + i * step})); },
+  calm() { fxl.classList.remove("hurry"); },
+  leave(cb) {
+    fx.calm();
+    if (RM) return cb();
+    fx.leaving = true;
+    const a = app.animate([{opacity: 1, transform: "none"}, {opacity: 0, transform: "translateX(-34px)"}], {duration: 190, easing: "cubic-bezier(.4,0,1,1)", fill: "forwards"});
+    a.finished.then(() => { cb(); a.cancel(); fx.leaving = false; window.scrollTo(0, 0); });
+  },
+  count(el, dur) {
+    const m = /^(−?-?)(\d+(?:\.\d+)?)(\D*)$/.exec(el.textContent.trim()); if (RM || !m) return;
+    const to = +m[2], dec = (m[2].split(".")[1] || "").length, t0 = performance.now();
+    const tick = t => { const k = Math.min((t - t0) / dur, 1), e = 1 - Math.pow(1 - k, 4); el.textContent = m[1] + (to * e).toFixed(dec) + m[3]; if (k < 1) requestAnimationFrame(tick); };
+    requestAnimationFrame(tick);
+  },
+  enterHome(soft) {
+    if (!soft) {
+      fx.anim(app.querySelector(".eyebrow"), [{opacity: 0}, {opacity: 1}], {duration: 400});
+      app.querySelectorAll("h1 .w>span").forEach((w, i) => fx.anim(w, [{transform: "translateY(105%) rotate(4deg)"}, {transform: "none"}], {duration: 760, delay: 80 + i * 70}));
+      fx.rise(app.querySelectorAll(".facts>div"), 320, 90);
+      fx.rise(app.querySelectorAll(".mode"), 560, 110, 26);
+    }
+    fx.rise(app.querySelectorAll(".chip"), soft ? 0 : 450, 40, 8);
+    app.querySelectorAll(".facts b").forEach(b => fx.count(b, 900));
+  },
+  enterQ(prev) {
+    fx.anim(app.querySelector(".qtop"), [{opacity: 0, transform: "translateY(-8px)"}, {opacity: 1, transform: "none"}], {duration: 380});
+    const bi = app.querySelector(".bar i"), w = bi.style.width;
+    if (!RM) { bi.style.transition = "none"; bi.style.width = prev + "%"; bi.offsetWidth; bi.style.transition = ""; bi.style.width = w; }
+    const ws = app.querySelectorAll(".q .w");
+    if (ws.length > 70) fx.anim(app.querySelector(".q"), [{opacity: 0, transform: "translateY(10px)"}, {opacity: 1, transform: "none"}], {duration: 500});
+    else ws.forEach((el, i) => fx.anim(el, [{opacity: 0, transform: "translateY(.55em)", filter: "blur(6px)"}, {opacity: 1, transform: "none", filter: "blur(0)"}], {duration: 460, delay: Math.min(i * 24, 560)}));
+    const base = Math.min(ws.length * 24, 560) * .6 + 120;
+    app.querySelectorAll(".opt").forEach((o, i) => {
+      fx.anim(o, [{opacity: 0, transform: "translateY(16px) scale(.98)"}, {opacity: 1, transform: "none"}], {duration: 520, delay: base + i * 75});
+      fx.anim(o.querySelector("circle"), [{strokeDashoffset: 90}, {strokeDashoffset: 0}], {duration: 620, delay: base + 120 + i * 75, easing: "cubic-bezier(.6,0,.3,1)"});
+    });
+    fx.rise(app.querySelectorAll("#row .btn"), base + 300, 0, 10);
+  },
+  mark(btn) { fx.anim(btn.querySelector(".k"), [{transform: "scale(.55)"}, {transform: "scale(1.22)", offset: .55}, {transform: "scale(1)"}], {duration: 460, easing: BOUNCE}); },
+  shake(el) { fx.anim(el, [{transform: "none"}, {transform: "translateX(-9px)"}, {transform: "translateX(8px)"}, {transform: "translateX(-5px)"}, {transform: "translateX(3px)"}, {transform: "none"}], {duration: 420, easing: "ease-out"}); },
+  glow(el, c) { fx.anim(el, [{boxShadow: `0 0 0 0 ${c}`}, {boxShadow: "0 0 0 14px transparent"}], {duration: 700, easing: "ease-out"}); },
+  burst(el, colors, n) {
+    if (RM || !el) return;
+    const r = el.getBoundingClientRect(), cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+    for (let i = 0; i < (n || 16); i++) {
+      const d = document.createElement("i"), a = (i / (n || 16)) * Math.PI * 2 + Math.random() * .4, dist = 44 + Math.random() * 52;
+      d.className = "dot"; d.style.cssText = `left:${cx}px;top:${cy}px;background:${colors[i % colors.length]}`; fxl.appendChild(d);
+      d.animate([{transform: "translate(0,0) scale(.4)", opacity: 1, easing: "cubic-bezier(.1,.9,.3,1)"}, {easing: "cubic-bezier(.5,0,.9,.6)", transform: `translate(${Math.cos(a) * dist * .8}px,${Math.sin(a) * dist * .8}px) scale(1.25)`, opacity: 1, offset: .45}, {transform: `translate(${Math.cos(a) * dist}px,${Math.sin(a) * dist + 14}px) scale(0)`, opacity: .6}], {duration: 900 + Math.random() * 300, easing: "linear"}).finished.then(() => d.remove());
+    }
+  },
+  confetti(from, big) {
+    if (RM) return;
+    const r = from.getBoundingClientRect(), H = innerHeight, cols = [css("--pen"), css("--ok"), css("--omr"), css("--warn")];
+    for (let i = 0; i < (big ? 80 : 52); i++) {
+      const c = document.createElement("i"), dx = (Math.random() - .5) * innerWidth * 1.1, up = 140 + Math.random() * 220;
+      c.className = "cf" + (i % 4 === 3 ? " o" : ""); c.textContent = KEYS[i % 4];
+      c.style.cssText = `left:${r.left + r.width * (.3 + Math.random() * .4)}px;top:${r.top + 50}px;background:${cols[i % 3]}`;
+      fxl.appendChild(c);
+      const rot = (Math.random() - .5) * 720;
+      c.animate([{transform: "translate(0,0) scale(.2) rotate(0)", opacity: 1},
+        {transform: `translate(${dx * .55}px,${-up}px) scale(1) rotate(${rot * .4}deg)`, opacity: 1, offset: .3, easing: "cubic-bezier(.3,0,.7,1)"},
+        {transform: `translate(${dx}px,${H - r.top + 40}px) scale(.9) rotate(${rot}deg)`, opacity: .95}],
+        {duration: 1900 + Math.random() * 1100, delay: Math.random() * 260, easing: "cubic-bezier(.2,.6,.4,1)", fill: "backwards"}).finished.then(() => c.remove());
+    }
+  },
+  enterResult(pct) {
+    const card = app.querySelector(".score");
+    fx.anim(card, [{opacity: 0, transform: "scale(.94) translateY(14px)"}, {opacity: 1, transform: "none"}], {duration: 620, easing: BOUNCE});
+    fx.count(document.getElementById("sn"), 1300); fx.count(document.getElementById("sp"), 1300);
+    fx.anim(app.querySelector(".gauge .arc"), [{strokeDashoffset: 213.6}, {}], {duration: 1400, delay: 150, easing: "cubic-bezier(.3,.7,.2,1)"});
+    fx.rise(app.querySelectorAll(".facts>div"), 260, 90);
+    app.querySelectorAll(".facts b").forEach(b => setTimeout(() => fx.count(b, 800), 260));
+    fx.rise(app.querySelectorAll(".row .btn"), 420, 80, 12);
+    if (pct >= 50) setTimeout(() => fx.confetti(card, pct >= 80), 700);
+    if (RM || !window.IntersectionObserver) return;
+    const io = new IntersectionObserver(es => es.forEach(e => {
+      if (!e.isIntersecting) return; io.unobserve(e.target); e.target.classList.remove("pre");
+      fx.anim(e.target, [{opacity: 0, transform: "translateY(22px)"}, {opacity: 1, transform: "none"}], {duration: 560});
+      fx.anim(e.target.querySelector(".tag"), [{opacity: 0, transform: "scale(2.2) rotate(-14deg)"}, {opacity: 1, transform: "scale(1) rotate(-4deg)", offset: .7}, {opacity: 1, transform: "none"}], {duration: 520, delay: 260, easing: "cubic-bezier(.5,0,.3,1.4)"});
+      e.target.querySelectorAll(".bub b").forEach((b, i) => fx.anim(b, [{transform: "scale(0)"}, {transform: "none"}], {duration: 380, delay: 120 + i * 50, easing: BOUNCE}));
+    }), {threshold: .15});
+    app.querySelectorAll(".rv").forEach(el => { el.classList.add("pre"); io.observe(el); });
+  },
+};
+app.addEventListener("pointerdown", e => {
+  const b = e.target.closest(".opt,.mode,.btn,.chip"); if (RM || !b || b.disabled) return;
+  const r = b.getBoundingClientRect(), d = Math.hypot(r.width, r.height) * 2.1, s = document.createElement("span");
+  s.className = "ink"; s.style.cssText = `left:${e.clientX - r.left - d / 2}px;top:${e.clientY - r.top - d / 2}px;width:${d}px;height:${d}px`;
+  b.appendChild(s);
+  s.animate([{transform: "scale(0)", opacity: .26}, {transform: "scale(1)", opacity: 0}], {duration: 700, easing: "cubic-bezier(.2,.7,.3,1)"}).finished.then(() => s.remove());
+});
 const sid = params.get("sid") || (tg && tg.initDataUnsafe && tg.initDataUnsafe.start_param) || "";
 let Q = null, part = 0, mode, list, idx, ans, timer, left, busy = false;
 
@@ -95,19 +234,20 @@ async function api(path, body) {
 function back(fn) { if (!tg) return; tg.BackButton.offClick(back._f || (() => {})); back._f = fn; if (fn) { tg.BackButton.onClick(fn); tg.BackButton.show(); } else tg.BackButton.hide(); }
 
 function partRange(p) { return [p * PART, Math.min(Q.count, (p + 1) * PART)]; }
-function home() {
-  clearInterval(timer); back(null);
+function home(soft) {
+  clearInterval(timer); fx.calm(); back(null);
   const parts = Math.ceil(Q.count / PART);
   const [a, b] = partRange(part);
   const n = b - a;
   const chips = parts > 1 ? `<div class="label">Questions</div><div class="chips">${Array.from({length: parts}, (_, p) => { const [x, y] = partRange(p); return `<button class="chip${p === part ? " on" : ""}" data-p="${p}">${x + 1}–${y}</button>`; }).join("")}</div>` : "";
-  app.innerHTML = `<div class="eyebrow">Miss Quiz</div><h1>${esc(Q.title)}</h1>
+  app.innerHTML = `<div class="eyebrow">Miss Quiz</div><h1>${words(Q.title, 1)}</h1>
   <div class="facts"><div><b>${n}</b><span>Questions</span></div><div><b>${Q.secs}s</b><span>Per question</span></div><div><b>${Q.negative ? "−" + Q.negative : "0"}</b><span>Negative</span></div></div>
   ${chips}
   <button class="mode main" data-m="practice"><i>🎯</i><div><b>Practice</b><span>See the answer and explanation after each question</span></div></button>
   <button class="mode" data-m="exam"><i>📝</i><div><b>Exam</b><span>Answer everything first, review at the end</span></div></button>`;
-  app.querySelectorAll(".chip").forEach(el => el.onclick = () => { part = +el.dataset.p; haptic(); home(); });
+  app.querySelectorAll(".chip").forEach(el => el.onclick = () => { part = +el.dataset.p; haptic(); home(true); });
   app.querySelectorAll(".mode").forEach(el => el.onclick = () => start(el.dataset.m));
+  fx.enterHome(soft === true);
 }
 function start(m) {
   mode = m; const [a, b] = partRange(part);
@@ -116,26 +256,28 @@ function start(m) {
   show();
 }
 function show() {
-  clearInterval(timer); busy = false;
+  clearInterval(timer); fx.calm(); busy = false;
   const q = list[idx]; left = Q.secs;
-  app.innerHTML = `<div class="qtop"><span>${mode === "exam" ? "📝 Exam" : "🎯 Practice"}&nbsp;&nbsp;<span class="no">${idx + 1}</span> of ${list.length}</span><span class="timer" id="tm">${left}s</span></div>
+  app.innerHTML = `<div class="qtop"><span>${mode === "exam" ? "📝 Exam" : "🎯 Practice"}&nbsp;&nbsp;<span class="no">${idx + 1}</span> of ${list.length}</span><span class="timer" id="tm" style="--d:${Q.secs}s"><svg viewBox="0 0 46 46"><circle class="trk" cx="23" cy="23" r="19"/><circle class="arc" cx="23" cy="23" r="19"/></svg><b>${left}</b></span></div>
   <div class="bar"><i style="width:${idx / list.length * 100}%"></i></div>
-  <div class="q">${esc(q.q)}</div>
-  <div id="opts">${q.o.map((o, i) => `<button class="opt" data-i="${i}"><span class="k">${KEYS[i] || i + 1}</span><span class="t">${esc(o)}</span></button>`).join("")}</div>
+  <div class="q">${words(q.q)}</div>
+  <div id="opts">${q.o.map((o, i) => `<button class="opt" data-i="${i}"><span class="k"><svg viewBox="0 0 30 30"><circle cx="15" cy="15" r="14.2"/></svg>${KEYS[i] || i + 1}</span><span class="t">${esc(o)}</span></button>`).join("")}</div>
   <div id="after"></div>
   <div class="row" id="row"><button class="btn" id="skip">Skip</button></div>`;
   app.querySelectorAll(".opt").forEach(el => el.onclick = () => pick(+el.dataset.i));
   document.getElementById("skip").onclick = () => pick(-1);
   window.scrollTo(0, 0);
-  timer = setInterval(() => { left--; const t = document.getElementById("tm"); if (!t) return; t.textContent = Math.max(left, 0) + "s"; t.classList.toggle("low", left <= 5); if (left <= 0) pick(-1); }, 1000);
+  fx.enterQ(Math.max(idx - 1, 0) / list.length * 100);
+  timer = setInterval(() => { left--; const t = document.getElementById("tm"); if (!t) return; t.lastChild.textContent = Math.max(left, 0); t.classList.toggle("low", left <= 5); fxl.classList.toggle("hurry", left <= 5 && left > 0); if (left <= 0) pick(-1); }, 1000);
 }
 async function pick(i) {
   const q = list[idx];
   if (busy || ans[q.i] !== undefined) return;
-  busy = true; clearInterval(timer); ans[q.i] = i;
+  busy = true; clearInterval(timer); fx.calm(); ans[q.i] = i;
+  const tm = document.getElementById("tm"); if (tm) tm.classList.add("stop");
   const btns = [...app.querySelectorAll(".opt")]; btns.forEach(b => b.disabled = true);
-  if (i >= 0) btns[i].classList.add("pick");
-  if (mode === "exam") { haptic(); setTimeout(next, 280); return; }
+  if (i >= 0) { btns[i].classList.add("pick"); fx.mark(btns[i]); }
+  if (mode === "exam") { haptic(); setTimeout(next, 420); return; }
   let r;
   try { r = await api("check", {i: q.i, c: i}); } catch (e) { r = null; }
   const row = document.getElementById("row");
@@ -143,18 +285,22 @@ async function pick(i) {
     if (btns[r.a]) btns[r.a].classList.add("ok");
     if (i >= 0 && i !== r.a) btns[i].classList.add("bad");
     haptic(i === r.a ? "ok" : "bad");
+    if (btns[r.a]) { fx.glow(btns[r.a], css("--ok")); if (i === r.a) fx.burst(btns[r.a].querySelector(".k"), [css("--ok"), css("--pen"), css("--warn")], 18); }
+    if (i >= 0 && i !== r.a) fx.shake(btns[i]);
     const v = i < 0 ? `<div class="verdict">⏭ Skipped</div>` : i === r.a ? `<div class="verdict ok">✓ Correct</div>` : `<div class="verdict bad">✗ Wrong</div>`;
     document.getElementById("after").innerHTML = `<div class="exp">${v}${r.e ? esc(r.e) : ""}</div>`;
   } else {
     document.getElementById("after").innerHTML = `<div class="exp">Couldn't check this answer. Your pick is saved.</div>`;
   }
+  fx.anim(document.getElementById("after").firstChild, [{opacity: 0, transform: "translateY(12px)", clipPath: "inset(0 0 100% 0)"}, {opacity: 1, transform: "none", clipPath: "inset(0 0 0 0)"}], {duration: 520, delay: 180});
   row.innerHTML = `<button class="btn go" id="nx">${idx + 1 < list.length ? "Next" : "See result"}</button>`;
+  fx.rise(row.children, 320, 0, 10);
   document.getElementById("nx").onclick = next;
 }
-function next() { idx++; idx < list.length ? show() : result(); }
+function next() { if (fx.leaving) return; idx++; fx.leave(() => idx < list.length ? show() : result()); }
 async function result() {
-  clearInterval(timer);
-  app.innerHTML = `<div class="center"><div class="spin"></div>Checking your answers…</div>`;
+  clearInterval(timer); fx.calm();
+  app.innerHTML = `<div class="center"><div class="ld"><i></i><i></i><i></i><i></i></div><br>Checking your answers…</div>`;
   let r;
   try { r = await api("submit", {answers: ans, asked: list.map(q => q.i)}); }
   catch (e) { app.innerHTML = `<div class="center">Couldn't submit. Check your connection.<div class="row"><button class="btn go" id="rt">Try again</button></div></div>`; document.getElementById("rt").onclick = result; return; }
@@ -163,8 +309,9 @@ async function result() {
   const pct = r.total ? Math.round(r.correct / r.total * 100) : 0;
   const msg = pct >= 80 ? "Excellent work 🏆" : pct >= 50 ? "Good effort, keep going 💪" : "Practice makes perfect 📚";
   haptic(pct >= 50 ? "ok" : "bad");
-  app.innerHTML = `<div class="card score"><div class="eyebrow">${mode === "exam" ? "Exam" : "Practice"} result</div>
-    <div class="n">${r.score}<small> / ${r.total}</small></div><p>${msg}</p></div>
+  app.innerHTML = `<div class="card score"><div class="sc"><div><div class="eyebrow">${mode === "exam" ? "Exam" : "Practice"} result</div>
+    <div class="n"><span id="sn">${r.score}</span><small> / ${r.total}</small></div></div>
+    <div class="gauge"><svg viewBox="0 0 92 92"><circle class="trk" cx="46" cy="46" r="34"/><circle class="arc" cx="46" cy="46" r="34" style="stroke-dashoffset:${(213.6 * (1 - Math.min(Math.max(pct, 0), 100) / 100)).toFixed(1)}"/></svg><span><span id="sp">${pct}</span><small>%</small></span></div></div><p>${msg}</p></div>
   <div class="facts"><div><b style="color:var(--ok)">${r.correct}</b><span>Correct</span></div><div><b style="color:var(--bad)">${r.wrong}</b><span>Wrong</span></div><div><b>${r.skipped}</b><span>Skipped</span></div></div>
   <div class="row" style="margin:0 0 12px"><button class="btn" id="hm">Home</button><button class="btn go" id="again">Play again</button></div>
   <div class="card"><div class="label" style="margin-top:0">Review</div>${list.map((q, n) => {
@@ -176,6 +323,7 @@ async function result() {
   }).join("")}</div>`;
   document.getElementById("hm").onclick = home;
   document.getElementById("again").onclick = () => start(mode);
+  fx.enterResult(pct);
 }
 
 if (!tg || !tg.initData) return fail("Open this from Miss Quiz Bot in Telegram.");
