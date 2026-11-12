@@ -4,62 +4,75 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
 <title>Miss Quiz</title>
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Lexend:wght@400;500;700&display=swap" rel="stylesheet">
 <style>
 :root{
-  --bg:var(--tg-theme-bg-color,#0f1419);--card:var(--tg-theme-secondary-bg-color,#18202a);
-  --txt:var(--tg-theme-text-color,#eef2f6);--mut:var(--tg-theme-hint-color,#8a99a8);
-  --acc:var(--tg-theme-button-color,#3b82c4);--acct:var(--tg-theme-button-text-color,#fff);
-  --ok:#2fa55a;--okbg:rgba(47,165,90,.14);--bad:#d9534f;--badbg:rgba(217,83,79,.13);--gold:#e8a317;
-  --line:rgba(128,140,155,.22)
+  --bg:var(--tg-theme-bg-color,#fbfaf7);--card:var(--tg-theme-secondary-bg-color,#f1efe9);
+  --txt:var(--tg-theme-text-color,#1b1d24);--mut:var(--tg-theme-hint-color,#7a7f8c);
+  --pen:#2b47c9;--pent:#fff;--omr:#d9708a;--omrbg:rgba(217,112,138,.07);
+  --ok:#1e9a55;--okbg:rgba(30,154,85,.12);--bad:#d93a2b;--badbg:rgba(217,58,43,.11);--warn:#b7791f;
+  --line:color-mix(in srgb,var(--txt) 13%,transparent)
 }
+@media (prefers-color-scheme:dark){:root:not([data-scheme="light"]){--bg:var(--tg-theme-bg-color,#15171c);--card:var(--tg-theme-secondary-bg-color,#1e2128);--txt:var(--tg-theme-text-color,#eceef2);--mut:var(--tg-theme-hint-color,#8b919e);--pen:#7d93ff;--pent:#0e1230;--omr:#e48aa0;--omrbg:rgba(228,138,160,.08);--ok:#3cc37a;--bad:#f0604f;--warn:#e0a84a}}
+:root[data-scheme="dark"]{--pen:#7d93ff;--pent:#0e1230;--omr:#e48aa0;--omrbg:rgba(228,138,160,.08);--ok:#3cc37a;--bad:#f0604f;--warn:#e0a84a}
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 html,body{margin:0;background:var(--bg);color:var(--txt)}
-body{font:16px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Noto Sans",sans-serif;-webkit-font-smoothing:antialiased}
-.wrap{max-width:520px;margin:0 auto;padding:16px 16px 28px}
-.eyebrow{font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--mut);font-weight:600}
-h1{font-size:24px;line-height:1.25;margin:6px 0 16px;font-weight:750;word-break:break-word}
-.card{background:var(--card);border-radius:16px;padding:16px;margin-bottom:12px}
-.facts{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--line);border-radius:14px;overflow:hidden;margin-bottom:14px}
-.facts div{background:var(--card);padding:12px 8px;text-align:center}
-.facts b{display:block;font-size:20px;font-variant-numeric:tabular-nums}.facts span{font-size:12px;color:var(--mut)}
-.label{font-size:13px;color:var(--mut);margin:4px 0 8px;font-weight:600}
-.chips{display:flex;gap:8px;overflow-x:auto;padding-bottom:4px;margin-bottom:12px;scrollbar-width:none}
-.chip{flex:none;border:1.5px solid var(--line);background:transparent;color:var(--txt);border-radius:999px;padding:7px 13px;font-size:14px;font-variant-numeric:tabular-nums}
-.chip.on{border-color:var(--acc);background:var(--acc);color:var(--acct)}
-.mode{display:flex;gap:14px;align-items:center;width:100%;text-align:left;border:1.5px solid var(--line);background:var(--card);color:var(--txt);border-radius:16px;padding:15px;margin-bottom:10px;font:inherit;cursor:pointer}
-.mode i{font-style:normal;font-size:24px;width:44px;height:44px;flex:none;display:grid;place-items:center;border-radius:12px;background:var(--bg)}
-.mode b{display:block;font-size:17px}.mode span{font-size:13.5px;color:var(--mut)}
-.mode.main{background:var(--ok);border-color:var(--ok);color:#fff}.mode.main span{color:rgba(255,255,255,.85)}.mode.main i{background:rgba(255,255,255,.18)}
-.qtop{display:flex;justify-content:space-between;align-items:center;font-size:13px;color:var(--mut);font-weight:600}
-.timer{font-variant-numeric:tabular-nums;color:var(--txt);padding:3px 10px;border-radius:999px;background:var(--card)}
-.timer.low{color:#fff;background:var(--bad)}
-.bar{height:4px;background:var(--line);border-radius:4px;margin:10px 0 18px;overflow:hidden}.bar i{display:block;height:100%;background:var(--acc);transition:width .25s}
-.q{font-size:18.5px;line-height:1.45;font-weight:650;margin:0 0 16px;white-space:pre-wrap;word-break:break-word}
-.opt{display:flex;gap:12px;align-items:flex-start;width:100%;text-align:left;border:1.5px solid var(--line);background:var(--card);color:var(--txt);border-radius:14px;padding:13px;margin-bottom:9px;font:inherit;cursor:pointer;transition:transform .08s}
-.opt:active{transform:scale(.985)}.opt:disabled{cursor:default;transform:none}
-.opt .k{flex:none;width:26px;height:26px;border-radius:8px;display:grid;place-items:center;font-size:13px;font-weight:700;background:var(--bg);color:var(--mut)}
-.opt .t{word-break:break-word;padding-top:1px}
-.opt.pick{border-color:var(--acc)}.opt.pick .k{background:var(--acc);color:var(--acct)}
-.opt.ok{border-color:var(--ok);background:var(--okbg)}.opt.ok .k{background:var(--ok);color:#fff}
-.opt.bad{border-color:var(--bad);background:var(--badbg)}.opt.bad .k{background:var(--bad);color:#fff}
-.exp{border-left:3px solid var(--gold);background:var(--card);border-radius:4px 12px 12px 4px;padding:11px 13px;margin-top:6px;font-size:14.5px;white-space:pre-wrap;word-break:break-word}
-.verdict{font-weight:700;margin-bottom:4px}.verdict.ok{color:var(--ok)}.verdict.bad{color:var(--bad)}
-.row{display:flex;gap:10px;margin-top:16px}
-.btn{flex:1;border:0;border-radius:14px;padding:14px;font:inherit;font-weight:700;cursor:pointer;background:var(--card);color:var(--txt)}
-.btn.go{background:var(--ok);color:#fff}.btn.red{color:var(--bad)}
+body{font:16px/1.55 Lexend,"Noto Sans","Noto Sans Devanagari",-apple-system,"Segoe UI",Roboto,sans-serif;-webkit-font-smoothing:antialiased}
+button{font:inherit;color:inherit}
+button:focus-visible{outline:2px solid var(--pen);outline-offset:2px}
+.wrap{max-width:520px;margin:0 auto;padding:18px 16px 32px}
+.eyebrow{font-size:13px;color:var(--mut);font-weight:500}
+h1{font-size:27px;line-height:1.2;margin:4px 0 18px;font-weight:700;letter-spacing:-.015em;word-break:break-word}
+.card{background:var(--card);border-radius:18px;padding:16px;margin-bottom:12px}
+.facts{display:grid;grid-template-columns:repeat(3,1fr);margin:0 0 18px;border-top:1.5px solid var(--txt);border-bottom:1px solid var(--line)}
+.facts div{padding:11px 4px 10px;text-align:left}.facts div+div{padding-left:12px;border-left:1px solid var(--line)}
+.facts b{display:block;font-size:21px;font-weight:700;font-variant-numeric:tabular-nums;line-height:1.2}.facts span{font-size:12.5px;color:var(--mut)}
+.label{font-size:13px;color:var(--mut);margin:4px 0 8px;font-weight:500}
+.chips{display:flex;gap:8px;overflow-x:auto;padding-bottom:4px;margin-bottom:14px;scrollbar-width:none}
+.chip{flex:none;border:1.5px solid var(--line);background:transparent;border-radius:999px;padding:7px 14px;font-size:14px;font-variant-numeric:tabular-nums;cursor:pointer}
+.chip.on{border-color:var(--pen);background:var(--pen);color:var(--pent)}
+.mode{display:flex;gap:14px;align-items:center;width:100%;text-align:left;border:1.5px solid var(--line);background:transparent;border-radius:18px;padding:15px;margin-bottom:10px;cursor:pointer}
+.mode i{font-style:normal;font-size:22px;width:46px;height:46px;flex:none;display:grid;place-items:center;border-radius:50%;border:1.5px solid var(--omr);background:var(--omrbg)}
+.mode b{display:block;font-size:17px;font-weight:700}.mode span{font-size:13.5px;color:var(--mut)}
+.mode.main{background:var(--pen);border-color:var(--pen);color:var(--pent)}.mode.main span{color:inherit;opacity:.82}.mode.main i{border-color:transparent;background:color-mix(in srgb,var(--pent) 18%,transparent)}
+.qtop{display:flex;justify-content:space-between;align-items:center;font-size:13.5px;color:var(--mut);font-weight:500}
+.qtop .no{color:var(--txt);font-weight:700;font-variant-numeric:tabular-nums}
+.timer{font-variant-numeric:tabular-nums;color:var(--txt);font-weight:700;min-width:48px;text-align:center;padding:3px 10px;border-radius:999px;border:1.5px solid var(--line)}
+.timer.low{color:#fff;background:var(--bad);border-color:var(--bad)}
+.bar{height:3px;background:var(--line);border-radius:3px;margin:11px 0 20px;overflow:hidden}.bar i{display:block;height:100%;background:var(--pen);transition:width .25s}
+.q{font-size:19px;line-height:1.5;font-weight:500;margin:0 0 18px;white-space:pre-wrap;word-break:break-word}
+.opt{display:flex;gap:13px;align-items:flex-start;width:100%;text-align:left;border:1.5px solid var(--line);background:transparent;border-radius:16px;padding:12px 14px 12px 12px;margin-bottom:9px;cursor:pointer;transition:border-color .15s,background .15s}
+.opt:disabled{cursor:default}
+.opt .k{flex:none;width:30px;height:30px;border-radius:50%;display:grid;place-items:center;font-size:13px;font-weight:700;border:1.5px solid var(--omr);color:var(--omr);background:var(--omrbg);transition:background .18s,color .18s,border-color .18s,transform .18s}
+.opt .t{word-break:break-word;padding-top:3px}
+.opt:not(:disabled):active .k{transform:scale(.88)}
+.opt.pick{border-color:var(--pen)}.opt.pick .k{background:var(--pen);border-color:var(--pen);color:var(--pent);animation:ink .22s ease-out}
+.opt.ok{border-color:var(--ok);background:var(--okbg)}.opt.ok .k{background:var(--ok);border-color:var(--ok);color:#fff}
+.opt.bad{border-color:var(--bad);background:var(--badbg)}.opt.bad .k{background:var(--bad);border-color:var(--bad);color:#fff}
+@keyframes ink{from{box-shadow:inset 0 0 0 15px var(--omrbg);transform:scale(.8)}to{box-shadow:none;transform:scale(1)}}
+.exp{border-left:3px solid var(--omr);background:var(--card);border-radius:4px 14px 14px 4px;padding:11px 14px;margin-top:8px;font-size:14.5px;line-height:1.6;white-space:pre-wrap;word-break:break-word}
+.verdict{font-weight:700;margin-bottom:3px}.verdict.ok{color:var(--ok)}.verdict.bad{color:var(--bad)}
+.row{display:flex;gap:10px;margin-top:18px}
+.btn{flex:1;border:1.5px solid var(--line);border-radius:16px;padding:14px;font-weight:700;cursor:pointer;background:transparent}
+.btn.go{background:var(--pen);border-color:var(--pen);color:var(--pent)}.btn.red{color:var(--bad)}
 .btn:disabled{opacity:.55}
-.score{text-align:center;padding:22px 16px}
-.score .n{font-size:56px;font-weight:800;line-height:1;font-variant-numeric:tabular-nums;letter-spacing:-.02em}
-.score .n small{font-size:24px;color:var(--mut);font-weight:700}
-.score p{margin:8px 0 0;color:var(--mut)}
-.rv{padding:14px 0;border-top:1px solid var(--line)}.rv:first-of-type{border-top:0;padding-top:4px}
-.rv .t{font-weight:650;margin-bottom:6px;white-space:pre-wrap;word-break:break-word}
-.tag{display:inline-block;font-size:12.5px;font-weight:700;padding:2px 9px;border-radius:999px;margin-bottom:6px}
-.tag.ok{background:var(--okbg);color:var(--ok)}.tag.bad{background:var(--badbg);color:var(--bad)}.tag.skip{background:rgba(232,163,23,.15);color:var(--gold)}
+.score{text-align:left;padding:20px 18px 18px}
+.score .n{font-size:64px;font-weight:700;line-height:1;font-variant-numeric:tabular-nums;letter-spacing:-.035em;margin-top:8px}
+.score .n small{font-size:24px;color:var(--mut);font-weight:500;letter-spacing:0}
+.score p{margin:10px 0 0;color:var(--mut)}
+.rv{padding:15px 0;border-top:1px solid var(--line)}.rv:first-of-type{border-top:0;padding-top:4px}
+.rv .t{font-weight:500;margin-bottom:8px;white-space:pre-wrap;word-break:break-word}
+.bub{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:8px}
+.bub b{width:24px;height:24px;border-radius:50%;display:grid;place-items:center;font-size:11px;font-weight:700;border:1.5px solid var(--omr);color:var(--omr)}
+.bub b.ok{background:var(--ok);border-color:var(--ok);color:#fff}.bub b.bad{background:var(--bad);border-color:var(--bad);color:#fff}
+.tag{display:inline-block;font-size:12.5px;font-weight:700;padding:2px 10px;border-radius:999px;margin-left:6px}
+.tag.ok{background:var(--okbg);color:var(--ok)}.tag.bad{background:var(--badbg);color:var(--bad)}.tag.skip{background:color-mix(in srgb,var(--warn) 15%,transparent);color:var(--warn)}
 .line{font-size:14.5px;word-break:break-word}.line.mut{color:var(--mut)}
-.center{text-align:center;padding:60px 20px;color:var(--mut)}
-.spin{width:28px;height:28px;border:3px solid var(--line);border-top-color:var(--acc);border-radius:50%;margin:0 auto 14px;animation:s .8s linear infinite}
+.center{text-align:center;padding:64px 20px;color:var(--mut)}
+.spin{width:28px;height:28px;border:3px solid var(--line);border-top-color:var(--pen);border-radius:50%;margin:0 auto 14px;animation:s .8s linear infinite}
 @keyframes s{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}.spin{border-top-color:var(--pen)}}
 </style></head>
 <body><div class="wrap" id="app"><div class="center"><div class="spin"></div>Loading quiz…</div></div>
 <script>
@@ -89,10 +102,10 @@ function home() {
   const n = b - a;
   const chips = parts > 1 ? `<div class="label">Questions</div><div class="chips">${Array.from({length: parts}, (_, p) => { const [x, y] = partRange(p); return `<button class="chip${p === part ? " on" : ""}" data-p="${p}">${x + 1}–${y}</button>`; }).join("")}</div>` : "";
   app.innerHTML = `<div class="eyebrow">Miss Quiz</div><h1>${esc(Q.title)}</h1>
-  <div class="facts"><div><b>${n}</b><span>Questions</span></div><div><b>${Q.secs}s</b><span>Each</span></div><div><b>${Q.negative ? "−" + Q.negative : "0"}</b><span>Negative</span></div></div>
+  <div class="facts"><div><b>${n}</b><span>Questions</span></div><div><b>${Q.secs}s</b><span>Per question</span></div><div><b>${Q.negative ? "−" + Q.negative : "0"}</b><span>Negative</span></div></div>
   ${chips}
-  <button class="mode main" data-m="practice"><i>🎯</i><div><b>Practice</b><span>Answer and explanation after every question</span></div></button>
-  <button class="mode" data-m="exam"><i>📝</i><div><b>Exam</b><span>Like the real test. Full review at the end</span></div></button>`;
+  <button class="mode main" data-m="practice"><i>🎯</i><div><b>Practice</b><span>See the answer and explanation after each question</span></div></button>
+  <button class="mode" data-m="exam"><i>📝</i><div><b>Exam</b><span>Answer everything first, review at the end</span></div></button>`;
   app.querySelectorAll(".chip").forEach(el => el.onclick = () => { part = +el.dataset.p; haptic(); home(); });
   app.querySelectorAll(".mode").forEach(el => el.onclick = () => start(el.dataset.m));
 }
@@ -105,7 +118,7 @@ function start(m) {
 function show() {
   clearInterval(timer); busy = false;
   const q = list[idx]; left = Q.secs;
-  app.innerHTML = `<div class="qtop"><span>${mode === "exam" ? "📝 Exam" : "🎯 Practice"} · ${idx + 1} / ${list.length}</span><span class="timer" id="tm">${left}s</span></div>
+  app.innerHTML = `<div class="qtop"><span>${mode === "exam" ? "📝 Exam" : "🎯 Practice"}&nbsp;&nbsp;<span class="no">${idx + 1}</span> of ${list.length}</span><span class="timer" id="tm">${left}s</span></div>
   <div class="bar"><i style="width:${idx / list.length * 100}%"></i></div>
   <div class="q">${esc(q.q)}</div>
   <div id="opts">${q.o.map((o, i) => `<button class="opt" data-i="${i}"><span class="k">${KEYS[i] || i + 1}</span><span class="t">${esc(o)}</span></button>`).join("")}</div>
@@ -151,13 +164,13 @@ async function result() {
   const msg = pct >= 80 ? "Excellent work 🏆" : pct >= 50 ? "Good effort, keep going 💪" : "Practice makes perfect 📚";
   haptic(pct >= 50 ? "ok" : "bad");
   app.innerHTML = `<div class="card score"><div class="eyebrow">${mode === "exam" ? "Exam" : "Practice"} result</div>
-    <div class="n" style="margin-top:10px">${r.score}<small> / ${r.total}</small></div><p>${msg}</p></div>
+    <div class="n">${r.score}<small> / ${r.total}</small></div><p>${msg}</p></div>
   <div class="facts"><div><b style="color:var(--ok)">${r.correct}</b><span>Correct</span></div><div><b style="color:var(--bad)">${r.wrong}</b><span>Wrong</span></div><div><b>${r.skipped}</b><span>Skipped</span></div></div>
   <div class="row" style="margin:0 0 12px"><button class="btn" id="hm">Home</button><button class="btn go" id="again">Play again</button></div>
   <div class="card"><div class="label" style="margin-top:0">Review</div>${list.map((q, n) => {
     const x = byI[q.i] || {}, a = ans[q.i], s = a === x.a ? "ok" : (a === undefined || a < 0) ? "skip" : "bad";
     return `<div class="rv"><div class="t">${n + 1}. ${esc(q.q)}</div>
-      <span class="tag ${s}">${s === "ok" ? "Correct" : s === "bad" ? "Wrong" : "Skipped"}</span>
+      <div class="bub">${q.o.map((o, j) => `<b class="${j === x.a ? "ok" : j === a ? "bad" : ""}">${KEYS[j] || j + 1}</b>`).join("")}<span class="tag ${s}">${s === "ok" ? "Correct" : s === "bad" ? "Wrong" : "Skipped"}</span></div>
       ${s === "bad" ? `<div class="line mut">Your answer: ${esc(q.o[a])}</div>` : ""}
       <div class="line">✓ ${esc(q.o[x.a])}</div>${x.e ? `<div class="exp">${esc(x.e)}</div>` : ""}</div>`;
   }).join("")}</div>`;
@@ -167,6 +180,7 @@ async function result() {
 
 if (!tg || !tg.initData) return fail("Open this from Miss Quiz Bot in Telegram.");
 tg.ready(); tg.expand();
+try { document.documentElement.dataset.scheme = tg.colorScheme; tg.onEvent("themeChanged", () => { document.documentElement.dataset.scheme = tg.colorScheme; }); } catch (e) {}
 try { tg.setHeaderColor("secondary_bg_color"); } catch (e) {}
 if (!sid) return fail("No quiz selected. Open a quiz card in the bot and tap 📱 Open in App.");
 api("quiz").then(d => { Q = d; if (!Q.count) return fail("This quiz has no questions."); home(); })
