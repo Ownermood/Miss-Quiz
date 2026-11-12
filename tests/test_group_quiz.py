@@ -353,3 +353,32 @@ async def test_host_in_group_link_opens_quiz_picker_for_admins():
     upd.effective_user.language_code = "en"
     await b.cmd_start(upd, c)
     b.cmd_startquiz.assert_awaited_once()                                    # → quiz picker (admin check inside)
+
+
+async def test_start_link_for_big_quiz_replies_with_part_menu_keyboard_not_parse_mode():
+    """Bug from the field: /start gq_<id> for a 2217-Q quiz sent the keyboard as parse_mode."""
+    app = App()
+    calls = []
+
+    async def rep(update, text, *args, **kw):
+        calls.append((args, kw))
+        return SimpleNamespace(message_id=1)
+    app._reply = rep
+    c, _, _ = ctx(admins=(1,))
+    sid = app.real.create_quiz_set(1, "Master of gk", questions(300), 20)
+    await app.gq_start_from_link(group_upd(user(1)), c, sid)
+    args, kw = calls[-1]
+    assert args == () and "reply_markup" in kw                       # keyboard by name, never positional
+
+
+async def test_reply_accepts_keyboard_in_parse_mode_slot():
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+    from telegram.constants import ParseMode
+    from src.bot.handlers_main import TelegramQuizBot
+    b = TelegramQuizBot(MagicMock(), db_manager=None)
+    msg = SimpleNamespace(reply_text=AsyncMock(), is_topic_message=False, message_thread_id=None)
+    upd = SimpleNamespace(effective_chat=SimpleNamespace(id=1, type="private"), effective_message=msg)
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton("x", callback_data="x")]])
+    await b._reply(upd, "hi", kb)
+    kw = msg.reply_text.await_args.kwargs
+    assert kw["parse_mode"] == ParseMode.HTML and kw["reply_markup"] is kb

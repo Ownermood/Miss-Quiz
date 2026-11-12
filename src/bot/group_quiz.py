@@ -355,7 +355,8 @@ class GroupQuizMixin:
         if isinstance(qs, dict) and len(qs.get("questions") or []) > PART_ASK:
             chat_id = update.effective_chat.id
             if not auto_part:
-                await self._reply(update, *await self._gq_part_view(update.effective_user.id, set_id, qs, chat_id))
+                text, kb = await self._gq_part_view(update.effective_user.id, set_id, qs, chat_id)
+                await self._reply(update, text, reply_markup=kb)
                 return
             allq = list(qs["questions"])
             start = int(((qs.get("progress") or {}).get(str(chat_id))) or 0)

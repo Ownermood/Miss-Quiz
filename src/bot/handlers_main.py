@@ -550,6 +550,8 @@ class TelegramQuizBot(
                      parse_mode=ParseMode.HTML,
                      reply_markup=None, **kw) -> Optional[Any]:
         """Smart reply — routes to an open forum topic (or Main topic if all closed)."""
+        if isinstance(parse_mode, InlineKeyboardMarkup):      # keyboard passed in the parse_mode slot
+            reply_markup, parse_mode = parse_mode, ParseMode.HTML
         chat   = update.effective_chat
         tid    = get_thread_id(update)
         if chat and chat.type in ("group", "supergroup") and self.db and hasattr(self.db, "get_group_open_thread"):
