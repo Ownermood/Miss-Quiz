@@ -265,3 +265,60 @@ Answer: 1
     assert qs[0]["correct_answer"] == 0
 
 
+
+
+# ── real coaching PDFs (GK Fiesta / 12MTC question bank) ────────────────────
+
+def test_fiesta_style_key_after_explanation_statements_and_split_rows():
+    text = """1. Which corridor was stalled?
+(a) INSTC (b) IMEC
+(c) CPEC   (d) CAREC
+2
+2. Consider the following statements:
+1. The U.S. operation is codenamed Epic Fury.
+2. Israel's operation is codenamed Lion's Roar.
+3. Strikes hit Natanz.
+Which of the statements is/are correct?
+(a) 1 and 2 only (b) 2 and 3 only (c) 1 and 3 only (d) 1, 2 and 3
+Passage (Q.3-Q.3): MPLADS is a scheme that lets MPs recommend work.
+It was examined by the apex court.
+3. MPLADS funds are released by which ministry?
+(a) Finance (b) MoSPI (c) Home (d) Rural Development
+ANSWER KEY AND EXPLANATIONS
+1. (b) IMEC was stalled.
+Explanation: The corridor needs West Asian stability. India recorded
+369.01 million detections — this number line is not an answer.
+2. (d) All statements are correct.
+3. (b) MoSPI releases MPLADS funds.
+"""
+    qs, probs = _up(text)
+    assert [q["correct_answer"] for q in qs] == [1, 3, 1], probs
+    assert qs[0]["options"] == ["INSTC", "IMEC", "CPEC", "CAREC"]           # '(c) … (d) …' row split, page no. dropped
+    assert "1. The U.S. operation" in qs[1]["question"] and len(qs[1]["options"]) == 4   # statements stay in question
+    assert all("MPLADS is a scheme" not in o for q in qs for o in q["options"])           # passage not glued to options
+
+
+def test_12mtc_watermark_lines_and_glued_headings_removed():
+    text = """20. The ABDMWhen was DRDO formed?
+A. 1958
+B. 1959
+C. 1960
+D. 1961
+12minutestoclat.com
+12minutestoclat.com
+35
+21. On to India for Pax Silica How many countries joined the first summit?
+A. 14
+B. 9
+C. 27
+D. 5
+ANSWER KEY
+Q20. A
+Q21. B
+"""
+    qs, _ = _up(text)
+    assert qs[0]["question"] == "When was DRDO formed?" and qs[0]["options"][3] == "1961"
+    assert qs[1]["question"].startswith("How many countries") and qs[1]["correct_answer"] == 1
+    # a real domain inside a question is kept
+    qs, _ = _up("1. The website of NITI Aayog is niti.gov.in. Which body did it replace?\nA. Planning Commission\nB. RBI\nAnswer: A")
+    assert "niti.gov.in" in qs[0]["question"]
