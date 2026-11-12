@@ -872,6 +872,7 @@ class MyQuizMixin:
              _btn("⏱ Timer", f"mq_timer:{sid}", None)],
             [_btn("🔀 Shuffle: ON" if shuffle_on else "🔀 Shuffle: OFF", f"mq_shuffle:{sid}", None),
              _btn("📎 Attach File", f"mq_attach:{sid}", None)],
+            *([[_btn("🔄 Re-read file (fix questions)", f"mq_reread:{sid}", None)]] if files_cnt else []),
             [_btn("🗑 Delete Quiz", f"mq_del:{sid}", "danger")],
             [_btn("⬅️ Back to Quiz", f"mq_open:{sid}", "danger"),
              _btn("🏠 Home", "nav_home", None)],
@@ -1044,6 +1045,29 @@ class MyQuizMixin:
             await query.answer(url=f"https://t.me/{bot_user}?start={param}")
         except Exception:
             await query.answer("Open my DM to continue 📚", show_alert=True)
+
+    async def _mq_reread_files(self, context, qs: Dict) -> Tuple[List[Dict], List[Dict]]:
+        """Download the quiz's own source files again and parse them with the current reader."""
+        from src.bot.file_extract import extract
+        out, problems, seen = [], [], set()
+        for f in qs.get("source_files") or []:
+            if not f.get("file_id"):
+                continue
+            try:
+                tg_file = await context.bot.get_file(f["file_id"], read_timeout=60)
+                data = bytes(await tg_file.download_as_bytearray(read_timeout=60))
+                items, text, _note = await asyncio.to_thread(extract, f.get("file_name") or "file", data)
+                got, probs = await asyncio.to_thread(parse_questions, text, items)
+            except Exception as e:
+                logger.warning(f"[MYQUIZ] re-read {f.get('file_name')} failed: {e}")
+                continue
+            problems += probs
+            for q in got:
+                k = q["question"].lower()
+                if k not in seen:
+                    seen.add(k)
+                    out.append(q)
+        return out, problems
 
     async def handle_my_quiz_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         query, user = update.callback_query, update.effective_user
@@ -1237,7 +1261,7 @@ class MyQuizMixin:
         is_owner = (qs.get("owner") == user.id)
         owner_only_actions = {"mq_edit", "mq_rename", "mq_timer", "mq_settimer", "mq_shuffle", "mq_attach",
                               "mq_del", "mq_delok", "mq_ql", "mq_qv", "mq_qe", "mq_qa", "mq_qas", "mq_qd",
-                              "mq_qdok", "mq_add", "mq_adddone"}
+                              "mq_qdok", "mq_add", "mq_adddone", "mq_reread", "mq_rereadok"}
         if action in owner_only_actions and not is_owner:
             await query.answer("⛔ Only the creator of this quiz can edit or delete it.", show_alert=True)
             return
@@ -1391,6 +1415,38 @@ class MyQuizMixin:
             self._mq_clear_modes(context)
             await query.answer()
             await self._bt_edit(query, *self._mq_editor_view(qs))
+
+        elif action == "mq_reread":
+            names = ", ".join(html.escape(str(f.get("file_name") or "file"))
+                              for f in (qs.get("source_files") or []) if f.get("kind") != "photo")[:200]
+            await query.answer()
+            await self._bt_edit(
+                query,
+                f"🔄 <b>RE-READ FILE</b>\n<blockquote>📎 {names or 'attached file'}\n"
+                f"❓ Questions now › {len(questions)}</blockquote>\n"
+                f"<i>The file is read again with the improved reader and the questions are replaced. "
+                f"Quiz ID, link, plays and group progress stay. Your manual question edits are replaced too.</i>",
+                InlineKeyboardMarkup([[_btn("❌ Cancel", f"mq_edit:{sid}", "danger"),
+                                       _btn("🔄 Re-read now", f"mq_rereadok:{sid}", "success")]]))
+
+        elif action == "mq_rereadok":
+            await query.answer("Reading the file… ⏳")
+            new_qs, problems = await self._mq_reread_files(context, qs)
+            if not new_qs:
+                await self._bt_edit(query, "⚠️ <b>Couldn't read questions from the attached file.</b>\n"
+                                           "<i>Nothing was changed.</i>",
+                                    InlineKeyboardMarkup([[_btn("⬅️ Back", f"mq_edit:{sid}", "danger")]]))
+                return
+            old_n = len(questions)
+            if 0 < old_n < 0.9 * len(new_qs):          # quiz was made from part of the file → keep that size
+                new_qs = new_qs[:old_n]
+            await self._mq_db("update_quiz_set", sid, user.id, {"questions": new_qs, "count": len(new_qs)})
+            await self._bt_edit(
+                query,
+                f"✅ <b>File re-read!</b>\n<blockquote>❓ Questions › {old_n} → {len(new_qs)}\n"
+                f"⚠️ Skipped › {len(problems)}</blockquote>",
+                InlineKeyboardMarkup([[_btn("⬅️ Back", f"mq_edit:{sid}", "danger"),
+                                       _btn("▶️ Open Quiz", f"mq_open:{sid}", "success")]]))
 
         elif action == "mq_shuffle":
             new_shuf = not bool(qs.get("shuffle"))

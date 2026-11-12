@@ -901,3 +901,26 @@ async def test_group_create_and_my_quizzes_open_dm_without_posting():
         await app.handle_myquiz_callback(SimpleNamespace(callback_query=q, effective_user=user(1, "A")), ctx)
         assert q.answer.await_args.kwargs["url"].endswith(f"?start={param}")
         msg.reply_text.assert_not_awaited()                               # nothing posted in the group
+
+
+async def test_reread_source_file_fixes_old_quiz_in_place():
+    app, real = _quiz_app()
+    ctx, _ = fake_context()
+    dirty = [{"question": "The ABDMWhen was DRDO formed?", "options": ["1958", "1961 12minutestoclat.com"],
+              "correct_answer": 0}] * 2
+    sid = real.create_quiz_set(1, "Master of gk", dirty, 20)
+    real.update_quiz_set(sid, 1, {"source_files": [{"file_id": "F1", "file_name": "gk.txt", "kind": "document"}]})
+    clean_file = ("20. The ABDMWhen was DRDO formed?\nA. 1958\nB. 1959\nC. 1960\nD. 1961\n12minutestoclat.com\n"
+                  "21. Capital of India?\nA. Mumbai\nB. Delhi\nANSWER KEY\nQ20. A\nQ21. B\n")
+    ctx.bot.get_file = AsyncMock(return_value=SimpleNamespace(
+        download_as_bytearray=AsyncMock(return_value=bytearray(clean_file.encode()))))
+    a, other = user(1, "Amit"), user(2, "Bina")
+    q = await press_mq(app, ctx, other, f"mq_rereadok:{sid}")                 # not the owner
+    assert q.answer.await_args.kwargs.get("show_alert") is True
+    await press_mq(app, ctx, a, f"mq_reread:{sid}")
+    q = await press_mq(app, ctx, a, f"mq_rereadok:{sid}")
+    after = real.get_quiz_set(sid)
+    assert after["id"] == sid and after["count"] == 2                          # same quiz, fixed in place
+    assert after["questions"][0]["question"] == "When was DRDO formed?"
+    assert after["questions"][0]["options"] == ["1958", "1959", "1960", "1961"]
+    assert "File re-read" in q.edit_message_text.await_args.args[0]
