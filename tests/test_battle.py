@@ -889,3 +889,15 @@ def test_create_quiz_panel_one_clear_action():
     t, kb = MyQuizMixin._mq_collect_view({"qs": qs, "problems": []})
     rows = [[(b.text, b.style) for b in r] for r in kb.inline_keyboard]
     assert rows[0][0][1] == "success" and rows[0][0][0].startswith("➡️ Next: Set up quiz") and rows[-1] == [("❌ Cancel", "danger")]
+
+
+async def test_group_create_and_my_quizzes_open_dm_without_posting():
+    app, real = _quiz_app()
+    ctx, _ = fake_context()
+    for data, param in (("mq_new", "mq_new"), ("mq_list", "mq")):
+        msg = SimpleNamespace(chat=SimpleNamespace(id=-100, type="supergroup"), message_id=5,
+                              reply_text=AsyncMock())
+        q = SimpleNamespace(data=data, answer=AsyncMock(), edit_message_text=AsyncMock(), message=msg)
+        await app.handle_myquiz_callback(SimpleNamespace(callback_query=q, effective_user=user(1, "A")), ctx)
+        assert q.answer.await_args.kwargs["url"].endswith(f"?start={param}")
+        msg.reply_text.assert_not_awaited()                               # nothing posted in the group

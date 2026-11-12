@@ -1035,6 +1035,16 @@ class MyQuizMixin:
 
     # ── callbacks ────────────────────────────────────────────────────────
 
+    @staticmethod
+    async def _mq_open_dm(query, context, param: str) -> None:
+        """From a group button: open the bot's DM at /start <param> directly
+        (answerCallbackQuery url) — nothing is posted in the group."""
+        bot_user = getattr(context.bot, "username", "") or ""
+        try:
+            await query.answer(url=f"https://t.me/{bot_user}?start={param}")
+        except Exception:
+            await query.answer("Open my DM to continue 📚", show_alert=True)
+
     async def handle_my_quiz_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         query, user = update.callback_query, update.effective_user
         if not query or not user or not query.data:
@@ -1201,17 +1211,8 @@ class MyQuizMixin:
         if action == "mq_list":
             self._mq_clear_modes(context)
             if query.message and query.message.chat and query.message.chat.type != "private":
-                bot_user = getattr(context.bot, "username", "") or ""
-                await query.answer("Open my DM to view your quizzes! 📚")
-                if bot_user:
-                    await query.message.reply_text(
-                        "📚 <b>Your custom quizzes &amp; study materials are in my DM:</b>",
-                        parse_mode=ParseMode.HTML,
-                        reply_markup=InlineKeyboardMarkup([[
-                            InlineKeyboardButton("📚 Open My Quizzes", url=f"https://t.me/{bot_user}?start=mq"),
-                            InlineKeyboardButton("➕ Create New Quiz", url=f"https://t.me/{bot_user}?start=mq_new", style="success"),
-                        ]])
-                    )
+                # group: open my DM straight away — no new message in the group chat
+                await self._mq_open_dm(query, context, "mq")
                 return
             await query.answer()
             await self.mq_open_list(update, context, query, int(arg) if arg.isdigit() else 1)
@@ -1220,17 +1221,7 @@ class MyQuizMixin:
         if action == "mq_new":
             self._mq_clear_modes(context)
             if query.message and query.message.chat and query.message.chat.type != "private":
-                bot_user = getattr(context.bot, "username", "") or ""
-                await query.answer("Quizzes are created in my DM! ✏️")
-                if bot_user:
-                    await query.message.reply_text(
-                        "✨ <b>CREATE YOUR OWN QUIZ</b>\n"
-                        "<i>Tap below to create a quiz from PDF, DOCX, Text, or Polls in my DM:</i>",
-                        parse_mode=ParseMode.HTML,
-                        reply_markup=InlineKeyboardMarkup([[
-                            InlineKeyboardButton("➕ Create New Quiz in DM", url=f"https://t.me/{bot_user}?start=mq_new", style="success")
-                        ]])
-                    )
+                await self._mq_open_dm(query, context, "mq_new")
                 return
             await query.answer()
             await self.mq_start_draft(query, context, user)
