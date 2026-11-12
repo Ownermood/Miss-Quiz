@@ -1079,6 +1079,7 @@ class DatabaseManager:
         return {
             "total": self.groups_col.count_documents(base),
             "admin": self.groups_col.count_documents({**base, "bot_is_admin": True}),
+            "not_admin": self.groups_col.count_documents({**base, "bot_is_admin": False}),
         }
 
     def clear_group_thread(self, chat_id: int, thread_id: int) -> None:

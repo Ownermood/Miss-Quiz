@@ -176,13 +176,14 @@ class AdminPanelMixin:
 
     async def _panel_text(self) -> str:
         q = self._q_count()
-        users = groups = admin_g = 0
+        users = groups = admin_g = not_admin = 0
         if self.db:
             try:
                 st = await asyncio.to_thread(self.db.get_user_engagement_stats)
                 users = st.get("total_users", 0)
                 c = await asyncio.to_thread(self.db.count_groups_by_admin)
                 groups, admin_g = c["total"], c["admin"]
+                not_admin = c.get("not_admin", groups - admin_g)
             except Exception as ex:
                 logger.warning(f"[ADMIN PANEL] stats failed: {ex}")
         return (
@@ -190,7 +191,10 @@ class AdminPanelMixin:
             f"<blockquote><b>1️⃣ LIVE SYSTEM OVERVIEW\n"
             f"• Question Bank  ›  {q:,}\n"
             f"• Total Users    ›  {users:,}\n"
-            f"• Total Groups   ›  {groups:,}  (Active: {admin_g} · Paused: {groups - admin_g})</b></blockquote>\n"
+            f"• Total Groups   ›  {groups:,}\n"
+            f"   ✅ Quiz ON › {admin_g}  ·  ⏸ Not admin › {not_admin}"
+            + (f"  ·  ❔ Not checked › {groups - admin_g - not_admin}" if groups - admin_g - not_admin else "")
+            + "</b></blockquote>\n"
             f"<blockquote><b>2️⃣ ADMIN COMMAND SHORTCUTS\n"
             f"• /check — Live RAM, CPU &amp; Uptime Health\n"
             f"• /cleanup — Sanitize DB &amp; Clear Stale Loops\n"
