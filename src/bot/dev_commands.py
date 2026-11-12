@@ -369,7 +369,7 @@ class DeveloperCommands(BroadcastCommandsMixin, QuizEditorMixin):
 
                 diagnostics = "🔍 <b>Message Diagnostics</b>\n"
                 diagnostics += "━━━━━━━━━━━━━━━━━━━\n\n"
-                diagnostics += f"<b>📨 Message Info:</b>\n"
+                diagnostics += "<b>📨 Message Info:</b>\n"
                 diagnostics += f"• Message ID: <code>{replied_msg.message_id}</code>\n"
                 diagnostics += f"• Chat ID: <code>{replied_msg.chat.id}</code>\n"
                 diagnostics += f"• Timestamp: {replied_msg.date}\n"
@@ -377,27 +377,27 @@ class DeveloperCommands(BroadcastCommandsMixin, QuizEditorMixin):
                 if replied_msg.from_user:
                     _u = replied_msg.from_user
                     _nm = _u.full_name or _u.first_name or f"@{_u.username}" or "N/A"
-                    diagnostics += f"\n<b>👤 User Info:</b>\n"
+                    diagnostics += "\n<b>👤 User Info:</b>\n"
                     diagnostics += f"• User ID: <code>{_u.id}</code>\n"
                     diagnostics += f"• Name: {UI.mention(_u.id, _nm)}\n"
                     diagnostics += f"• Username: @{_u.username or 'N/A'}\n"
 
                 if replied_msg.poll:
                     poll_id = replied_msg.poll.id
-                    diagnostics += f"\n<b>📊 Poll Info:</b>\n"
+                    diagnostics += "\n<b>📊 Poll Info:</b>\n"
                     diagnostics += f"• Poll ID: <code>{poll_id}</code>\n"
                     diagnostics += f"• Question: {html.escape(replied_msg.poll.question[:50])}...\n"
 
                     poll_data = context.bot_data.get(f"poll_{poll_id}")
                     if poll_data:
-                        diagnostics += f"\n<b>🎯 Quiz Data:</b>\n"
+                        diagnostics += "\n<b>🎯 Quiz Data:</b>\n"
                         diagnostics += f"• Question ID: <code>{poll_data.get('question_id', 'N/A')}</code>\n"
                         _cid = poll_data.get('correct_option_id')
                         _cid_str = str(_cid + 1) if isinstance(_cid, int) else 'N/A'
                         diagnostics += f"• Correct Answer: Option {_cid_str}\n"
                         diagnostics += f"• Answers: {len(poll_data.get('user_answers', {}))}\n"
                     else:
-                        diagnostics += f"• Status: ⚠️ Poll data expired/unavailable\n"
+                        diagnostics += "• Status: ⚠️ Poll data expired/unavailable\n"
 
                 if replied_msg.photo:
                     diagnostics += f"\n<b>📷 Media:</b>\n• Type: Photo\n• File ID: <code>{replied_msg.photo[-1].file_id[:30]}...</code>\n"
@@ -628,7 +628,7 @@ class DeveloperCommands(BroadcastCommandsMixin, QuizEditorMixin):
                         f"  🆔 <code>{dev_uid}</code>\n"
                     )
 
-                dev_text += f"\n💡 Tap an ID to copy it."
+                dev_text += "\n💡 Tap an ID to copy it."
 
                 reply = await update.message.reply_text(
                     dev_text, parse_mode=ParseMode.HTML,

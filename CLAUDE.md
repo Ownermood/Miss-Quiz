@@ -30,18 +30,21 @@ src/bot/file_extract.py     Koi bhi file → questions: txt md csv tsv xlsx xls 
 src/bot/poll_manager.py     Poll answers, poll_id mapping (battle polls pehle battle_on_poll_answer ko jaate hain)
 src/bot/admin_panel.py      /admin panel: har admin command ka button (stats, reload, ➕ Add Questions = ek hi button: text/file/forwarded quiz poll, Done tak leta rahe; edit/delete quiz, broadcast + confirm, undo broadcast, start photo, Admins, restart). **Admins**: sirf owner/WIFU add/remove kar sakte (`_can_manage_admins`; `/dev add|remove` bhi owner-only). Add = ID ya forward → custom title (≤32) → ek emoji (premium `custom_emoji_id` save) → `developers` doc mein `title/emoji/emoji_id`; naye admin ko bot DM bhejta hai (fail ho to owner ko batata hai); remove pe bhi DM. Find Question (ID ya shabd → Edit/Delete buttons). Delete = confirm screen (pura question + answer) phir delete, `/delquiz 12` seedha confirm. Panel buttons usi message ko edit karte hain (`_MsgProxy(edit=True)`, Back auto-add). Input wale buttons `ap_await` set karte hain, agla message handle_admin_input (group -1) leta hai, /cancel. Entry button /start pe red, sirf admin DM. Start photo set (photo ya link → file_id, `settings` collection). Har callback pe auth
 src/bot/premium.py          PremiumExtBot: HAR outgoing message/caption/poll/button ka emoji apne aap premium (PACK_NEW + PACK exact, SUBST look-alike; 3 packs; Admin Panel → Emoji Test se check). 'Back' button hamesha red. Har HTML message apne aap poora bold + extra blank lines saaf (`style_request`, `BOLD_TEXT=0` se band; <code>/<pre> wale messages bold nahi hote). Premium reject ho to plain resend. Naye emoji ke liye bas PACK/SUBST mein jodo
-src/bot/battle.py           1v1 battle (BattleMixin + Battle). Group + DM. In-memory state
+src/bot/battle.py           1v1 battle (BattleMixin + Battle). Group + DM. Khule challenge `battles` mein, chalti battle memory mein
 src/bot/group_quiz.py       Group Quiz (GroupQuizMixin): /startquiz (group admin) → apna quiz ya Bot 10/20/30 Q; quiz card ka 👥 Start in Group (`startgroup=gq_<id>`). Timed polls, har 10 pe leaderboard, Pause/Resume/Skip/Stop (admin ya starter), final result + Play again. Ek group = ek session (`ACTIVE`), us waqt auto quiz skip. `quiz_sessions` mein save → restart ke baad agle Q se resume. /stopquiz. /score mein nahi judta
-src/bot/my_quiz.py          Create Own Quiz / /myquiz (MyQuizMixin): DM mein text/file/forwarded quiz poll → draft (user_data mq_draft, group -4) → Done → naam → `quiz_sets`. Max 10 quiz/user, 3–100 Q. Bot pool mein nahi jaate
+src/bot/my_quiz.py          Create Own Quiz / /myquiz (MyQuizMixin): DM mein text/file/forwarded quiz poll → draft (user_data mq_draft, group -4) → Next → 4 steps (naam / timer / negative / shuffle) → `quiz_sets`. Koi quiz limit nahi (page numbers), file ≤20 MB. 🔄 Re-read file = save hui source file naye parser se dobara padho (same ID). Bot pool mein nahi jaate
 src/bot/tracking.py         User/group tracking
 src/bot/ui.py               UI strings, LINE/THIN, mention helpers
 src/utils/scheduler.py      AutoQuizScheduler. Har group ko auto quiz bhejta hai
 src/web/app.py              Flask: /health, /admin, /webhook, /api/*
+src/web/miniapp.py          Telegram Mini App (/app + /app/api/quiz|check|submit): quiz_sets ko Practice/Exam mein khelo. Har call pe initData HMAC verify (24h, fail-closed); answer pehle kabhi nahi jaata; submit pe plays +1 (20s mein ek baar). Quiz card pe 📱 Open in App sirf DM + `MINI_APP_URL` (https) set ho to. Page: templates/miniapp.html (Telegram theme rang, sab text escape)
 templates/admin.html, static/js/admin.js   Web admin panel
-tests/                      ~220 tests (pytest, mongomock): web security, scheduler, battle, admin panel, parser, files, ...
+tests/                      ~320 tests (pytest, mongomock): web security, scheduler, battle, admin panel, parser, files, ...
 ```
 
 **Battle:** `/battle` (group: open ya reply-target; DM: invite link `start=bt_<id>`). Main card: 📝 Create Own Quiz (green; group mein DM link) · 📚 My Quizzes | 🤖 Bot Quiz · ⚙️ Customize · Cancel. Bot Quiz = Classic 10Q·20s / Quick 5Q·15s / Marathon 20Q·30s / Last (users.battle_pref), 1 tap. Customize = timer 10s 15s 20s / 25s 30s 1m + 🎯 Questions (bina rang ke option buttons, tap ya type) + Back/Cancel + Create Challenge. My Quizzes = apne quiz (`quiz_sets`) se 1 tap challenge; group mein sirf group admin (getChatMember). Challenge card pe ✏️ Change (accept se pehle). +1 sahi, tie → kam time. Battle answers regular stats mein nahi jaate. `users` pe `$inc`: `battle_wins`, `battle_losses`, `battle_draws`, `battles_played`. DM mein har poll ka owner hai (forwarded poll se cheating band). Khule challenge (setup/pending) `battles` collection mein save hote hain (TTL 24h, `_bt_save`/`_bt_get`), to update/restart ke baad bhi buttons aur invite link chalte hain; sirf chalti (running) battle restart pe khatam. Purana button dabao to "This battle has ended" + ⚔️ New Battle. DM invite: Send to a friend = inline mode (`handle_battle_inline`, query `bt_<id>`, sirf challenger; bold + premium card + Accept url `start=bt_<id>_go` jo seedha battle shuru karta hai; premium reject ho to plain). Inline mode band ho (@BotFather /setinline) to share-URL fallback (plain text). + Copy link; friend ko Accept/Decline card, accept pe challenger ka card edit, decline pe challenger ko msg.
+
+**UI rule (premium.style_markup, har keyboard pe):** ek screen = ek green (pehla full-width main action), blue nahi, Back/Cancel/Delete red, Back ho to Home hata. Peeche jaane wala left, aage wala right.
 
 **Branding:** naam "Miss Quiz Bot", community `t.me/VillanCommunity` (`ui.COMMUNITY_URL`). `/start` = photo (agar set) + bold blockquote caption + rangeen buttons (`_start_kb`). `/help` = 3 bold blockquotes (Play / Progress / Groups) + buttons, koi admin section nahi. Command menu mein sirf user commands; admin sab kuch /start ke red Admin Panel se (purane per-admin menus startup pe delete).
 
@@ -66,7 +69,7 @@ python -m pytest -q -o addopts=""                     # bina coverage ke (fast)
 MODE=polling python main.py                           # local run (TELEGRAM_TOKEN, OWNER_ID, MONGODB_URL chahiye)
 ```
 
-Env vars: `.env.example` dekho. `PREMIUM_EMOJI=1` sirf tab jab bot owner ke paas Telegram Premium ho (warna normal emoji). Extra: `ADMIN_API_KEY`, `WEBHOOK_SECRET_TOKEN`, `WEBHOOK_URL`/`RENDER_URL`, `WIFU_ID`.
+Env vars: `.env.example` dekho. `PREMIUM_EMOJI=1` sirf tab jab bot owner ke paas Telegram Premium ho (warna normal emoji). Extra: `ADMIN_API_KEY`, `WEBHOOK_SECRET_TOKEN`, `MINI_APP_URL` (Mini App ka public https base), `WEBHOOK_URL`/`RENDER_URL`, `WIFU_ID`.
 
 ## 4. Kaam karne ke rules (sakht)
 
@@ -173,6 +176,7 @@ Pakke bugs aur sirf "possible risks" alag-alag likho.
 - Answer: `Answer/Ans/Correct Answer/उत्तर: B`, `(b)`, `Option B`, `2`, option ka text (`Delhi`), `B. Mumbai` (letter-text alag ho to text jeetega), option ke aage ✅ ✔ * (correct)
 - File ke end mein answer key: `Answer Key:` ke neeche `1. A` / `1-a` / `1A 2B`
 - `Explanation:` (multi-line), `Category: X | Difficulty: Y`
+- Coaching PDFs: alag line wala watermark (`site.com`) aur page number skip; `Passage (Q.6-Q.10): …` text kisi option mein nahi judta; numbered statements + (a)–(d) = ek question; `(c) x (d) y` row split; chipki heading (`The ABDMWhen…`) hatti; answer key mein `Explanation:` ke baad bhi `N. (b)` answer padhe jaate
 - 2–10 options. Jo samajh na aaye wo skip + report mein "Q12 — answer “E” doesn't match any option" jaisa kaaran
 - Explanation DB mein save hoti hai aur quiz ke 💡 mein dikhti hai; har quiz explanation ke end mein `🆔 Q#id` hamesha
 

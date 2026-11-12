@@ -68,7 +68,7 @@ class Session:
     answered:  set = field(default_factory=set)
     wake:      asyncio.Event = field(default_factory=asyncio.Event)
     skip:      bool = False
-    negative_rate: float = 0.25            # -0.25 marks per wrong answer
+    negative_rate: float = 0.0             # marks cut per wrong answer (host can turn on −0.25 in the lobby)
     marks_per_q:   float = 1.0             # +1.0 marks per correct answer
     user_history:  Dict[str, List[Dict]] = field(default_factory=dict) # uid → list of answered questions
     ready_players: Dict[str, str] = field(default_factory=dict)        # uid_str → player display name
@@ -76,6 +76,9 @@ class Session:
     certificates:    bool = True
     auto_pause:      bool = False
     unanswered_streak: int = 0
+    part_start: int = -1                    # first question index of this part (-1 = not a part)
+    pinned:    bool = False                 # lobby/control message pinned by the bot
+    lobby_page: str = "main"                # main | settings (not saved)
 
     def to_doc(self) -> Dict:
         return {
@@ -86,7 +89,7 @@ class Session:
             "negative_rate": self.negative_rate, "marks_per_q": self.marks_per_q,
             "user_history": self.user_history, "ready_players": self.ready_players,
             "mention_players": self.mention_players, "certificates": self.certificates,
-            "auto_pause": self.auto_pause,
+            "auto_pause": self.auto_pause, "part_start": self.part_start, "pinned": self.pinned,
         }
 
     @classmethod
@@ -98,13 +101,15 @@ class Session:
             thread_id=d.get("thread_id"), set_id=d.get("set_id", ""),
             idx=int(d.get("idx") or 0), status=d.get("status", "running"),
             scores=d.get("scores") or {}, ctrl_msg_id=d.get("ctrl_msg_id"),
-            negative_rate=float(d.get("negative_rate") if d.get("negative_rate") is not None else 0.25),
+            negative_rate=float(d.get("negative_rate") or 0.0),
             marks_per_q=float(d.get("marks_per_q") or 1.0),
             user_history=d.get("user_history") or {},
             ready_players=d.get("ready_players") or {},
             mention_players=bool(d.get("mention_players", True)),
             certificates=bool(d.get("certificates", True)),
             auto_pause=bool(d.get("auto_pause", False)),
+            part_start=int(d["part_start"]) if d.get("part_start") is not None else -1,
+            pinned=bool(d.get("pinned")),
         )
 
     def record(self, poll_id: str, uid: int, name: str, option_ids) -> bool:
@@ -161,69 +166,48 @@ def _kb(s: Session) -> InlineKeyboardMarkup:
                                  [InlineKeyboardButton("⏹ Stop", callback_data=f"gq|stop|{c}", style="danger")]])
 
 
+PART_ASK      = 50       # a quiz bigger than this is played in parts (e.g. 200 today, next 200 tomorrow)
+PART_SIZES    = (25, 50, 100, 200)
+SCHEDULE_PART = 100      # a scheduled big quiz plays its next 100 questions
+USE_LOBBY     = True     # "I'm ready" lobby before a group quiz (tests switch it off)
 LOBBY_TIMEOUT = 120      # auto-start lobby after 120s if host hasn't tapped Start Now
 
 
 def _lobby_text(s: Session, extra_note: str = "") -> str:
     n_ready = len(s.ready_players)
-    neg_str = f"-{s.negative_rate} marks" if s.negative_rate > 0 else "OFF (No Negative)"
+    neg = f"−{s.negative_rate}" if s.negative_rate > 0 else "OFF"
     if s.ready_players:
-        p_items = [
-            f"{idx}. {UI.mention(int(uid), name)}"
-            for idx, (uid, name) in enumerate(list(s.ready_players.items())[:30], 1)
-        ]
-        if n_ready > 30:
-            p_items.append(f"<i>…and {n_ready - 30} more</i>")
-        ready_block = "<blockquote>" + "  ·  ".join(p_items) + "</blockquote>"
+        names = [UI.mention(int(uid), name) for uid, name in list(s.ready_players.items())[:30]]
+        more = f" <i>+{n_ready - 30} more</i>" if n_ready > 30 else ""
+        ready = "<blockquote expandable>" + " · ".join(names) + more + "</blockquote>"
     else:
-        ready_block = "<blockquote><i>⏳ Waiting for players to tap “🙋‍♂️ I'm ready!” below…</i></blockquote>"
-
-    note_block = f"\n{extra_note}\n" if extra_note else ""
-    return (
-        f"👋 <b>Hello everyone! Miss Quiz is ready to host:</b>\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"📝 <b>{html.escape(s.title)}</b>\n"
-        f"<blockquote>"
-        f"❓ <b>Questions:</b> <code>{len(s.questions)} Qs</code>  ·  ⏱ <b>Timer:</b> <code>{s.secs}s / Q</code>\n"
-        f"⚖️ <b>Negative:</b> <code>{neg_str}</code>  ·  👑 <b>Host:</b> {UI.mention(s.started_by, s.starter_name or 'Host')}"
-        f"</blockquote>\n"
-        f"🙋‍♂️ <b>Players Ready ({n_ready}):</b>\n"
-        f"{ready_block}"
-        f"{note_block}\n"
-        f"👉 <i>Players: Tap <b>“I'm ready! ✅”</b> to join the lobby.\n"
-        f"👑 Host ({html.escape(s.starter_name or 'Admin')}) can tap <b>▶️ Start Now</b> when everyone is in!</i>"
-    )
+        ready = "<blockquote><i>Waiting for players…</i></blockquote>"
+    note = f"{extra_note}\n" if extra_note else ""
+    return (f"🎯 <b>QUIZ LOBBY</b> — {html.escape(s.title)}\n"
+            f"<blockquote>❓ Questions › {len(s.questions)}\n⏱ Timer › {s.secs}s each\n"
+            f"⚖️ Negative › {neg}\n👑 Host › {UI.mention(s.started_by, s.starter_name or 'Host')}</blockquote>\n"
+            f"🙋 <b>Ready ({n_ready})</b>\n{ready}\n{note}"
+            f"<i>Tap “I'm Ready” to play. The host starts the quiz.</i>")
 
 
 def _lobby_kb(s: Session) -> InlineKeyboardMarkup:
     c = s.chat_id
+    if s.lobby_page == "settings":
+        on = lambda flag: "✅" if flag else "▫️"
+        return InlineKeyboardMarkup([
+            [InlineKeyboardButton(f"{on(s.negative_rate > 0)} Negative −0.25", callback_data=f"gq|tog_neg|{c}"),
+             InlineKeyboardButton(f"{on(s.certificates)} Certificates", callback_data=f"gq|tog_cert|{c}")],
+            [InlineKeyboardButton(f"{on(s.mention_players)} Mention players", callback_data=f"gq|tog_men|{c}"),
+             InlineKeyboardButton(f"{on(s.auto_pause)} Auto pause", callback_data=f"gq|tog_ap|{c}")],
+            [InlineKeyboardButton("⬅️ Back", callback_data=f"gq|lback|{c}", style="danger")],
+        ])
     n_ready = len(s.ready_players)
-    ready_label = f"🙋‍♂️ I'm ready! ✅ ({n_ready})" if n_ready > 0 else "🙋‍♂️ I'm ready! ✅"
-    men_lbl = "🔔 Mention Players: ON" if s.mention_players else "🔕 Mention Players: OFF"
-    men_style = "success" if s.mention_players else "primary"
-    cert_lbl = "🏆 Certificates: ON" if s.certificates else "🏆 Certificates: OFF"
-    cert_style = "success" if s.certificates else "primary"
-    neg_on = s.negative_rate > 0
-    neg_lbl = f"⚖️ Negative (-{s.negative_rate}): ON" if neg_on else "⚖️ Negative: OFF"
-    neg_style = "success" if neg_on else "primary"
-    ap_lbl = "⏸ Auto Pause: ON" if s.auto_pause else "⏸ Auto Pause: OFF"
-    ap_style = "success" if s.auto_pause else "primary"
-
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton(ready_label, callback_data=f"gq|ready|{c}", style="primary")],
-        [
-            InlineKeyboardButton("▶️ Start Now (Host)", callback_data=f"gq|launch|{c}", style="success"),
-            InlineKeyboardButton("⏰ Auto-Start 30s", callback_data=f"gq|autostart|{c}", style="primary"),
-        ],
-        [
-            InlineKeyboardButton(men_lbl, callback_data=f"gq|tog_men|{c}", style=men_style),
-            InlineKeyboardButton(cert_lbl, callback_data=f"gq|tog_cert|{c}", style=cert_style),
-        ],
-        [
-            InlineKeyboardButton(neg_lbl, callback_data=f"gq|tog_neg|{c}", style=neg_style),
-            InlineKeyboardButton(ap_lbl, callback_data=f"gq|tog_ap|{c}", style=ap_style),
-        ],
-        [InlineKeyboardButton("❌ Cancel Quiz (Host)", callback_data=f"gq|cancel_lobby|{c}", style="danger")],
+        [InlineKeyboardButton(f"🙋 I'm Ready ({n_ready})", callback_data=f"gq|ready|{c}", style="success")],
+        [InlineKeyboardButton("▶️ Start Now", callback_data=f"gq|launch|{c}", style="primary"),
+         InlineKeyboardButton("⏰ Start in 30s", callback_data=f"gq|autostart|{c}", style="primary")],
+        [InlineKeyboardButton("❌ Cancel", callback_data=f"gq|cancel_lobby|{c}", style="danger"),
+         InlineKeyboardButton("⚙️ Settings", callback_data=f"gq|lset|{c}", style="primary")],
     ])
 
 
@@ -251,7 +235,7 @@ class GroupQuizMixin:
             return default
 
     async def _gq_save(self, s: Session) -> None:
-        if s.status in ("running", "paused"):
+        if s.status in ("lobby", "running", "paused"):
             await self._gq_db("save_quiz_session", s.to_doc())
         else:
             await self._gq_db("delete_quiz_session", s.chat_id)
@@ -354,7 +338,9 @@ class GroupQuizMixin:
             return
         await self._gq_start_set(update, context, set_id)
 
-    async def _gq_start_set(self, update, context, set_id: str) -> None:
+    async def _gq_start_set(self, update, context, set_id: str, auto_part: int = 0) -> None:
+        """auto_part > 0 (scheduled quiz): a big quiz plays its next part of that
+        size by itself instead of asking which part."""
         m = re.fullmatch(r"bot(\d{1,3})", set_id or "")
         if m:                                             # shared bot quiz: gq_bot20
             pool = list(self.quiz_manager.questions or [])
@@ -366,6 +352,21 @@ class GroupQuizMixin:
                                  f"Bot Quiz · {n} questions", random.sample(pool, n), BOT_SECS, "")
             return
         qs = await self._gq_db("get_quiz_set", set_id)
+        if isinstance(qs, dict) and len(qs.get("questions") or []) > PART_ASK:
+            chat_id = update.effective_chat.id
+            if not auto_part:
+                text, kb = await self._gq_part_view(update.effective_user.id, set_id, qs, chat_id)
+                await self._reply(update, text, reply_markup=kb)
+                return
+            allq = list(qs["questions"])
+            start = int(((qs.get("progress") or {}).get(str(chat_id))) or 0)
+            if start >= len(allq):
+                start = 0                                    # finished earlier → start over
+            chunk = allq[start:start + auto_part]
+            await self._gq_begin(context, chat_id, get_thread_id(update), update.effective_user,
+                                 f"{qs.get('title') or 'Quiz'} · Q{start + 1}–Q{start + len(chunk)}",
+                                 chunk, int(qs.get("secs") or BOT_SECS), set_id, part_start=start)
+            return
         if not isinstance(qs, dict) or not qs.get("questions"):
             await self._reply(update, "⚠️ <b>Quiz not found.</b> Check the quiz ID in /myquiz.")
             return
@@ -375,11 +376,12 @@ class GroupQuizMixin:
 
     async def _gq_begin(self, context, chat_id: int, thread_id, user, title: str,
                         questions: List[Dict], secs: int, set_id: str = "",
-                        negative_rate: float = 0.25, skip_lobby: Optional[bool] = None) -> Optional[Session]:
+                        negative_rate: float = 0.0, skip_lobby: Optional[bool] = None,
+                        part_start: int = -1) -> Optional[Session]:
         if is_active(chat_id):
             return None
         if skip_lobby is None:
-            skip_lobby = (START_DELAY == 0)
+            skip_lobby = not USE_LOBBY
         if self.db and hasattr(self.db, "get_group_open_thread"):
             res_tid = await self._gq_db("get_group_open_thread", chat_id, thread_id, default=thread_id)
             if isinstance(res_tid, int) or res_tid is None:
@@ -395,7 +397,7 @@ class GroupQuizMixin:
             chat_id=chat_id, chat_title=chat_title, title=title[:60], questions=questions,
             secs=max(5, min(secs, 600)), started_by=user.id, starter_name=self._bt_name(user),
             thread_id=thread_id, set_id=set_id, negative_rate=negative_rate,
-            status="running" if skip_lobby else "lobby",
+            status="running" if skip_lobby else "lobby", part_start=part_start,
         )
         # Host is automatically the 1st ready player
         s.ready_players[str(user.id)] = s.starter_name or "Host"
@@ -408,14 +410,74 @@ class GroupQuizMixin:
         else:
             sent = await self._gq_send(context, s, _lobby_text(s), _lobby_kb(s))
             s.ctrl_msg_id = getattr(sent, "message_id", None)
+            await self._gq_pin(context, s)
+            await self._gq_save(s)                       # lobby survives a restart too
             logger.info(f"[GQUIZ] {chat_id} opened lobby '{title}' ({len(questions)} Q, {s.secs}s) by {user.id}")
-            if LOBBY_TIMEOUT > 0:
-                async def _auto_lobby_watchdog():
-                    await asyncio.sleep(LOBBY_TIMEOUT)
-                    if ACTIVE.get(chat_id) is s and s.status == "lobby":
-                        await self._gq_launch_from_lobby(context, s)
-                asyncio.create_task(_auto_lobby_watchdog())
+            self._gq_lobby_watchdog(context, s)
         return s
+
+    def _gq_lobby_watchdog(self, context, s: Session) -> None:
+        if LOBBY_TIMEOUT <= 0:
+            return
+
+        async def _auto():
+            await asyncio.sleep(LOBBY_TIMEOUT)
+            if ACTIVE.get(s.chat_id) is s and s.status == "lobby":
+                await self._gq_launch_from_lobby(context, s)
+        asyncio.create_task(_auto())
+
+    async def _gq_pin(self, context, s: Session) -> None:
+        """Pin the lobby (= control panel) WITH a notification, so every member
+        hears about the quiz once. Needs 'Pin messages' right;
+        the 'pinned a message' notice is deleted by gq_on_pin_notice."""
+        if not s.ctrl_msg_id:
+            return
+        try:
+            await context.bot.pin_chat_message(s.chat_id, s.ctrl_msg_id, disable_notification=False)
+            s.pinned = True
+        except Exception as e:
+            logger.debug(f"[GQUIZ] {s.chat_id} pin skipped: {e}")
+
+    async def _gq_unpin(self, context, s: Session) -> None:
+        if not s.pinned or not s.ctrl_msg_id:
+            return
+        try:
+            await context.bot.unpin_chat_message(s.chat_id, message_id=s.ctrl_msg_id)
+        except Exception as e:
+            logger.debug(f"[GQUIZ] {s.chat_id} unpin failed: {e}")
+        s.pinned = False
+
+    async def gq_on_pin_notice(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Delete the 'Miss Quiz pinned a message' notice the bot itself caused."""
+        msg = update.effective_message
+        me = getattr(context.bot, "id", None)
+        if msg and msg.from_user and me and msg.from_user.id == me:
+            try:
+                await msg.delete()
+            except Exception:
+                pass
+
+    async def _gq_part_view(self, uid: int, sid: str, qs: Dict, chat_id: int, start: Optional[int] = None):
+        """Big quiz → choose how many to play now; continues where this group stopped."""
+        total = len(qs.get("questions") or [])
+        if start is None:
+            start = int(((qs.get("progress") or {}).get(str(chat_id))) or 0)
+        start = max(0, min(start, total))
+        title = html.escape(str(qs.get("title") or "Quiz"))
+        done = f"Q1–Q{start}" if start else "none yet"
+        text = (f"📚 <b>{title}</b>\n<blockquote>❓ Total › {total} questions\n"
+                f"✅ Played here › {done}\n▶️ Next › " + (f"from Q{start + 1}" if start < total else "all done 🎉") +
+                "</blockquote>\n<i>How many questions now? The rest stay for next time.</i>")
+        left = total - start
+        sizes = [n for n in PART_SIZES if n < left] + ([left] if 0 < left <= PART_SIZES[-1] else [])
+        btns = [InlineKeyboardButton(f"▶️ {n} Q · Q{start + 1}–Q{start + n}",
+                                     callback_data=f"gq|part|{uid}|{sid}|{n}|{start}", style="primary")
+                for n in sizes]
+        rows = [btns[k:k + 2] for k in range(0, len(btns), 2)]
+        if start:
+            rows.append([InlineKeyboardButton("🔁 Start again from Q1", callback_data=f"gq|part|{uid}|{sid}|0|0")])
+        rows.append([InlineKeyboardButton("❌ Cancel", callback_data=f"gq|close|{uid}", style="danger")])
+        return text, InlineKeyboardMarkup(rows)
 
     async def _gq_launch_from_lobby(self, context, s: Session) -> None:
         if s.status != "lobby":
@@ -553,8 +615,15 @@ class GroupQuizMixin:
         msg = (f"🏆 Play “{s.title}” in your group with Miss Quiz! "
                f"{len(s.questions)} questions · {s.secs}s each. Tap the link and pick your group 👇")
         share = "https://t.me/share/url?url=" + quote(link, safe="") + "&text=" + quote(msg)
-        return InlineKeyboardMarkup([
-            [InlineKeyboardButton("🔁 Play again", callback_data=f"gq|again|{s.chat_id}", style="success"),
+        nxt = []
+        if s.set_id and s.part_start >= 0:              # big quiz in parts → continue in one tap
+            start = s.part_start + min(s.idx, len(s.questions))
+            size = max(1, len(s.questions))
+            nxt = [[InlineKeyboardButton(f"▶️ Next part · from Q{start + 1}",
+                                         callback_data=f"gq|next|{s.chat_id}|{start}|{size}", style="success")]]
+        return InlineKeyboardMarkup(nxt + [
+            [InlineKeyboardButton("🔁 Play again", callback_data=f"gq|again|{s.chat_id}",
+                                  style=None if nxt else "success"),
              InlineKeyboardButton("📤 Share Quiz", url=share, style="primary")],
             [InlineKeyboardButton("🌐 Download HTML Report", callback_data=f"gq|html|{s.chat_id}", style="primary")],
         ])
@@ -599,6 +668,10 @@ class GroupQuizMixin:
     async def _gq_finish(self, context, s: Session) -> None:
         if ACTIVE.get(s.chat_id) is s:
             ACTIVE.pop(s.chat_id, None)
+        await self._gq_unpin(context, s)
+        asked = min(s.idx, len(s.questions))
+        if s.set_id and s.part_start >= 0 and asked:      # big quiz: next time continue after this part
+            await self._gq_db("set_quiz_progress", s.set_id, s.chat_id, s.part_start + asked)
         stopped = s.status == "stopped"
         s.status = "done" if not stopped else "stopped"
         await self._gq_save(s)
@@ -732,16 +805,16 @@ class GroupQuizMixin:
         ans_list = s.user_history.get(str(user.id), [])
 
         report = [
-            f"📊 <b>Personal Quiz Scorecard</b>",
+            "📊 <b>Personal Quiz Scorecard</b>",
             f"<b>Quiz:</b> {html.escape(s.title)}",
-            f"━━━━━━━━━━━━━━━━━━",
+            "━━━━━━━━━━━━━━━━━━",
             f"🎯 <b>Net Score:</b> <b>{score} pts</b>" + (f" (Negative: -{s.negative_rate})" if s.negative_rate > 0 else ""),
             f"✅ <b>Correct:</b> {correct}",
             f"❌ <b>Wrong:</b> {wrong}",
             f"⏳ <b>Total Attempted:</b> {correct + wrong} / {total}",
             f"📈 <b>Accuracy:</b> {accuracy}%",
             f"⏱️ <b>Total Time:</b> {sc.get('time', 0.0)}s",
-            f"━━━━━━━━━━━━━━━━━━"
+            "━━━━━━━━━━━━━━━━━━"
         ]
 
         wrong_answers = [item for item in ans_list if not item.get("is_correct")]
@@ -862,7 +935,7 @@ class GroupQuizMixin:
         msg = query.message
         chat_id = msg.chat.id if msg else 0
 
-        if action in ("set", "bot", "close"):              # picker: only who opened it
+        if action in ("set", "bot", "close", "part"):      # picker: only who opened it
             owner = int(parts[2]) if len(parts) > 2 and parts[2].lstrip("-").isdigit() else 0
             if user.id != owner:
                 await query.answer("This menu isn't yours — send /startquiz.", show_alert=True)
@@ -881,10 +954,39 @@ class GroupQuizMixin:
                 await query.answer("Only group admins can start a quiz.", show_alert=True)
                 return
             arg = parts[3] if len(parts) > 3 else ""
+            if action == "part":                             # gq|part|uid|sid|count|start
+                qs = await self._gq_db("get_quiz_set", arg)
+                if not isinstance(qs, dict) or not qs.get("questions"):
+                    await query.answer("That quiz is no longer available.", show_alert=True)
+                    return
+                count = int(parts[4]) if len(parts) > 4 and parts[4].isdigit() else 0
+                start = int(parts[5]) if len(parts) > 5 and parts[5].isdigit() else 0
+                allq = list(qs["questions"])
+                if count <= 0 or start >= len(allq):           # "start again from Q1" → menu at 0
+                    await query.answer()
+                    text, kb = await self._gq_part_view(user.id, arg, qs, chat_id, start=0)
+                    await msg.edit_text(text, parse_mode=ParseMode.HTML, reply_markup=kb)
+                    return
+                chunk = allq[start:start + count]
+                await query.answer("Opening the lobby! 🚀")
+                try:
+                    await msg.delete()
+                except Exception:
+                    pass
+                thread = getattr(msg, "message_thread_id", None) if getattr(msg, "is_topic_message", False) else None
+                await self._gq_begin(context, chat_id, thread, user,
+                                     f"{qs.get('title') or 'Quiz'} · Q{start + 1}–Q{start + len(chunk)}",
+                                     chunk, int(qs.get("secs") or BOT_SECS), arg, part_start=start)
+                return
             if action == "set":
                 qs = await self._gq_db("get_quiz_set", arg)
                 if not isinstance(qs, dict) or not qs.get("questions"):
                     await query.answer("That quiz is no longer available.", show_alert=True)
+                    return
+                if len(qs["questions"]) > PART_ASK:          # big quiz → play it in parts
+                    await query.answer()
+                    text, kb = await self._gq_part_view(user.id, arg, qs, chat_id)
+                    await msg.edit_text(text, parse_mode=ParseMode.HTML, reply_markup=kb)
                     return
                 title, questions, secs, sid = (str(qs.get("title") or "Quiz"), list(qs["questions"]),
                                                int(qs.get("secs") or BOT_SECS), arg)
@@ -966,6 +1068,35 @@ class GroupQuizMixin:
                 await query.answer("Please start me in DM first so I can send the file!", show_alert=True)
             return
 
+        if action == "next":                               # gq|next|chat|start|size
+            if not await self._gq_is_admin(context, chat_id, user):
+                await query.answer("Only group admins can start the next part.", show_alert=True)
+                return
+            if is_active(chat_id):
+                await query.answer("A quiz is already running here.", show_alert=True)
+                return
+            last = getattr(self, "_gq_last", {}).get(chat_id)
+            sid = getattr(last, "set_id", "") if last else ""
+            if not sid:
+                await query.answer("Start it again with /startquiz.", show_alert=True)
+                return
+            qs = await self._gq_db("get_quiz_set", sid)
+            if not isinstance(qs, dict) or not qs.get("questions"):
+                await query.answer("That quiz is no longer available.", show_alert=True)
+                return
+            allq = list(qs["questions"])
+            start = int(parts[3]) if len(parts) > 3 and parts[3].isdigit() else 0
+            size = int(parts[4]) if len(parts) > 4 and parts[4].isdigit() else 25
+            if start >= len(allq):
+                await query.answer("🎉 All questions done! Use /startquiz → Start again from Q1.", show_alert=True)
+                return
+            chunk = allq[start:start + size]
+            await query.answer("Next part! 🚀")
+            await self._gq_begin(context, chat_id, last.thread_id, user,
+                                 f"{qs.get('title') or 'Quiz'} · Q{start + 1}–Q{start + len(chunk)}",
+                                 chunk, int(qs.get("secs") or BOT_SECS), sid, part_start=start)
+            return
+
         if action == "again":
             last = getattr(self, "_gq_last", {}).get(chat_id)
             if not last:
@@ -998,6 +1129,7 @@ class GroupQuizMixin:
                 await query.answer(f"✅ You are already marked Ready! ({len(s.ready_players)} players in lobby)", show_alert=False)
                 return
             s.ready_players[uid_s] = p_name
+            await self._gq_save(s)
             await query.answer(f"🔥 You're Ready! ({len(s.ready_players)} joined)")
             try:
                 await query.message.edit_text(_lobby_text(s), parse_mode=ParseMode.HTML, reply_markup=_lobby_kb(s))
@@ -1011,6 +1143,14 @@ class GroupQuizMixin:
             return
 
         if s.status == "lobby":
+            if action in ("lset", "lback"):
+                s.lobby_page = "settings" if action == "lset" else "main"
+                await query.answer()
+                try:
+                    await query.message.edit_text(_lobby_text(s), parse_mode=ParseMode.HTML, reply_markup=_lobby_kb(s))
+                except Exception:
+                    pass
+                return
             if action == "launch":
                 await query.answer("🚀 Launching Quiz Now!")
                 await self._gq_launch_from_lobby(context, s)
@@ -1066,6 +1206,8 @@ class GroupQuizMixin:
             if action == "cancel_lobby":
                 ACTIVE.pop(chat_id, None)
                 s.status = "stopped"
+                await self._gq_unpin(context, s)
+                await self._gq_save(s)
                 await query.answer("Quiz cancelled.")
                 try:
                     await query.message.edit_text(
@@ -1182,7 +1324,7 @@ class GroupQuizMixin:
                     "🚀 <b>SCHEDULED QUIZ STARTING NOW!</b>\nGet ready!",
                     parse_mode=ParseMode.HTML
                 )
-                await self._gq_start_set(update, context, set_id)
+                await self._gq_start_set(update, context, set_id, auto_part=SCHEDULE_PART)
 
         asyncio.create_task(scheduled_launch())
 
@@ -1204,6 +1346,14 @@ class GroupQuizMixin:
             if s.status == "paused":
                 s.paused_at = time.monotonic()
             ACTIVE[s.chat_id] = s
+            if s.status == "lobby":                          # reopen the lobby with fresh buttons
+                sent = await self._gq_send(context, s, _lobby_text(s, "♻️ <b>I restarted — the lobby is open again.</b>"),
+                                           _lobby_kb(s))
+                s.ctrl_msg_id = getattr(sent, "message_id", None) or s.ctrl_msg_id
+                await self._gq_save(s)
+                self._gq_lobby_watchdog(context, s)
+                n += 1
+                continue
             await self._gq_send(context, s, f"♻️ <b>I restarted — continuing “{html.escape(s.title)}” "
                                             f"from Q{s.idx + 1}.</b>")
             asyncio.create_task(self._gq_run(s, context))

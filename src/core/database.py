@@ -334,6 +334,10 @@ class DatabaseManager:
             inc_fields["total_q_correct"] = int(correct)
         self.quiz_sets_col.update_one({"id": str(sid)}, {"$inc": inc_fields})
 
+    def set_quiz_progress(self, sid: str, chat_id: int, next_index: int) -> None:
+        """Big quiz played in parts: where this chat continues next time."""
+        self.quiz_sets_col.update_one({"id": str(sid)}, {"$set": {f"progress.{int(chat_id)}": int(next_index)}})
+
     def get_quiz_set(self, sid: str) -> Optional[Dict]:
         return self.quiz_sets_col.find_one({"id": str(sid)}, {"_id": 0})
 
@@ -358,7 +362,7 @@ class DatabaseManager:
         self.quiz_sessions_col.delete_one({"chat_id": chat_id})
 
     def list_quiz_sessions(self) -> List[Dict]:
-        return list(self.quiz_sessions_col.find({"status": {"$in": ["running", "paused"]}}, {"_id": 0}))
+        return list(self.quiz_sessions_col.find({"status": {"$in": ["lobby", "running", "paused"]}}, {"_id": 0}))
 
     # ── Open battle challenges (setup/pending) ──
     def save_battle(self, doc: Dict) -> None:
@@ -933,17 +937,23 @@ class DatabaseManager:
         next_due = (now + timedelta(minutes=quiz_interval_minutes)).isoformat()
         data = {
             "chat_id":       chat_id,
-            "title":         title,
-            "username":      username,
             "last_active":   now_iso,
             "last_seen":     now_iso,
             "active_status": "active",
         }
+        on_insert = {}
+        # a caller that doesn't know the name (e.g. a poll answer) must not wipe a saved one
+        for fld, val in (("title", title), ("username", username)):
+            if val:
+                data[fld] = val
+            else:
+                on_insert[fld] = ""
         self.groups_col.update_one(
             {"chat_id": chat_id},
             {
                 "$set": data,
                 "$setOnInsert": {
+                    **on_insert,
                     "joined_at":         now_iso,
                     "quiz_start_time":   now_iso,
                     "next_quiz_due_at":  next_due,
@@ -1075,6 +1085,7 @@ class DatabaseManager:
         return {
             "total": self.groups_col.count_documents(base),
             "admin": self.groups_col.count_documents({**base, "bot_is_admin": True}),
+            "not_admin": self.groups_col.count_documents({**base, "bot_is_admin": False}),
         }
 
     def clear_group_thread(self, chat_id: int, thread_id: int) -> None:

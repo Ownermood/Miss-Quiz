@@ -139,7 +139,7 @@ def main():
             questions_col.insert_one(new_doc)
             inserted_count += 1
 
-    logger.info(f"Database Sync Complete:")
+    logger.info("Database Sync Complete:")
     logger.info(f"  • Repaired & Updated: {updated_count} questions")
     logger.info(f"  • Inserted as New:   {inserted_count} questions")
     logger.info(f"  • Total Clean Bank:  {len(clean_questions)} questions")

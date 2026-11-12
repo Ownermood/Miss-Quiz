@@ -58,3 +58,34 @@ def test_battle_pref_roundtrip():
     assert db.get_battle_pref(7) is None and db.get_battle_pref(999) is None
     db.set_battle_pref(7, 12, 45)
     assert db.get_battle_pref(7) == (12, 45)
+
+
+def test_group_title_not_wiped_by_callers_without_a_name():
+    import mongomock
+    db = DatabaseManager.__new__(DatabaseManager)
+    db.groups_col = mongomock.MongoClient().db.groups
+    db.register_group_interaction(-1, title="CLAT QUIZ BATALIAN", username="clatq")
+    db.register_group_interaction(-1, title="", username="")          # e.g. from a poll answer
+    g = db.groups_col.find_one({"chat_id": -1})
+    assert g["title"] == "CLAT QUIZ BATALIAN" and g["username"] == "clatq"
+    db.register_group_interaction(-2)                                  # first sight without a name
+    assert db.groups_col.find_one({"chat_id": -2})["title"] == ""
+    db.register_group_interaction(-2, title="New Name")               # name learnt later
+    assert db.groups_col.find_one({"chat_id": -2})["title"] == "New Name"
+
+
+async def test_startup_fills_missing_group_titles():
+    import mongomock
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+    from src.bot.handlers_main import TelegramQuizBot
+    db = DatabaseManager.__new__(DatabaseManager)
+    db.groups_col = mongomock.MongoClient().db.groups
+    db.groups_col.insert_many([{"chat_id": -1, "title": "", "active_status": "active"},
+                               {"chat_id": -2, "title": "Kept", "active_status": "active"}])
+    b = TelegramQuizBot(MagicMock(), db_manager=db)
+    b.application = MagicMock()
+    b.application.bot.get_chat = AsyncMock(return_value=SimpleNamespace(title="CLATIANS CV", username=None))
+    assert await b._fill_missing_group_titles() == 1
+    assert db.groups_col.find_one({"chat_id": -1})["title"] == "CLATIANS CV"
+    b.application.bot.get_chat.assert_awaited_once()                    # named group untouched

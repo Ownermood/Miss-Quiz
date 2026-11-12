@@ -643,9 +643,10 @@ def _u_strip_symbols(line: str) -> str:
 
 
 _U_PDF_NOISE_RE = re.compile(
-    r"(?:https?://\S+|www\.\S+|\b[a-zA-Z0-9\-]{3,}\.(?:com|in|org|edu|net|co\.in|ac\.in|gov\.in|info|io)\b(?:/\S*)?"
+    # only clear noise: links, "Branch-9876543210" contacts, page markers. A bare
+    # domain or number inside a question/option is real content and stays.
+    r"(?:https?://\S+|www\.\S+"
     r"|\b[A-Za-z]{2,25}\s*[-:]+\s*(?:\+?91[\s\-]?)?(?:\d{10,12}|\d{3,5}\-\d{5,8})\b"
-    r"|(?:(?<=\s)|^)(?:\+?91[\s\-]?)?[6-9]\d{9}\b"
     r"|\bPage\s*(?:No\.?\s*)?[\-:]?\s*\d{1,4}(?:\s*(?:of|/)\s*\d{1,4})?\b)",
     re.IGNORECASE
 )
@@ -697,6 +698,8 @@ def _u_split_inline(line: str) -> List[str]:
         ms = list(_U_INLINE_OPT.finditer(part))
         letters = [m.group(1).lower() for m in ms]
         seq_start = next((i for i, l in enumerate(letters) if l == "a"), None)
+        if seq_start is None and ms and ms[0].start() == 0 and part[:1] in "([":
+            seq_start = 0          # '(c) Geneva   (d) Bern' — a 2nd option row starts the line
         if seq_start is None:
             out.extend(_u_split_trailing_qnum(part)); continue
         seq = [ms[seq_start]]
@@ -780,8 +783,41 @@ def _u_text_match(text: str, opts: List[str]) -> Optional[int]:
     return hits[0] if len(hits) == 1 else None
 
 
+_U_DOMAIN_LINE = re.compile(r"(?:https?://)?(?:www\.)?[\w\-]+(?:\.[\w\-]+)+(?:/\S*)?(?:\s+(?:https?://)?(?:www\.)?[\w\-]+(?:\.[\w\-]+)+(?:/\S*)?)*\s*\d{0,4}",
+                            re.IGNORECASE)
+_U_QWORD = re.compile(r"(?<=[A-Za-z0-9\)])(?=(?:When|Where|Which|What|Who|Whom|Whose|Why|How|Consider|Identify|Name|In which|In what)\b)"
+                      r"|(?<=\S\s)(?=(?:When|Where|Which|What|Who|Whom|Whose|Why|How|Consider|Identify|In which|In what)\b)")
+
+
+def _u_strip_heading(q: str) -> str:
+    """'The ABDMWhen was DRDO formed?' / 'On to India for Pax Silica Which of…' → drop the
+    section heading the PDF glued in front. Only when the prefix is short and has no
+    sentence punctuation, so a real lead-in ('Statement I is true. Which…') stays."""
+    m = _U_QWORD.search(q)
+    if not m or m.start() == 0:
+        return q
+    pre, rest = q[:m.start()], q[m.start():]
+    if len(pre) > 120 or len(rest) < 15 or re.search(r"[.?!:;,\"'“”]", pre) or not re.search(r"[A-Z]", pre):
+        return q
+    last = pre.split()[-1].lower() if pre.split() else ""
+    if last in {"through", "of", "in", "on", "for", "to", "by", "with", "from", "at", "about", "is", "are",
+                "was", "were", "the", "a", "an", "and", "or", "that", "into", "under", "between", "among"}:
+        return q                                             # 'flows through Which states?' is one sentence
+    return rest
+
+
+_U_PASSAGE = re.compile(r"^(?:passage|directions?|read the (?:following|passage)|comprehension)\b", re.IGNORECASE)
+_U_KEY_START = re.compile(
+    r"^(?:q(?:ue(?:stion)?|n)?\.?\s*)?(\d{1,4})\s*[\.\):\-–—=]?\s*"
+    r"(?:\(([A-Ja-j]|\d{1,2}|[" + _HI_LETTERS + r"])\)|([A-Ja-j]|[" + _HI_LETTERS + r"]))(?=[\s.,;:|)]|$)\s*(.*)$",
+    re.IGNORECASE)
+
+
 def _u_extract_key_and_exp(lines: List[str], header_tail: str = "") -> Tuple[Dict[int, str], Dict[int, str]]:
-    """Extract answers {num: letter} and explanations {num: text} from an answer block."""
+    """Extract answers {num: letter} and explanations {num: text} from an answer block.
+    'N. (b) why…' lines are answers anywhere in the block (also after an
+    'Explanation:' line); a number at the start of explanation text ('369.01
+    million') is never taken as an answer. First mention of a number wins."""
     key: Dict[int, str] = {}
     exp_lines: Dict[int, List[str]] = {}
     in_exp = False
@@ -792,27 +828,35 @@ def _u_extract_key_and_exp(lines: List[str], header_tail: str = "") -> Tuple[Dic
         s = ln.strip()
         if not s:
             continue
-        if re.search(r"^(?:explanations?|solutions?|व्याख्या)\b", s, re.IGNORECASE):
-            in_exp = True
-            cur_exp_q = None
-            continue
-        if in_exp:
-            m = re.match(r"^(?:Q|q)?\s*(\d{1,3})[\.\:\-\)]\s+(.+)$", s)
-            if m:
-                cur_exp_q = int(m.group(1))
-                txt = m.group(2).strip()
-                exp_lines[cur_exp_q] = [txt] if txt else []
-            elif cur_exp_q is not None and not re.match(r"^\d+$", s):
-                exp_lines[cur_exp_q].append(s)
-        else:
-            ln_c = s.replace("|", " ").strip()
-            if _u_is_key_line(ln_c):
-                pairs = _U_KEY_ITEM.findall(ln_c)
-            else:
-                mm = _U_KEY_ITEM.match(ln_c)
-                pairs = [mm.groups()] if mm else []
+        ln_c = s.replace("|", " ").strip()
+        lone_num = re.fullmatch(r"\d{1,4}[.)]?", ln_c)       # '25.' = end of a sentence, not '2 → 5'
+        pairs = _U_KEY_ITEM.findall(ln_c) if (_u_is_key_line(ln_c) and not lone_num) else []
+        if pairs:                                             # '1-a 2-b 3-c' / '1. B'
             for n, a in pairs:
                 key.setdefault(int(n), a)
+            continue
+        m = _U_KEY_START.match(ln_c)                          # '105. (b) Article 366…'
+        if m:
+            n = int(m.group(1))
+            key.setdefault(n, m.group(2) or m.group(3))
+            cur_exp_q = n
+            rest = (m.group(4) or "").strip()
+            exp_lines.setdefault(n, [rest] if rest else [])
+            continue
+        mh = re.match(r"^(?:explanations?|solutions?|व्याख्या)\b\s*[:\-–]?\s*(.*)$", s, re.IGNORECASE)
+        if mh:
+            in_exp = True
+            if cur_exp_q is not None and mh.group(1):
+                exp_lines.setdefault(cur_exp_q, []).append(mh.group(1))
+            continue
+        if in_exp:
+            m2 = re.match(r"^(?:Q|q)?\s*(\d{1,4})[\.\:\-\)]\s+(.+)$", s)   # '369.01' never matches (no space)
+            if m2 and int(m2.group(1)) > (cur_exp_q or 0):    # next explanation, not a list inside one
+                cur_exp_q = int(m2.group(1))
+                exp_lines[cur_exp_q] = [m2.group(2).strip()]
+                continue
+        if cur_exp_q is not None and not re.match(r"^\d+$", s):
+            exp_lines.setdefault(cur_exp_q, []).append(s)
 
     explanations = {k: re.sub(r"\s+", " ", " ".join(v)).strip() for k, v in exp_lines.items() if " ".join(v).strip()}
     return key, explanations
@@ -850,12 +894,23 @@ def _u_parse_blocks(
                "marked": None, "ans": None, "exp": [], "meta": {}, "in_exp": False}
         blocks.append(cur)
 
+    in_passage = False
     for line in lines:
         if not line:
             blank_before = True
             if cur:
                 cur["in_exp"] = False
             continue
+        if re.fullmatch(r"\d{1,4}", line.strip()) or _U_DOMAIN_LINE.fullmatch(line.strip()):
+            continue                                         # PDF page number / watermark line ('12minutestoclat.com')
+        if _U_PASSAGE.match(line):                           # 'Passage (Q.51-Q.55): …' — not part of any option
+            in_passage = True
+            continue
+        if in_passage:
+            mq = _U_Q.match(line)
+            if not (mq and (mq.group(1) or mq.group(2) or mq.group(3)) and (mq.group(4) or "").strip()):
+                continue                                     # passage text until the next numbered question
+            in_passage = False
 
         m_ans = _U_ANS.match(line)
         if cur and m_ans and cur["opts"]:
@@ -885,6 +940,11 @@ def _u_parse_blocks(
             # roman lists: '(i)' starts one; afterwards i/v/x keep the roman meaning
             if lab.lower() in _ROMAN and (cur["kind"] == "roman" or (expected == 0 and lab.lower() == "i")):
                 kind = "roman"
+            if kind == "letter" and cur["kind"] == "num" and cur["opts"] and lab.lower() == "a":
+                # '1. … 2. … 3. …' were statements; the real options start at (a)
+                cur["q"] += [f"{k + 1}. {o}" for k, o in enumerate(cur["opts"])]
+                cur["opts"], cur["kind"], cur["marked"] = [], None, None
+                expected = 0
             idx = _u_label_index(lab, kind if cur["kind"] in (None, kind) else cur["kind"])
             if kind == "num":
                 # a numbered line is an option only while this question is
@@ -916,6 +976,11 @@ def _u_parse_blocks(
         # plain text line
         if cur and cur["in_exp"]:
             cur["exp"].append(line)
+        elif cur is not None and cur["kind"] == "num" and cur["opts"] and cur["ans"] is None \
+                and line.rstrip().endswith("?") and re.match(r"(?i)(which|how many|select|choose)\b", line):
+            # '1. … 2. … 3. …' were statements and this is the question about them
+            cur["q"] += [f"{k + 1}. {o}" for k, o in enumerate(cur["opts"])] + [line]
+            cur["opts"], cur["kind"], cur["marked"] = [], None, None
         elif cur is None or (cur["opts"] and (blank_before or line.rstrip().endswith("?"))):
             new_q(None, line)                       # unnumbered question
         elif not cur["opts"]:
@@ -927,7 +992,7 @@ def _u_parse_blocks(
     questions, problems = [], []
     for n, b in enumerate(blocks, 1):
         where = f"Q{b['num']}" if b["num"] else f"#{n} “{' '.join(b['q'])[:30]}”"
-        qtext = re.sub(r"\s+", " ", " ".join(b["q"])).strip()
+        qtext = _u_strip_heading(re.sub(r"\s+", " ", " ".join(b["q"])).strip())
         opts = [re.sub(r"\s+", " ", o).strip() for o in b["opts"] if o.strip()]
         if not qtext and not opts:
             continue

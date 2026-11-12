@@ -111,21 +111,21 @@ class BroadcastCommandsMixin:
                     media_preview = "🎬 GIF/Animation"
                     logger.info("Detected animation in broadcast")
 
-                confirm_text = f"📢 Broadcast Confirmation\n\n"
+                confirm_text = "📢 Broadcast Confirmation\n\n"
 
                 if media_type:
                     confirm_text += f"Type: {media_preview}\n"
                     if media_caption:
                         confirm_text += f"Caption: {media_caption[:100]}{'...' if len(media_caption) > 100 else ''}\n"
-                    confirm_text += f"\n"
+                    confirm_text += "\n"
                 else:
-                    confirm_text += f"Forwarding message to:\n"
+                    confirm_text += "Forwarding message to:\n"
 
-                confirm_text += f"Recipients:\n"
+                confirm_text += "Recipients:\n"
                 confirm_text += f"• {len(users)} users\n"
                 confirm_text += f"• {len(groups)} groups\n"
                 confirm_text += f"• Total: {total_targets} recipients\n\n"
-                confirm_text += f"Confirm: /broadcast_confirm"
+                confirm_text += "Confirm: /broadcast_confirm"
 
                 # Store broadcast data
                 if media_type:
@@ -164,18 +164,18 @@ class BroadcastCommandsMixin:
                 groups = await asyncio.to_thread(self.db.get_active_groups)
                 total_targets = len(users) + len(groups)
 
-                confirm_text = f"📢 Broadcast Confirmation\n\n"
+                confirm_text = "📢 Broadcast Confirmation\n\n"
                 confirm_text += f"Message: {cleaned_text[:200]}{'...' if len(cleaned_text) > 200 else ''}\n\n"
 
                 if reply_markup:
                     button_count = sum(len(row) for row in reply_markup.inline_keyboard)
                     confirm_text += f"🔘 Buttons: {button_count} inline button(s)\n\n"
 
-                confirm_text += f"Recipients:\n"
+                confirm_text += "Recipients:\n"
                 confirm_text += f"• {len(users)} users\n"
                 confirm_text += f"• {len(groups)} groups\n"
                 confirm_text += f"• Total: {total_targets} recipients\n\n"
-                confirm_text += f"Confirm: /broadcast_confirm"
+                confirm_text += "Confirm: /broadcast_confirm"
 
                 if context.user_data is not None:
                     context.user_data['broadcast_message'] = cleaned_text
@@ -358,7 +358,7 @@ class BroadcastCommandsMixin:
 
                 if len(base_caption) > 1024:
                     base_caption = base_caption[:1021] + "..."
-                    logger.warning(f"Caption truncated to 1024 chars for broadcast")
+                    logger.warning("Caption truncated to 1024 chars for broadcast")
 
                 # Send to users (PM)
                 for user in users:

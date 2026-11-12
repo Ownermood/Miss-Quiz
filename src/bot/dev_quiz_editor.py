@@ -319,7 +319,7 @@ Select what to edit:"""
             if context.user_data is not None:
                 context.user_data['waiting_for'] = f'quiz_question_{quiz_id}'
             await query.edit_message_text(
-                f"✏️ <b>Edit Question</b>\n\nPlease send the new question text:",
+                "✏️ <b>Edit Question</b>\n\nPlease send the new question text:",
                 parse_mode=ParseMode.HTML
             )
 
@@ -328,7 +328,7 @@ Select what to edit:"""
             if context.user_data is not None:
                 context.user_data['waiting_for'] = f'quiz_options_{quiz_id}'
             await query.edit_message_text(
-                f"""📝 <b>Edit Options</b>
+                """📝 <b>Edit Options</b>
 
 Please send options in this format:
 <code>Option1|Option2|Option3|Option4</code>

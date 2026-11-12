@@ -289,8 +289,8 @@ class QuizCommandsMixin(object):
         # Subject breakdown
         if subject_stats:
             text += (
-                f"<b>𝐒𝐔𝐁𝐉𝐄𝐂𝐓  𝐁𝐑𝐄𝐀𝐊𝐃𝐎𝐖𝐍</b>\n"
-                f"<blockquote>"
+                "<b>𝐒𝐔𝐁𝐉𝐄𝐂𝐓  𝐁𝐑𝐄𝐀𝐊𝐃𝐎𝐖𝐍</b>\n"
+                "<blockquote>"
             )
             for subj, sdata in subject_stats.items():
                 if not isinstance(sdata, dict):
@@ -299,7 +299,7 @@ class QuizCommandsMixin(object):
                 s_correct   = sdata.get("correct",   0)
                 s_acc       = round(s_correct / max(s_attempted, 1) * 100, 1) if s_attempted else 0
                 text += f"{html.escape(subj[:18])}   ›  {s_acc}%  ({s_correct}/{s_attempted})\n"
-            text += f"</blockquote>\n\n"
+            text += "</blockquote>\n\n"
 
         # Insights
         insights = []
@@ -481,8 +481,8 @@ class QuizCommandsMixin(object):
         )
 
         kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🔄 Refresh", callback_data="bs_refresh", style="primary"),
-             InlineKeyboardButton("⬅️ Back", callback_data="ap:home", style="danger")],   # back to Admin Panel
+            [InlineKeyboardButton("⬅️ Back", callback_data="ap:home", style="danger"),
+             InlineKeyboardButton("🔄 Refresh", callback_data="bs_refresh", style="primary")],   # back to Admin Panel
         ])
 
         await self._edit(wait, text, kb)

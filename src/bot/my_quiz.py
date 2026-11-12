@@ -12,13 +12,14 @@ import datetime
 import html
 import io
 import logging
+import os
 import random
 import secrets
 import time
 import urllib.parse
 from typing import Dict, List, Optional, Tuple
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputFile, Poll, Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputFile, Poll, Update, WebAppInfo
 from telegram.constants import ParseMode
 from telegram.ext import ApplicationHandlerStop, ContextTypes
 
@@ -82,6 +83,11 @@ def _btn(text: str, data: str, style: Optional[str] = None) -> InlineKeyboardBut
     return InlineKeyboardButton(text, callback_data=data, style=style)
 
 
+def _is_private(update) -> bool:
+    chat = getattr(update, "effective_chat", None)
+    return getattr(chat, "type", "") == "private"
+
+
 def _fmt_total_time(total_secs: int) -> str:
     if total_secs < 60:
         return f"{total_secs} sec"
@@ -124,8 +130,9 @@ def parse_questions(text: str, items: Optional[List[Dict]] = None,
     out = []
     for it in raw:
         raw_q = " ".join(str(it.get("question") or "").split())
-        q = clean_text(raw_q, custom_words, is_option=False)
-        opts = [clean_text(str(o).strip(), custom_words, is_option=True) for o in it.get("options") or []]
+        q = clean_text(raw_q, custom_words, is_option=False) or raw_q
+        opts = [clean_text(str(o).strip(), custom_words, is_option=True) or str(o).strip()
+                for o in it.get("options") or []]       # never let cleaning empty a real option
         c = it.get("correct_answer")
         where = f"“{q[:30]}”"
         if len(q) < 3:
@@ -349,27 +356,68 @@ class MyQuizMixin:
             body = "✏️ <b>CREATE NEW QUIZ</b>\n"
 
         if d.get("note"):
-            body += f"💡 <i>{html.escape(d['note'])}</i>\n\n"
+            body += f"💡 <i>{html.escape(d['note'])}</i>\n"
+        if not q_count:
+            body += ("<blockquote>1️⃣ Send your questions here — a file (PDF, DOCX, TXT, CSV, XLSX…), "
+                     "pasted text, or forwarded quiz polls\n"
+                     "2️⃣ I show how many questions I found\n"
+                     "3️⃣ Tap Next — name, timer, marking — done!</blockquote>\n<i>Send them now 👇</i>")
+        elif q_count < MIN_Q:
+            body += f"<i>Add at least {MIN_Q} questions, then tap Next.</i>"
         else:
-            body += HELP + "\n\n"
+            body += "<i>Send more, or tap Next.</i>"
 
+        # One clear action at a time: Save when there is something to save, else only Cancel.
         rows: List[List[InlineKeyboardButton]] = []
         if q_count >= MIN_Q:
-            if d.get("fname"):
-                rows.append([_btn(f"⚡ Quick Save “{d['fname'][:22]}” ({q_count} Qs)", "mq_qsave", "success")])
-                rows.append([_btn("✏️ Custom Name & Save", "mq_done", "primary")])
-            else:
-                rows.append([_btn(f"✅ Save Quiz ({q_count} Qs)", "mq_done", "success")])
-            rows.append([_btn("📚 My Quizzes", "mq_list", None), _btn("❌ Cancel", "mq_cancel", "danger")])
-        else:
-            rows.append([_btn("📚 My Quizzes", "mq_list", None), _btn("❌ Cancel", "mq_cancel", "danger")])
-            rows.append([_btn("🏠 Home", "nav_home", "primary")])
+            rows.append([_btn(f"➡️ Next: Set up quiz ({q_count} Qs)", "mq_done", "success")])
+        rows.append([_btn("❌ Cancel", "mq_cancel", "danger")])
         return body, InlineKeyboardMarkup(rows)
+
+    # ── setup steps after questions are ready (one message, edited) ──────
+
+    WZ_TIMERS = (10, 15, 20, 30, 45, 60)
+    WZ_NEG = (0.25, 0.33, 0.5)
+
+    @staticmethod
+    def _mq_wizard_view(d: Dict, step: str) -> Tuple[str, InlineKeyboardMarkup]:
+        n = len(d["qs"])
+        title = d.get("title") or d.get("default") or "My Quiz"
+        secs, neg = int(d.get("secs") or 20), float(d.get("neg") or 0)
+        summary = (f"<blockquote>✅ Questions › {n}\n🏷 Name › {html.escape(title)}"
+                   + (f"\n⏱ Timer › {secs}s" if step in ("neg", "shuf") else "")
+                   + (f"\n⚖️ Negative › {'−' + format(neg, 'g') if neg else 'OFF'}" if step == "shuf" else "")
+                   + "</blockquote>\n")
+        back_cancel = [_btn("⬅️ Back", f"mq_wb:{step}", "danger"), _btn("❌ Cancel", "mq_cancel", "danger")]
+        if step == "name":
+            text = (f"🏷 <b>STEP 1/4 · NAME</b>\n<blockquote>✅ Questions › {n}</blockquote>\n"
+                    f"Suggested › <b>{html.escape(title)}</b>\n<i>Tap to use it, or type a new name in chat.</i>")
+            rows = [[_btn(f"✅ Use “{title[:28]}”", "mq_name", "success")],
+                    [_btn("⬅️ Add more", "mq_back", "danger"), _btn("❌ Cancel", "mq_cancel", "danger")]]
+        elif step == "timer":
+            text = ("⏱ <b>STEP 2/4 · TIMER</b>\n" + summary +
+                    "<i>Time for each question (20s suits most quizzes).</i>")
+            opts = [_btn(("✅ " if t == secs else "") + (f"{t}s" if t < 60 else "1m"), f"mq_wt:{t}", None)
+                    for t in MyQuizMixin.WZ_TIMERS]
+            rows = [opts[:3], opts[3:], back_cancel]
+        elif step == "neg":
+            text = ("⚖️ <b>STEP 3/4 · NEGATIVE MARKING</b>\n" + summary +
+                    "<i>Marks cut for each wrong answer. Most quizzes use none.</i>")
+            rows = [[_btn("✅ No negative" if not neg else "No negative", "mq_wn:0", "success")],
+                    [_btn(("✅ " if neg == v else "") + f"−{v:g}", f"mq_wn:{v}", None) for v in MyQuizMixin.WZ_NEG],
+                    back_cancel]
+        else:
+            text = ("🔀 <b>STEP 4/4 · ORDER</b>\n" + summary +
+                    "<i>Shuffle = every game asks the questions in a new order (stops copying).</i>")
+            rows = [[_btn("🔀 Shuffle questions & Save", "mq_ws:1", "success")],
+                    [_btn("📋 Keep file order & Save", "mq_ws:0", "primary")],
+                    back_cancel]
+        return text, InlineKeyboardMarkup(rows)
 
     @staticmethod
     def _mq_list_view(sets: List[Dict], page: int, pages: int, total: int = 0) -> Tuple[str, InlineKeyboardMarkup]:
         from src.bot.battle import _tlabel
-        head = (f"📚 <b>YOUR QUIZZES</b>" + (f" · Page {page}/{pages}" if pages > 1 else "") + f"  ·  Total: <b>{total or len(sets)}</b>\n")
+        head = ("📚 <b>YOUR QUIZZES</b>" + (f" · Page {page}/{pages}" if pages > 1 else "") + f"  ·  Total: <b>{total or len(sets)}</b>\n")
         if not sets:
             body = head + "\n<i>You haven't created any quizzes yet. Tap below to build your first quiz!</i>"
             return body, InlineKeyboardMarkup([[_btn("➕ Create New Quiz", "mq_new", "success")],
@@ -393,7 +441,7 @@ class MyQuizMixin:
             q_cnt = s.get("count") or 0
             item_rows.append([_btn(f"📝 {s.get('title', 'Quiz')[:26]} · {q_cnt}Q", f"mq_open:{s['id']}", None)])
         nav_rows = page_rows(pages, page, lambda p: f"mq_list:{p}")
-        foot = [_btn("➕ Create New", "mq_new", "success"), _btn("🏠 Home", "nav_home", "primary")]
+        foot = [_btn("🏠 Home", "nav_home", "primary"), _btn("➕ Create New", "mq_new", "success")]   # main action on the right
         return body, InlineKeyboardMarkup(item_rows + nav_rows + [foot])
 
     async def _mq_page(self, owner: int, page: int = 1):
@@ -401,14 +449,15 @@ class MyQuizMixin:
         return await load_page(call("list_quiz_sets"), call("count_quiz_sets"), owner, page)
 
     @staticmethod
-    def _mq_card_view(qs: Dict, saved: bool = False, bot_username: str = "", is_owner: bool = True):
+    def _mq_card_view(qs: Dict, saved: bool = False, bot_username: str = "", is_owner: bool = True,
+                      private: bool = False):
         sid = str(qs.get("id", ""))
         title = html.escape(str(qs.get("title", "Quiz")))
         q_count = int(qs.get("count") or len(qs.get("questions") or []))
         secs = int(qs.get("secs") or 20)
         total_time = _fmt_total_time(q_count * secs)
         shuffle_str = "ON" if qs.get("shuffle") else "OFF"
-        neg_val = float(qs.get("negative_rate") if qs.get("negative_rate") is not None else 0.25)
+        neg_val = float(qs.get("negative_rate") or 0)
         neg_str = f"-{neg_val} marks" if neg_val > 0 else "No Negative"
         attempts = int(qs.get("plays") or 0)
         files_cnt = len(qs.get("source_files") or [])
@@ -440,6 +489,12 @@ class MyQuizMixin:
             ])
         else:
             rows.append([_btn("▶️ Play Solo (Quiz)", f"mq_prac:{sid}", "success")])
+
+        # Mini App player (web_app buttons only work in private chats; off unless MINI_APP_URL is set)
+        app_base = os.environ.get("MINI_APP_URL", "").strip().rstrip("/")
+        if private and app_base.startswith("https://"):
+            rows.append([InlineKeyboardButton(
+                "📱 Open in App", web_app=WebAppInfo(url=f"{app_base}/app?sid={urllib.parse.quote(sid)}"))])
 
         # Row 2: 1v1 Battle & Interactive Flashcards (Clean Dark Glass)
         rows.append([
@@ -499,7 +554,8 @@ class MyQuizMixin:
             await self._reply(update, "❌ <b>This quiz was not found or has been deleted by its creator.</b>")
             return
         is_owner = bool(user and qs.get("owner") == user.id)
-        text, kb = self._mq_card_view(qs, bot_username=context.bot.username, is_owner=is_owner)
+        text, kb = self._mq_card_view(qs, bot_username=context.bot.username, is_owner=is_owner,
+                                      private=_is_private(update))
         await self._reply(update, text, reply_markup=kb)
 
     async def mq_open_list(self, update: Update, context, query=None, page: int = 1):
@@ -612,7 +668,9 @@ class MyQuizMixin:
         if d["stage"] == "name":
             plain = (msg.text or "").strip()
             if plain and "\n" not in plain and not msg.document and not msg.poll and not msg.photo:
-                await self._mq_save(context, user, d, " ".join(plain.split())[:60])
+                d["title"] = " ".join(plain.split())[:60]
+                d["stage"] = "wizard"
+                await self._mq_show(context, d, *self._mq_wizard_view(d, "timer"))
                 return
             d["stage"] = "collect"
 
@@ -716,14 +774,14 @@ class MyQuizMixin:
         if custom:
             body += f"✏️ <b>Type how many questions to add</b> (1–{total}):\n<i>Example: 25</i>"
             rows = [[_btn(f"📥 Full File · All {total} Qs", "mq_pick:0", "success")],
-                    [_btn("⬅️ Back", "mq_pickb", None), _btn("❌ Discard File", "mq_pickx", "danger")]]
+                    [_btn("❌ Discard File", "mq_pickx", "danger"), _btn("⬅️ Back", "mq_pickb", None)]]
             return body, InlineKeyboardMarkup(rows)
         body += "<i>How many questions do you want to add? (taken in file order)</i>"
         opts = [n for n in (10, 20, 30, 50, 100) if n < total]
-        btns = [_btn(f"{n} Qs", f"mq_pick:{n}", "primary") for n in opts]
+        btns = [_btn(f"{n} Qs", f"mq_pick:{n}", None) for n in opts]          # plain: just choices
         rows = [btns[i:i + 3] for i in range(0, len(btns), 3)]
         rows.append([_btn(f"📥 Full File · All {total} Qs", "mq_pick:0", "success")])
-        rows.append([_btn("✏️ Custom Number", "mq_pickc", None), _btn("❌ Discard File", "mq_pickx", "danger")])
+        rows.append([_btn("❌ Discard File", "mq_pickx", "danger"), _btn("✏️ Custom Number", "mq_pickc", None)])
         return body, InlineKeyboardMarkup(rows)
 
     @staticmethod
@@ -821,16 +879,17 @@ class MyQuizMixin:
             f"<i>Select an option below to modify questions or settings:</i>"
         )
         kb = InlineKeyboardMarkup([
-            [_btn("📝 Edit Questions", f"mq_ql:{sid}:1", "success"),
-             _btn("➕ Add Questions", f"mq_add:{sid}", "success")],
+            # calm: plain options; red only for Delete and Back
+            [_btn("📝 Edit Questions", f"mq_ql:{sid}:1", None),
+             _btn("➕ Add Questions", f"mq_add:{sid}", None)],
             [_btn("🏷 Rename", f"mq_rename:{sid}", None),
              _btn("⏱ Timer", f"mq_timer:{sid}", None)],
-            [_btn("🔀 Shuffle: ON" if shuffle_on else "🔀 Shuffle: OFF", f"mq_shuffle:{sid}",
-                  "success" if shuffle_on else None),
+            [_btn("🔀 Shuffle: ON" if shuffle_on else "🔀 Shuffle: OFF", f"mq_shuffle:{sid}", None),
              _btn("📎 Attach File", f"mq_attach:{sid}", None)],
+            *([[_btn("🔄 Re-read file (fix questions)", f"mq_reread:{sid}", None)]] if files_cnt else []),
             [_btn("🗑 Delete Quiz", f"mq_del:{sid}", "danger")],
             [_btn("⬅️ Back to Quiz", f"mq_open:{sid}", "danger"),
-             _btn("🏠 Home", "nav_home", "primary")],
+             _btn("🏠 Home", "nav_home", None)],
         ])
         return text, kb
 
@@ -848,10 +907,10 @@ class MyQuizMixin:
             label = (label[:38] + "…") if len(label) > 39 else label
             rows.append([_btn(f"{i + 1}. {label}", f"mq_qv:{sid}:{i}", None)])
         rows += page_rows(pages, page, lambda p: f"mq_ql:{sid}:{p}")
-        rows.append([_btn("➕ Add Questions", f"mq_add:{sid}", "success"),
-                     _btn("⬅️ Back", f"mq_edit:{sid}", "danger")])
+        rows.append([_btn("⬅️ Back", f"mq_edit:{sid}", "danger"),
+                     _btn("➕ Add Questions", f"mq_add:{sid}", "success")])
         text = (
-            f"📝  <b>EDIT QUESTIONS</b>" + (f"  ·  Page {page}/{pages}" if pages > 1 else "") + "\n"
+            "📝  <b>EDIT QUESTIONS</b>" + (f"  ·  Page {page}/{pages}" if pages > 1 else "") + "\n"
             f"<blockquote><b>{html.escape(str(qs.get('title', 'Quiz')))}  ·  {len(questions)} Questions</b></blockquote>\n"
             f"<i>Tap a question below to edit its text, options, answer, or delete it:</i>"
         )
@@ -886,8 +945,8 @@ class MyQuizMixin:
             [_btn("✏️ Rewrite", f"mq_qe:{sid}:{idx}", "success"),
              _btn("🔑 Change Answer", f"mq_qa:{sid}:{idx}", None)],
             [_btn("🗑 Delete Question", f"mq_qd:{sid}:{idx}", "danger")],
-            [_btn("📋 All Questions", f"mq_ql:{sid}:{idx // 8 + 1}", None),
-             _btn("⬅️ Back", f"mq_edit:{sid}", "danger")],
+            [_btn("⬅️ Back", f"mq_edit:{sid}", "danger"),
+             _btn("📋 All Questions", f"mq_ql:{sid}:{idx // 8 + 1}", None)],
         ]
         return text, InlineKeyboardMarkup(rows)
 
@@ -962,11 +1021,15 @@ class MyQuizMixin:
         qs_list = list(d["qs"])
         files_list = list(d.get("files") or [])
         context.user_data.pop("mq_draft", None)
-        sid = await self._mq_db("create_quiz_set", user.id, title[:60], qs_list, 20)
+        secs, neg, shuf = int(d.get("secs") or 20), float(d.get("neg") or 0), bool(d.get("shuffle", False))
+        sid = await self._mq_db("create_quiz_set", user.id, title[:60], qs_list, secs)
         if not isinstance(sid, str) or not sid:
             sid = secrets.token_hex(4)
-        if files_list and self.db and hasattr(self.db, "update_quiz_set"):
-            await self._mq_db("update_quiz_set", sid, user.id, {"source_files": files_list})
+        extra = {"negative_rate": neg, "shuffle": shuf}
+        if files_list:
+            extra["source_files"] = files_list
+        if self.db and hasattr(self.db, "update_quiz_set"):
+            await self._mq_db("update_quiz_set", sid, user.id, extra)
         now_iso = datetime.datetime.utcnow().isoformat()
         doc = {
             "id": sid,
@@ -974,17 +1037,52 @@ class MyQuizMixin:
             "title": title[:60],
             "count": len(qs_list),
             "questions": qs_list,
-            "secs": 20,
+            "secs": secs,
             "plays": 0,
-            "shuffle": False,
+            "shuffle": shuf,
+            "negative_rate": neg,
             "source_files": files_list,
             "created_at": now_iso,
         }
         logger.info(f"[MYQUIZ] saved {sid} '{title}' ({len(qs_list)} Q, {len(files_list)} files) for {user.id}")
-        card_text, kb = self._mq_card_view(doc, saved=True, bot_username=context.bot.username, is_owner=True)
+        card_text, kb = self._mq_card_view(doc, saved=True, bot_username=context.bot.username, is_owner=True,
+                                           private=True)  # the create wizard runs only in DM
         await self._mq_show(context, d, card_text, kb)
 
     # ── callbacks ────────────────────────────────────────────────────────
+
+    @staticmethod
+    async def _mq_open_dm(query, context, param: str) -> None:
+        """From a group button: open the bot's DM at /start <param> directly
+        (answerCallbackQuery url) — nothing is posted in the group."""
+        bot_user = getattr(context.bot, "username", "") or ""
+        try:
+            await query.answer(url=f"https://t.me/{bot_user}?start={param}")
+        except Exception:
+            await query.answer("Open my DM to continue 📚", show_alert=True)
+
+    async def _mq_reread_files(self, context, qs: Dict) -> Tuple[List[Dict], List[Dict]]:
+        """Download the quiz's own source files again and parse them with the current reader."""
+        from src.bot.file_extract import extract
+        out, problems, seen = [], [], set()
+        for f in qs.get("source_files") or []:
+            if not f.get("file_id"):
+                continue
+            try:
+                tg_file = await context.bot.get_file(f["file_id"], read_timeout=60)
+                data = bytes(await tg_file.download_as_bytearray(read_timeout=60))
+                items, text, _note = await asyncio.to_thread(extract, f.get("file_name") or "file", data)
+                got, probs = await asyncio.to_thread(parse_questions, text, items)
+            except Exception as e:
+                logger.warning(f"[MYQUIZ] re-read {f.get('file_name')} failed: {e}")
+                continue
+            problems += probs
+            for q in got:
+                k = q["question"].lower()
+                if k not in seen:
+                    seen.add(k)
+                    out.append(q)
+        return out, problems
 
     async def handle_my_quiz_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         query, user = update.callback_query, update.effective_user
@@ -1073,7 +1171,7 @@ class MyQuizMixin:
             await self._bt_edit(query, *self._mq_collect_view(d))
             return
 
-        if action in ("mq_done", "mq_qsave", "mq_name", "mq_cancel", "mq_back"):
+        if action in ("mq_done", "mq_qsave", "mq_name", "mq_cancel", "mq_back", "mq_wt", "mq_wn", "mq_ws", "mq_wb"):
             if not d:
                 await query.answer("This quiz draft has ended.", show_alert=True)
                 return
@@ -1109,36 +1207,51 @@ class MyQuizMixin:
                 n = await self._mq_db("count_quiz_sets", user.id, default=0)
                 d["stage"] = "name"
                 d["default"] = d.get("fname") or f"My Quiz {(n if isinstance(n, int) else 0) + 1}"
+                d.setdefault("secs", 20)
+                d.setdefault("neg", 0.0)
                 d["msg"] = query.message.message_id
                 await query.answer()
-                await self._bt_edit(
-                    query,
-                    f"🏷  <b>NAME YOUR QUIZ</b>\n<blockquote><b>✅ {len(d['qs'])} questions ready</b></blockquote>\n"
-                    f"<i>Type a name in chat, or tap the suggested title below:</i>",
-                    InlineKeyboardMarkup([[_btn(f"✅ Use “{d['default'][:28]}”", "mq_name", "success")],
-                                          [_btn("⬅️ Add More", "mq_back", "danger"),
-                                           _btn("❌ Cancel", "mq_cancel", "danger")]]))
+                await self._bt_edit(query, *self._mq_wizard_view(d, "name"))
+                return
+            d["msg"] = query.message.message_id
+            if action == "mq_name":                      # suggested name → timer
+                d["title"] = d.get("title") or d.get("default") or "My Quiz"
+                d["stage"] = "wizard"
+                await query.answer()
+                await self._bt_edit(query, *self._mq_wizard_view(d, "timer"))
+                return
+            if action == "mq_wt":
+                d["secs"] = max(5, min(int(arg) if arg.isdigit() else 20, 600))
+                await query.answer()
+                await self._bt_edit(query, *self._mq_wizard_view(d, "neg"))
+                return
+            if action == "mq_wn":
+                try:
+                    d["neg"] = max(0.0, min(float(arg), 1.0))
+                except ValueError:
+                    d["neg"] = 0.0
+                await query.answer()
+                await self._bt_edit(query, *self._mq_wizard_view(d, "shuf"))
+                return
+            if action == "mq_ws":
+                d["shuffle"] = arg == "1"
+                await query.answer("Saving quiz… ✅")
+                await self._mq_save(context, user, d, d.get("title") or d.get("default") or "My Quiz")
+                return
+            if action == "mq_wb":                        # back one step
+                prev = {"timer": "name", "neg": "timer", "shuf": "neg"}.get(arg, "name")
+                d["stage"] = "name" if prev == "name" else "wizard"
+                await query.answer()
+                await self._bt_edit(query, *self._mq_wizard_view(d, prev))
                 return
             await query.answer()
-            if d["stage"] == "name":
-                d["msg"] = query.message.message_id
-                await self._mq_save(context, user, d, d.get("default") or "My Quiz")
             return
 
         if action == "mq_list":
             self._mq_clear_modes(context)
             if query.message and query.message.chat and query.message.chat.type != "private":
-                bot_user = getattr(context.bot, "username", "") or ""
-                await query.answer("Open my DM to view your quizzes! 📚")
-                if bot_user:
-                    await query.message.reply_text(
-                        "📚 <b>Your custom quizzes &amp; study materials are in my DM:</b>",
-                        parse_mode=ParseMode.HTML,
-                        reply_markup=InlineKeyboardMarkup([[
-                            InlineKeyboardButton("📚 Open My Quizzes", url=f"https://t.me/{bot_user}?start=mq"),
-                            InlineKeyboardButton("➕ Create New Quiz", url=f"https://t.me/{bot_user}?start=mq_new", style="success"),
-                        ]])
-                    )
+                # group: open my DM straight away — no new message in the group chat
+                await self._mq_open_dm(query, context, "mq")
                 return
             await query.answer()
             await self.mq_open_list(update, context, query, int(arg) if arg.isdigit() else 1)
@@ -1147,17 +1260,7 @@ class MyQuizMixin:
         if action == "mq_new":
             self._mq_clear_modes(context)
             if query.message and query.message.chat and query.message.chat.type != "private":
-                bot_user = getattr(context.bot, "username", "") or ""
-                await query.answer("Quizzes are created in my DM! ✏️")
-                if bot_user:
-                    await query.message.reply_text(
-                        "✨ <b>CREATE YOUR OWN QUIZ</b>\n"
-                        "<i>Tap below to create a quiz from PDF, DOCX, Text, or Polls in my DM:</i>",
-                        parse_mode=ParseMode.HTML,
-                        reply_markup=InlineKeyboardMarkup([[
-                            InlineKeyboardButton("➕ Create New Quiz in DM", url=f"https://t.me/{bot_user}?start=mq_new", style="success")
-                        ]])
-                    )
+                await self._mq_open_dm(query, context, "mq_new")
                 return
             await query.answer()
             await self.mq_start_draft(query, context, user)
@@ -1173,7 +1276,7 @@ class MyQuizMixin:
         is_owner = (qs.get("owner") == user.id)
         owner_only_actions = {"mq_edit", "mq_rename", "mq_timer", "mq_settimer", "mq_shuffle", "mq_attach",
                               "mq_del", "mq_delok", "mq_ql", "mq_qv", "mq_qe", "mq_qa", "mq_qas", "mq_qd",
-                              "mq_qdok", "mq_add", "mq_adddone"}
+                              "mq_qdok", "mq_add", "mq_adddone", "mq_reread", "mq_rereadok"}
         if action in owner_only_actions and not is_owner:
             await query.answer("⛔ Only the creator of this quiz can edit or delete it.", show_alert=True)
             return
@@ -1184,7 +1287,8 @@ class MyQuizMixin:
         if action == "mq_open":
             self._mq_clear_modes(context)
             await query.answer()
-            await self._bt_edit(query, *self._mq_card_view(qs, bot_username=context.bot.username, is_owner=is_owner))
+            await self._bt_edit(query, *self._mq_card_view(qs, bot_username=context.bot.username, is_owner=is_owner,
+                                                           private=_is_private(update)))
 
         elif action == "mq_ql":
             self._mq_clear_modes(context)
@@ -1327,6 +1431,38 @@ class MyQuizMixin:
             self._mq_clear_modes(context)
             await query.answer()
             await self._bt_edit(query, *self._mq_editor_view(qs))
+
+        elif action == "mq_reread":
+            names = ", ".join(html.escape(str(f.get("file_name") or "file"))
+                              for f in (qs.get("source_files") or []) if f.get("kind") != "photo")[:200]
+            await query.answer()
+            await self._bt_edit(
+                query,
+                f"🔄 <b>RE-READ FILE</b>\n<blockquote>📎 {names or 'attached file'}\n"
+                f"❓ Questions now › {len(questions)}</blockquote>\n"
+                f"<i>The file is read again with the improved reader and the questions are replaced. "
+                f"Quiz ID, link, plays and group progress stay. Your manual question edits are replaced too.</i>",
+                InlineKeyboardMarkup([[_btn("❌ Cancel", f"mq_edit:{sid}", "danger"),
+                                       _btn("🔄 Re-read now", f"mq_rereadok:{sid}", "success")]]))
+
+        elif action == "mq_rereadok":
+            await query.answer("Reading the file… ⏳")
+            new_qs, problems = await self._mq_reread_files(context, qs)
+            if not new_qs:
+                await self._bt_edit(query, "⚠️ <b>Couldn't read questions from the attached file.</b>\n"
+                                           "<i>Nothing was changed.</i>",
+                                    InlineKeyboardMarkup([[_btn("⬅️ Back", f"mq_edit:{sid}", "danger")]]))
+                return
+            old_n = len(questions)
+            if 0 < old_n < 0.9 * len(new_qs):          # quiz was made from part of the file → keep that size
+                new_qs = new_qs[:old_n]
+            await self._mq_db("update_quiz_set", sid, user.id, {"questions": new_qs, "count": len(new_qs)})
+            await self._bt_edit(
+                query,
+                f"✅ <b>File re-read!</b>\n<blockquote>❓ Questions › {old_n} → {len(new_qs)}\n"
+                f"⚠️ Skipped › {len(problems)}</blockquote>",
+                InlineKeyboardMarkup([[_btn("⬅️ Back", f"mq_edit:{sid}", "danger"),
+                                       _btn("▶️ Open Quiz", f"mq_open:{sid}", "success")]]))
 
         elif action == "mq_shuffle":
             new_shuf = not bool(qs.get("shuffle"))

@@ -77,7 +77,8 @@ class QuizManager:
 
         raw = self._load_questions()
         self._migrate_option_lengths(raw)   # reuse the same fetch — no 2nd full scan
-        self.sanitize_existing_questions(raw)
+        # No automatic DB rewrite here: cleaning happens on import and on read
+        # (in memory). Permanent cleanup only from the admin's own button.
 
     # ─── Internal helpers ────────────────────────────────────────────────────
 
@@ -422,7 +423,6 @@ class QuizManager:
             self.last_question_time.clear()
 
             raw           = self.db.get_all_questions()         # outside lock (I/O)
-            self.sanitize_existing_questions(raw)               # permanently clean DB records on reload
             new_questions = [_fmt_question(q) for q in raw]    # outside lock (CPU)
 
             with self._questions_lock:

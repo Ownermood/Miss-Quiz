@@ -135,7 +135,7 @@ class AdminPanelMixin:
     def _panel_kb(self, is_owner: bool) -> InlineKeyboardMarkup:
         admin_row = [btn("Admins List", "users", None, callback_data="ap:team")]
         if is_owner:
-            admin_row.append(btn("Restart Bot", "warn", RED, callback_data="ap:restart"))
+            admin_row.append(btn("Restart Bot", "warn", GREEN, callback_data="ap:restart"))
 
         rows = [
             # 1. Primary Question Bank Action (Green)
@@ -176,13 +176,14 @@ class AdminPanelMixin:
 
     async def _panel_text(self) -> str:
         q = self._q_count()
-        users = groups = admin_g = 0
+        users = groups = admin_g = not_admin = 0
         if self.db:
             try:
                 st = await asyncio.to_thread(self.db.get_user_engagement_stats)
                 users = st.get("total_users", 0)
                 c = await asyncio.to_thread(self.db.count_groups_by_admin)
                 groups, admin_g = c["total"], c["admin"]
+                not_admin = c.get("not_admin", groups - admin_g)
             except Exception as ex:
                 logger.warning(f"[ADMIN PANEL] stats failed: {ex}")
         return (
@@ -190,7 +191,10 @@ class AdminPanelMixin:
             f"<blockquote><b>1️⃣ LIVE SYSTEM OVERVIEW\n"
             f"• Question Bank  ›  {q:,}\n"
             f"• Total Users    ›  {users:,}\n"
-            f"• Total Groups   ›  {groups:,}  (Active: {admin_g} · Paused: {groups - admin_g})</b></blockquote>\n"
+            f"• Total Groups   ›  {groups:,}\n"
+            f"   ✅ Quiz ON › {admin_g}  ·  ⏸ Not admin › {not_admin}"
+            + (f"  ·  ❔ Not checked › {groups - admin_g - not_admin}" if groups - admin_g - not_admin else "")
+            + "</b></blockquote>\n"
             f"<blockquote><b>2️⃣ ADMIN COMMAND SHORTCUTS\n"
             f"• /check — Live RAM, CPU &amp; Uptime Health\n"
             f"• /cleanup — Sanitize DB &amp; Clear Stale Loops\n"
@@ -452,8 +456,8 @@ class AdminPanelMixin:
                     await dev.broadcast(_UpdProxy(update, _MsgProxy(msg, "/broadcast", reply_to=msg)), context)
                 await self._reply(update, f"{e('signal')} <b>Send this broadcast?</b>",
                                   reply_markup=InlineKeyboardMarkup([
-                                      [btn("Send now", "check", GREEN, callback_data="ap:bc_yes"),
-                                       btn("Cancel", "cross", RED, callback_data="ap:bc_no")]]))
+                                      [btn("Cancel", "cross", RED, callback_data="ap:bc_no"),
+                                       btn("Send now", "check", GREEN, callback_data="ap:bc_yes")]]))
         elif key == "find":
             ud.pop("ap_await", None)
             f_text, f_kb = self._find_results((msg.text or "").strip(), user.id)
@@ -503,8 +507,8 @@ class AdminPanelMixin:
             lines.append("<b>No admins yet.</b>")
         rows = []
         if self._can_manage_admins(viewer):
-            rows.append([btn("Add Admin", "plus", GREEN, callback_data="ap:adm_add"),
-                         btn("Remove Admin", "trash", RED, callback_data="ap:adm_rm")])
+            rows.append([btn("Remove Admin", "trash", RED, callback_data="ap:adm_rm"),
+                         btn("Add Admin", "plus", GREEN, callback_data="ap:adm_add")])
         rows.append([btn("Back", "back", RED, callback_data="ap:home")])
         return "\n".join(lines), InlineKeyboardMarkup(rows)
 
@@ -802,8 +806,8 @@ class AdminPanelMixin:
         for x in hits[:limit]:
             qid = x.get("id")
             lines.append(f"<b>#{qid}</b> {_h.escape((x.get('question') or '')[:70])}")
-            rows.append([btn(f"Edit #{qid}", "edit", BLUE, callback_data=f"edit_quiz_select_{qid}"),
-                         btn(f"Delete #{qid}", "trash", RED, callback_data=f"dq_ask_{qid}_{user_id}")])
+            rows.append([btn(f"Delete #{qid}", "trash", RED, callback_data=f"dq_ask_{qid}_{user_id}"),
+                         btn(f"Edit #{qid}", "edit", BLUE, callback_data=f"edit_quiz_select_{qid}")])
         return "\n".join(lines), InlineKeyboardMarkup(rows + [again, back])
 
     # ── start photo (stored in settings, cached in memory) ───────────────

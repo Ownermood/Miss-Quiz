@@ -531,7 +531,7 @@ async def test_main_card_layout_and_bot_quiz_one_tap():
     b = next(iter(app._bt_state().values()))
     _, kb = app._bt_setup_view(b, "mode", "MissQuizBot")
     rows = [[(x.text, x.style) for x in r] for r in kb.inline_keyboard]
-    assert rows == [[("📝 Create Own Quiz", "success")],
+    assert rows == [[("➕ Create Own Quiz", "success")],
                     [("📚 My Quizzes", "primary"), ("🤖 Bot Quiz", "primary")],
                     [("⚙️ Customize", "primary")],
                     [("❌ Cancel", "danger")]]
@@ -559,11 +559,12 @@ async def test_customize_plain_options_typing_and_create():
     await press(app, ctx, a, f"bt_p:{b.id}:cust")
     _, kb = app._bt_setup_view(b, "cust")
     rows = [[(x.text, x.style) for x in r] for r in kb.inline_keyboard]
-    assert rows[0] == [("10s", None), ("15s", None), ("✅ 20s", None)]      # no colour on options
-    assert rows[1] == [("25s", None), ("30s", None), ("1m", None)]
-    assert rows[2] == [("🎯 Questions: 10", None)]
-    assert rows[3] == [("⬅️ Back", "danger"), ("❌ Cancel", "danger")]
+    assert rows[0] == [("10s", None), ("15s", None)]                    # 2 per row, no colour
+    assert rows[1] == [("✅ 20s", "success"), ("25s", None)]             # current = green
+    assert rows[2] == [("30s", None), ("1m", None)]
+    assert rows[3] == [("🎯 Questions: 10", None)]
     assert rows[4] == [("⚔️ Create Challenge", "success")]
+    assert rows[5] == [("⬅️ Back", "danger"), ("❌ Cancel", "danger")]
     await press(app, ctx, a, f"bt_t:{b.id}:25")                         # stays on Customize
     assert b.secs == 25 and b.state == "setup" and "CUSTOMIZE" in app._last_edit
     upd, m = text_update(a, "hi everyone")                              # normal chat ignored
@@ -600,7 +601,7 @@ def _quiz_app():
     real.quiz_sets_col = mongomock.MongoClient().db.quiz_sets
     real.battles_col = mongomock.MongoClient().db.battles
     for name in ("create_quiz_set", "get_quiz_set", "list_quiz_sets", "count_quiz_sets",
-                 "delete_quiz_set", "save_battle", "get_battle", "delete_battle", "open_battles_of"):
+                 "delete_quiz_set", "update_quiz_set", "save_battle", "get_battle", "delete_battle", "open_battles_of"):
         setattr(app.db, name, getattr(real, name))
     return app, real
 
@@ -664,12 +665,22 @@ async def test_create_own_quiz_text_poll_dedupe_name_and_save():
     assert len(d["qs"]) == 4
 
     q = await press_mq(app, ctx, a, "mq_done")
-    assert d["stage"] == "name" and "NAME YOUR QUIZ" in q.edit_message_text.await_args.args[0]
-    with pytest.raises(ApplicationHandlerStop):
+    assert d["stage"] == "name" and "STEP 1/4" in q.edit_message_text.await_args.args[0]
+    with pytest.raises(ApplicationHandlerStop):                         # typed name → step 2
         await app.handle_myquiz_input(dm_update(a, text="  Polity   Set 1 "), ctx)
+    assert d["title"] == "Polity Set 1" and "STEP 2/4" in ctx.bot.send_message.await_args.args[1]
+    q = await press_mq(app, ctx, a, "mq_wt:30")                         # timer
+    assert "STEP 3/4" in q.edit_message_text.await_args.args[0]
+    q = await press_mq(app, ctx, a, "mq_wb:neg")                        # back to timer
+    assert "STEP 2/4" in q.edit_message_text.await_args.args[0]
+    await press_mq(app, ctx, a, "mq_wt:30")
+    await press_mq(app, ctx, a, "mq_wn:0.25")                           # negative
+    await press_mq(app, ctx, a, "mq_ws:1")                              # shuffle → saved
     assert "mq_draft" not in ctx.user_data
     sets = real.list_quiz_sets(1)
     assert len(sets) == 1 and sets[0]["title"] == "Polity Set 1" and sets[0]["count"] == 4
+    full = real.get_quiz_set(sets[0]["id"])
+    assert (full["secs"], full["negative_rate"], full["shuffle"]) == (30, 0.25, True)
     assert "Saved!" in ctx.bot.send_message.await_args.args[1]
     assert app.quiz_manager.questions[0]["question"] == "Q0?"           # bot pool untouched
 
@@ -683,7 +694,6 @@ async def press_mq(app, ctx, u, data):
 
 async def test_create_needs_min_questions_cancel_and_limit():
     from telegram.ext import ApplicationHandlerStop
-    from src.bot import my_quiz
     app, real = _quiz_app()
     ctx, _ = fake_context()
     ctx.bot.send_message = AsyncMock(return_value=SimpleNamespace(message_id=900))
@@ -708,7 +718,7 @@ async def test_my_quizzes_page_numbers():
     from src.bot.my_quiz import page_rows, PER_PAGE
     rows = page_rows(10, 1, lambda n: f"p{n}")
     assert [[b.text for b in r] for r in rows] == [["·1·", "2", "3", "4", "5"], ["6", "7", "8", "9", "10"]]
-    assert rows[0][0].style == "success" and rows[0][1].style == "primary"
+    assert rows[0][0].style == "success" and rows[0][1].style != "success"
     assert page_rows(1, 1, str) == []
     big = page_rows(30, 20, str)                                        # window of 10 around page 20
     assert [b.text for r in big for b in r] == ["16", "17", "18", "19", "·20·", "21", "22", "23", "24", "25"]
@@ -722,12 +732,12 @@ async def test_my_quizzes_page_numbers():
     text = q.edit_message_text.await_args.args[0]
     kb = q.edit_message_text.await_args.kwargs.get("reply_markup") or q.edit_message_text.await_args.args[1]
     names = [b.text for r in kb.inline_keyboard for b in r]
-    assert "page 3/3" in text and sum(n.startswith("📝 S") for n in names) == 3
+    assert "Page 3/3" in text and text.count("<b>S0") == 3                # 3 quizzes on the last page
     assert ["1", "2", "·3·"] == [n for n in names if n.strip("·").isdigit()]
     await app.cmd_battle(group_update(a), ctx)                          # same pages inside /battle
     bt_ = next(iter(app._bt_state().values()))
     await press(app, ctx, a, f"bt_my:{bt_.id}:2")
-    assert "page 2/3" in app._last_edit
+    assert "page 2/3" in app._last_edit.lower()
 
 
 async def test_my_quiz_open_delete_owner_only_and_battle():
@@ -736,14 +746,17 @@ async def test_my_quiz_open_delete_owner_only_and_battle():
     qs = [{"question": f"Own {i}?", "options": ["x", "y"], "correct_answer": 1} for i in range(4)]
     sid = real.create_quiz_set(1, "Mine", qs, 15)
     a, other = user(1, "Amit"), user(2, "Bina")
-    q = await press_mq(app, ctx, other, f"mq_open:{sid}")               # not the owner
+    q = await press_mq(app, ctx, other, f"mq_open:{sid}")               # shared link: viewing is allowed
+    assert q.answer.await_args.kwargs.get("show_alert") is not True
+    q = await press_mq(app, ctx, other, f"mq_del:{sid}")                # …but not deleting
     assert q.answer.await_args.kwargs.get("show_alert") is True
     q = await press_mq(app, ctx, a, f"mq_open:{sid}")
     assert "Mine" in q.edit_message_text.await_args.args[0]
     q = await press_mq(app, ctx, a, f"mq_bt:{sid}")                     # battle with it
     b = [x for x in app._bt_state().values() if x.set_id == sid][0]
-    assert b.state == "pending" and (b.n_q, b.secs) == (4, 15)
-    assert "📝 Quiz › Mine" in q.edit_message_text.await_args.args[0]
+    assert b.state == "setup" and (b.n_q, b.secs) == (4, 15)               # confirm page first
+    await press(app, ctx, a, f"bt_go:{b.id}")
+    assert b.state == "pending" and "Mine" in app._last_edit
     picked = await app._bt_questions(b)
     assert sorted(x["question"] for x in picked) == sorted(x["question"] for x in qs)
     b.state = "done"
@@ -770,6 +783,8 @@ async def test_group_own_quiz_needs_admin_and_dm_battle_uses_own_questions():
     assert q.answer.await_args.kwargs.get("show_alert") is True
     ctx.bot.get_chat_member = AsyncMock(return_value=SimpleNamespace(status="administrator"))
     await press(app, ctx, a, f"bt_s:{bt_.id}:{sid}")
+    assert bt_.set_id == sid and bt_.state == "setup"                   # quiz chosen → confirm page
+    await press(app, ctx, a, f"bt_go:{bt_.id}")
     assert bt_.state == "pending" and bt_.set_id == sid
     bt_.secs = 0.2
     await press(app, ctx, b, f"bt_acc:{bt_.id}")
@@ -803,7 +818,8 @@ async def test_create_own_quiz_from_file_and_too_big_file():
     d = ctx.user_data["mq_draft"]
     assert len(d["qs"]) == 3 and d["fname"] == "Polity Set"
     await press_mq(app, ctx, a, "mq_done")
-    await press_mq(app, ctx, a, "mq_name")                              # use the file name
+    for step in ("mq_name", "mq_wt:20", "mq_wn:0", "mq_ws:0"):           # suggested name + defaults
+        await press_mq(app, ctx, a, step)
     assert real.list_quiz_sets(1)[0]["title"] == "Polity Set"
 
 
@@ -860,4 +876,50 @@ async def test_photo_question_via_ocr_and_card_buttons_side_by_side(monkeypatch)
     assert len(ctx.user_data["mq_draft"]["qs"]) == 3
     assert ctx.bot.get_file.await_args.args[0] == "big"                # largest size used
     _, kb = app._mq_card_view({"id": "x1", "title": "T", "count": 3, "secs": 20})
-    assert [b.text for b in kb.inline_keyboard[-1]] == ["🗑 Delete Quiz", "📚 My Quizzes"]
+    assert [b.text for b in kb.inline_keyboard[-1]] == ["⬅️ My Quizzes", "🏠 Home"]
+
+
+def test_create_quiz_panel_one_clear_action():
+    from src.bot.my_quiz import MyQuizMixin, MIN_Q
+    t, kb = MyQuizMixin._mq_collect_view({"qs": [], "problems": []})
+    assert [[b.text for b in r] for r in kb.inline_keyboard] == [["❌ Cancel"]]   # no My Quizzes/Home
+    assert "1️⃣" in t and "3️⃣ Tap Next" in t
+    qs = [{"question": f"Q{i}", "options": ["a", "b"], "correct_answer": 0} for i in range(max(MIN_Q, 3))]
+    t, kb = MyQuizMixin._mq_collect_view({"qs": qs, "problems": []})
+    rows = [[(b.text, b.style) for b in r] for r in kb.inline_keyboard]
+    assert rows[0][0][1] == "success" and rows[0][0][0].startswith("➡️ Next: Set up quiz") and rows[-1] == [("❌ Cancel", "danger")]
+
+
+async def test_group_create_and_my_quizzes_open_dm_without_posting():
+    app, real = _quiz_app()
+    ctx, _ = fake_context()
+    for data, param in (("mq_new", "mq_new"), ("mq_list", "mq")):
+        msg = SimpleNamespace(chat=SimpleNamespace(id=-100, type="supergroup"), message_id=5,
+                              reply_text=AsyncMock())
+        q = SimpleNamespace(data=data, answer=AsyncMock(), edit_message_text=AsyncMock(), message=msg)
+        await app.handle_myquiz_callback(SimpleNamespace(callback_query=q, effective_user=user(1, "A")), ctx)
+        assert q.answer.await_args.kwargs["url"].endswith(f"?start={param}")
+        msg.reply_text.assert_not_awaited()                               # nothing posted in the group
+
+
+async def test_reread_source_file_fixes_old_quiz_in_place():
+    app, real = _quiz_app()
+    ctx, _ = fake_context()
+    dirty = [{"question": "The ABDMWhen was DRDO formed?", "options": ["1958", "1961 12minutestoclat.com"],
+              "correct_answer": 0}] * 2
+    sid = real.create_quiz_set(1, "Master of gk", dirty, 20)
+    real.update_quiz_set(sid, 1, {"source_files": [{"file_id": "F1", "file_name": "gk.txt", "kind": "document"}]})
+    clean_file = ("20. The ABDMWhen was DRDO formed?\nA. 1958\nB. 1959\nC. 1960\nD. 1961\n12minutestoclat.com\n"
+                  "21. Capital of India?\nA. Mumbai\nB. Delhi\nANSWER KEY\nQ20. A\nQ21. B\n")
+    ctx.bot.get_file = AsyncMock(return_value=SimpleNamespace(
+        download_as_bytearray=AsyncMock(return_value=bytearray(clean_file.encode()))))
+    a, other = user(1, "Amit"), user(2, "Bina")
+    q = await press_mq(app, ctx, other, f"mq_rereadok:{sid}")                 # not the owner
+    assert q.answer.await_args.kwargs.get("show_alert") is True
+    await press_mq(app, ctx, a, f"mq_reread:{sid}")
+    q = await press_mq(app, ctx, a, f"mq_rereadok:{sid}")
+    after = real.get_quiz_set(sid)
+    assert after["id"] == sid and after["count"] == 2                          # same quiz, fixed in place
+    assert after["questions"][0]["question"] == "When was DRDO formed?"
+    assert after["questions"][0]["options"] == ["1958", "1959", "1960", "1961"]
+    assert "File re-read" in q.edit_message_text.await_args.args[0]

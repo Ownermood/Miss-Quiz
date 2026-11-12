@@ -1,6 +1,5 @@
 import os
 import json
-import pytest
 
 from src.bot.ui import UI
 from src.utils.cleaner import clean_text

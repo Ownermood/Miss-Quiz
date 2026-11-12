@@ -218,7 +218,35 @@ class TelegramQuizBot(
         loop.create_task(self._send_owner_alert())
         if self.application is not None:                       # group quizzes running before a restart
             loop.create_task(self.gq_resume_all(self.application.bot))
+            loop.create_task(self._fill_missing_group_titles())
         loop.create_task(self._send_startup_broadcast())
+
+    async def _fill_missing_group_titles(self, limit: int = 100) -> int:
+        """Groups saved without a name (older bug) get their title from Telegram once."""
+        if not self.db or not hasattr(self.db, "groups_col"):
+            return 0
+        try:
+            docs = await asyncio.to_thread(lambda: list(self.db.groups_col.find(
+                {"active_status": {"$ne": "inactive"}, "$or": [{"title": ""}, {"title": None},
+                                                               {"title": {"$exists": False}}]},
+                {"chat_id": 1, "_id": 0}).limit(limit)))
+        except Exception as e:
+            logger.debug(f"[TITLES] lookup failed: {e}")
+            return 0
+        fixed = 0
+        for d in docs:
+            try:
+                chat = await self.application.bot.get_chat(d["chat_id"])
+                if chat.title:
+                    await asyncio.to_thread(self.db.groups_col.update_one, {"chat_id": d["chat_id"]},
+                                            {"$set": {"title": chat.title, "username": chat.username or ""}})
+                    fixed += 1
+            except Exception as e:
+                logger.debug(f"[TITLES] {d['chat_id']}: {e}")
+            await asyncio.sleep(0.2)                      # gentle on Telegram's rate limit
+        if fixed:
+            logger.info(f"[TITLES] filled {fixed} group name(s)")
+        return fixed
 
     async def _send_owner_alert(self):
         """Send system-status report to owner (and developers)."""
@@ -353,8 +381,8 @@ class TelegramQuizBot(
 
             # Row 5: Community (Dark Glass) & Host in Group (Green CTA)
             [btn("Community", "users", None, url=COMMUNITY_URL)]
-            + ([btn("Host in Group", "plus", "success",
-                    url=f"https://t.me/{username}?startgroup&admin=delete_messages+pin_messages")]
+            + ([btn("Host in Group", "plus", None,
+                    url=f"https://t.me/{username}?startgroup=host&admin=delete_messages+pin_messages")]
                if username else []),
         ]
         if show_admin:
@@ -481,6 +509,10 @@ class TelegramQuizBot(
             filters.ChatType.PRIVATE & ~filters.COMMAND,
             self.handle_admin_input), group=-1)
 
+        # Delete the "bot pinned a message" notice (group quiz lobby is pinned)
+        app.add_handler(MessageHandler(
+            filters.StatusUpdate.PINNED_MESSAGE & filters.ChatType.GROUPS, self.gq_on_pin_notice), group=-5)
+
         # Global error handler — catches any unhandled exception in any handler
         app.add_error_handler(self._global_error_handler)
 
@@ -509,20 +541,10 @@ class TelegramQuizBot(
         except Exception as e:
             logger.warning(f"set_my_commands: {e}")
 
+        # Admins use /start → Admin Panel (owner's rule): no per-admin menus, and
+        # old ones from earlier versions are removed.
         from telegram import BotCommandScopeChat
         from src.core.config import AUTHORIZED_USERS
-        admin_cmds = user_cmds + [
-            BotCommand("admin",        "🔑 Open Admin Control Panel"),
-            BotCommand("check",        "🩺 Bot & System Health Monitor"),
-            BotCommand("cleanup",      "🧹 Sanitize DB & Clear Stale Quizzes"),
-            BotCommand("addadmin",     "👑 Quick 1-Line Admin Promotion"),
-            BotCommand("addquiz",      "➕ Add Questions to Bot Bank"),
-            BotCommand("editquiz",     "✏️ Edit Bot Question Bank"),
-            BotCommand("delquiz",      "🗑 Delete Question from Bank"),
-            BotCommand("broadcast",    "📡 Broadcast Message to All"),
-            BotCommand("reload",       "🔄 Reload Questions from DB"),
-            BotCommand("restart",      "♻️ Restart Bot Process"),
-        ]
         admin_ids = set(AUTHORIZED_USERS)
         if self.db:
             try:
@@ -532,9 +554,9 @@ class TelegramQuizBot(
                 logger.warning(f"set_my_commands: developers lookup failed: {e}")
         for uid in admin_ids:
             try:
-                await self.application.bot.set_my_commands(admin_cmds, scope=BotCommandScopeChat(chat_id=uid))
+                await self.application.bot.delete_my_commands(scope=BotCommandScopeChat(chat_id=uid))
             except Exception as e:
-                logger.debug(f"set_my_commands for admin {uid}: {e}")
+                logger.debug(f"delete_my_commands for admin {uid}: {e}")
 
     # ─── Core helpers ─────────────────────────────────────────
 
@@ -556,6 +578,8 @@ class TelegramQuizBot(
                      parse_mode=ParseMode.HTML,
                      reply_markup=None, **kw) -> Optional[Any]:
         """Smart reply — routes to an open forum topic (or Main topic if all closed)."""
+        if isinstance(parse_mode, InlineKeyboardMarkup):      # keyboard passed in the parse_mode slot
+            reply_markup, parse_mode = parse_mode, ParseMode.HTML
         chat   = update.effective_chat
         tid    = get_thread_id(update)
         if chat and chat.type in ("group", "supergroup") and self.db and hasattr(self.db, "get_group_open_thread"):

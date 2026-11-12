@@ -33,7 +33,8 @@ _TELEGRAM_LINK_RE = re.compile(
 )
 _USERNAME_RE = re.compile(r"@[a-zA-Z0-9_]{3,32}", re.IGNORECASE)
 _URL_RE = re.compile(
-    r"(?:https?://\S+|www\.\S+|\b[a-zA-Z0-9\-]{3,}\.(?:com|in|org|edu|net|co\.in|ac\.in|gov\.in|info|io|me)\b(?:/\S*)?)",
+    # only explicit links: a bare 'niti.gov.in' inside a question is real content
+    r"(?:https?://\S+|www\.\S+)",
     re.IGNORECASE
 )
 
@@ -126,7 +127,8 @@ def clean_text(text: str, custom_words: Optional[List[str]] = None, is_option: b
 
     # 3. Remove coaching branch + phone numbers & standalone mobile numbers
     cleaned = _BRANCH_PHONE_RE.sub(" ", cleaned)
-    cleaned = _MOBILE_RE.sub(" ", cleaned)
+    if not is_option:                         # a 10-digit option is an answer, not a watermark
+        cleaned = _MOBILE_RE.sub(" ", cleaned)
     cleaned = _PAGE_MARKER_RE.sub(" ", cleaned)
     cleaned = _SPAM_WORDS_RE.sub(" ", cleaned)
 

@@ -30,7 +30,7 @@ class App(GroupQuizMixin, BattleMixin):
             real.quiz_sets_col = client.db.quiz_sets
             real.quiz_sessions_col = client.db.quiz_sessions
         for fn in ("create_quiz_set", "get_quiz_set", "list_quiz_sets", "save_quiz_session",
-                   "delete_quiz_session", "list_quiz_sessions"):
+                   "delete_quiz_session", "list_quiz_sessions", "set_quiz_progress"):
             setattr(self.db, fn, getattr(real, fn))
         self.real = real
         self.replies = []
@@ -76,7 +76,7 @@ def group_upd(u, chat_id=GROUP):
 
 
 async def press(app, c, u, data, chat_id=GROUP):
-    msg = SimpleNamespace(chat=SimpleNamespace(id=chat_id), delete=AsyncMock(),
+    msg = SimpleNamespace(chat=SimpleNamespace(id=chat_id), delete=AsyncMock(), edit_text=AsyncMock(),
                           message_thread_id=None, is_topic_message=False)
     q = SimpleNamespace(data=data, answer=AsyncMock(), message=msg)
     await app.handle_group_quiz_callback(SimpleNamespace(callback_query=q, effective_user=u), c)
@@ -86,6 +86,7 @@ async def press(app, c, u, data, chat_id=GROUP):
 @pytest.fixture(autouse=True)
 def fast(monkeypatch):
     monkeypatch.setattr(gq, "START_DELAY", 0)
+    monkeypatch.setattr(gq, "USE_LOBBY", False)
     monkeypatch.setattr(gq, "GAP", 0)
     monkeypatch.setattr(gq, "SLACK", 0)
     gq.ACTIVE.clear()
@@ -195,7 +196,7 @@ async def test_controls_admin_only_pause_resume_stop():
 async def test_resume_after_restart_from_saved_session():
     app = App()
     c, polls, sent = ctx()
-    s = Session(chat_id=GROUP, title="Mock 1", questions=questions(5), secs=1, started_by=1,
+    s = Session(chat_id=GROUP, title="Mock 1", questions=questions(5), secs=1, started_by=1, status="running",
                 starter_name="Admin", idx=3, scores={"7": {"name": "P7", "correct": 3, "wrong": 0, "time": 3.0}})
     app.real.save_quiz_session(s.to_doc())
     app2 = App(db_real=app.real)                                        # restart: same DB, empty memory
@@ -204,7 +205,7 @@ async def test_resume_after_restart_from_saved_session():
     gq.ACTIVE[GROUP].secs = 0.05
     await answer_all(app2, polls, {7: 0}, 2)
     await wait_done()
-    assert [p[1]["question"] for p in polls] == ["[4/5] Q3?", "[5/5] Q4?"]
+    assert [p[1]["question"] for p in polls] == ["[4/5] 💡 Q3?", "[5/5] 💡 Q4?"]
     assert "<b>5</b>/5" in sent[-1]                                    # earlier score kept
 
 
@@ -218,8 +219,8 @@ async def test_long_question_text_first_and_start_link_needs_admin():
     await app.gq_start_from_link(group_upd(user(1)), c, sid)
     gq.ACTIVE[GROUP].secs = 0.05
     await wait_done()
-    assert any(t.startswith("❓ <b>Q1/3</b>") for t in sent)
-    assert polls[0][1]["question"] == "[1/3] Read the question above ⬆️"
+    assert any(t.startswith("❓ <b>Q1/3") for t in sent)
+    assert polls[0][1]["question"].endswith("Read the question above ⬆️")
 
 
 def test_session_scoring_first_answer_and_tiebreak():
@@ -272,9 +273,135 @@ async def test_group_lobby_ready_counter_and_toggles():
     assert s.status == "lobby" and len(s.ready_players) == 1
     await press(app, c, p2, f"gq|ready|{GROUP}")
     assert len(s.ready_players) == 2 and s.ready_players["2"] == "Riva"
+    assert s.negative_rate == 0.0                                       # off by default
     await press(app, c, host, f"gq|tog_neg|{GROUP}")
-    assert s.negative_rate == 0.0
+    assert s.negative_rate == 0.25
     await press(app, c, host, f"gq|launch|{GROUP}")
     assert s.status == "running"
     s.secs = 0.05
     await wait_done()
+
+
+async def test_big_quiz_plays_in_parts_and_continues_next_time():
+    app = App()
+    c, polls, sent = ctx(admins=(1,))
+    sid = app.real.create_quiz_set(1, "Mega Bank", questions(300), 20)
+    admin = user(1, "Admin")
+    q = await press(app, c, admin, f"gq|set|1|{sid}")                     # picker → part menu
+    msg = q.message
+    text = msg.edit_text.await_args.args[0]
+    kb = msg.edit_text.await_args.kwargs["reply_markup"]
+    labels = [b.text for r in kb.inline_keyboard for b in r]
+    assert "Total › 300" in text and "▶️ 200 Q · Q1–Q200" in labels and not gq.is_active(GROUP)
+    await press(app, c, admin, f"gq|part|1|{sid}|200|0")
+    s = gq.ACTIVE[GROUP]
+    assert len(s.questions) == 200 and s.part_start == 0 and "Q1–Q200" in s.title
+    s.secs = 0.01
+    await answer_all(app, polls, {7: 0}, 200)
+    await wait_done()
+    assert app.real.get_quiz_set(sid)["progress"][str(GROUP)] == 200          # saved for next time
+    text, kb = await app._gq_part_view(1, sid, app.real.get_quiz_set(sid), GROUP)
+    labels = [b.text for r in kb.inline_keyboard for b in r]
+    assert "from Q201" in text and "▶️ 100 Q · Q201–Q300" in labels and "🔁 Start again from Q1" in labels
+    q = await press(app, c, user(2), f"gq|part|1|{sid}|100|200")           # someone else's menu
+    assert q.answer.await_args.kwargs.get("show_alert") is True
+
+
+async def test_lobby_pinned_notice_deleted_settings_page_and_unpin_on_cancel():
+    app = App()
+    c, polls, sent = ctx(admins=(1,))
+    c.bot.pin_chat_message = AsyncMock()
+    c.bot.unpin_chat_message = AsyncMock()
+    c.bot.id = 999
+    host = user(1, "Host")
+    s = await app._gq_begin(c, GROUP, None, host, "Mock", questions(3), 10, "", skip_lobby=False)
+    c.bot.pin_chat_message.assert_awaited_once()
+    assert c.bot.pin_chat_message.await_args.kwargs["disable_notification"] is False   # everyone notified
+    assert s.pinned and app.real.list_quiz_sessions()[0]["pinned"] is True
+    kb = gq._lobby_kb(s)
+    assert [[b.text for b in r] for r in kb.inline_keyboard] == [
+        ["🙋 I'm Ready (1)"], ["▶️ Start Now", "⏰ Start in 30s"], ["❌ Cancel", "⚙️ Settings"]]
+    await press(app, c, host, f"gq|lset|{GROUP}")
+    assert s.lobby_page == "settings"
+    await press(app, c, host, f"gq|tog_neg|{GROUP}")
+    assert s.negative_rate == 0.25 and "✅ Negative −0.25" in str(gq._lobby_kb(s).inline_keyboard)
+    await press(app, c, host, f"gq|lback|{GROUP}")
+    assert s.lobby_page == "main"
+    # the "pinned a message" notice from the bot is deleted, a user's is not
+    notice = SimpleNamespace(from_user=SimpleNamespace(id=999), delete=AsyncMock())
+    await app.gq_on_pin_notice(SimpleNamespace(effective_message=notice), c)
+    notice.delete.assert_awaited_once()
+    other = SimpleNamespace(from_user=SimpleNamespace(id=5), delete=AsyncMock())
+    await app.gq_on_pin_notice(SimpleNamespace(effective_message=other), c)
+    other.delete.assert_not_awaited()
+    await press(app, c, host, f"gq|cancel_lobby|{GROUP}")
+    c.bot.unpin_chat_message.assert_awaited_once()
+    assert not gq.is_active(GROUP)
+
+
+async def test_host_in_group_link_opens_quiz_picker_for_admins():
+    from src.bot.handlers_main import TelegramQuizBot
+    b = TelegramQuizBot(MagicMock(), db_manager=MagicMock())
+    b.application = MagicMock()
+    b.application.bot.username = "MissQuiz_Bot"
+    urls = [x.url for r in b._start_kb().inline_keyboard for x in r if x.url and "startgroup" in x.url]
+    assert urls and all("startgroup=host&admin=" in u for u in urls)         # has a start parameter
+    b.cmd_startquiz = AsyncMock()
+    c, _, _ = ctx(admins=(1,))
+    c.args = ["host"]
+    upd = group_upd(user(1))
+    upd.effective_user.language_code = "en"
+    await b.cmd_start(upd, c)
+    b.cmd_startquiz.assert_awaited_once()                                    # → quiz picker (admin check inside)
+
+
+async def test_start_link_for_big_quiz_replies_with_part_menu_keyboard_not_parse_mode():
+    """Bug from the field: /start gq_<id> for a 2217-Q quiz sent the keyboard as parse_mode."""
+    app = App()
+    calls = []
+
+    async def rep(update, text, *args, **kw):
+        calls.append((args, kw))
+        return SimpleNamespace(message_id=1)
+    app._reply = rep
+    c, _, _ = ctx(admins=(1,))
+    sid = app.real.create_quiz_set(1, "Master of gk", questions(300), 20)
+    await app.gq_start_from_link(group_upd(user(1)), c, sid)
+    args, kw = calls[-1]
+    assert args == () and "reply_markup" in kw                       # keyboard by name, never positional
+
+
+async def test_reply_accepts_keyboard_in_parse_mode_slot():
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+    from telegram.constants import ParseMode
+    from src.bot.handlers_main import TelegramQuizBot
+    b = TelegramQuizBot(MagicMock(), db_manager=None)
+    msg = SimpleNamespace(reply_text=AsyncMock(), is_topic_message=False, message_thread_id=None)
+    upd = SimpleNamespace(effective_chat=SimpleNamespace(id=1, type="private"), effective_message=msg)
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton("x", callback_data="x")]])
+    await b._reply(upd, "hi", kb)
+    kw = msg.reply_text.await_args.kwargs
+    assert kw["parse_mode"] == ParseMode.HTML and kw["reply_markup"] is kb
+
+
+async def test_next_part_button_continues_big_quiz_in_one_tap():
+    app = App()
+    c, polls, sent = ctx(admins=(1,))
+    sid = app.real.create_quiz_set(1, "Master of gk", questions(60), 20)
+    admin = user(1, "Admin")
+    await press(app, c, admin, f"gq|part|1|{sid}|25|0")
+    gq.ACTIVE[GROUP].secs = 0.01
+    await answer_all(app, polls, {7: 0}, 25)
+    await wait_done()
+    kb = c.bot.send_message.await_args.kwargs["reply_markup"]
+    first = kb.inline_keyboard[0][0]
+    assert first.text == "▶️ Next part · from Q26" and first.callback_data == f"gq|next|{GROUP}|25|25"
+    q = await press(app, c, user(2), first.callback_data)                 # member can't
+    assert q.answer.await_args.kwargs.get("show_alert") is True and not gq.is_active(GROUP)
+    await press(app, c, admin, first.callback_data)
+    s = gq.ACTIVE[GROUP]
+    assert s.part_start == 25 and len(s.questions) == 25 and "Q26–Q50" in s.title
+    s.status = "stopped"; s.wake.set()
+    await wait_done()
+    q = await press(app, c, admin, f"gq|next|{GROUP}|60|25")              # nothing left
+    assert "All questions done" in q.answer.await_args.args[0]
