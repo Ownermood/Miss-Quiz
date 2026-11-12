@@ -142,6 +142,7 @@ PACK = {
 
 # Emojis the bot uses that are not in the packs → closest pack emoji.
 SUBST = {
+    "🔀": "↪",   # shuffle → premium arrow
     "♻": "↪", "👇": "⬇", "👆": "⬆", "☝": "⬆", "👉": "➡", "📎": "📂", "🖇": "📂", "🧷": "📂",
     "🗳": "☑",
     "🎓": "⭐", "📚": "📑", "📖": "📑", "📜": "📄", "📰": "📄", "📃": "📄", "🗂": "📂",

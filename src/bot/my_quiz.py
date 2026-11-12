@@ -865,16 +865,16 @@ class MyQuizMixin:
             f"<i>Select an option below to modify questions or settings:</i>"
         )
         kb = InlineKeyboardMarkup([
-            [_btn("📝 Edit Questions", f"mq_ql:{sid}:1", "success"),
-             _btn("➕ Add Questions", f"mq_add:{sid}", "success")],
+            # calm: plain options; red only for Delete and Back
+            [_btn("📝 Edit Questions", f"mq_ql:{sid}:1", None),
+             _btn("➕ Add Questions", f"mq_add:{sid}", None)],
             [_btn("🏷 Rename", f"mq_rename:{sid}", None),
              _btn("⏱ Timer", f"mq_timer:{sid}", None)],
-            [_btn("🔀 Shuffle: ON" if shuffle_on else "🔀 Shuffle: OFF", f"mq_shuffle:{sid}",
-                  "success" if shuffle_on else None),
+            [_btn("🔀 Shuffle: ON" if shuffle_on else "🔀 Shuffle: OFF", f"mq_shuffle:{sid}", None),
              _btn("📎 Attach File", f"mq_attach:{sid}", None)],
             [_btn("🗑 Delete Quiz", f"mq_del:{sid}", "danger")],
             [_btn("⬅️ Back to Quiz", f"mq_open:{sid}", "danger"),
-             _btn("🏠 Home", "nav_home", "primary")],
+             _btn("🏠 Home", "nav_home", None)],
         ])
         return text, kb
 
