@@ -148,12 +148,159 @@ def parse_questions(text: str, items: Optional[List[Dict]] = None,
     return out, problems
 
 
-def _build_printable_html(qs: Dict, include_answers_inline: bool = False, bot_username: str = "") -> bytes:
-    """Self-contained, print-ready HTML exam paper (or solved study sheet).
+_PAPER_CSS = """
+:root{--paper:#f4f5fa;--sheet:#fff;--text:#15172a;--mut:#62667c;--line:#e3e5ef;--ink:#2132b8;--on:#fff;
+  --omr:#e06f8c;--omrbg:rgba(224,111,140,.09);--ok:#17864a;--okbg:#e9f7ef;--bad:#cf3526;--badbg:#fdecea;--warn:#a86a12}
+@media screen and (prefers-color-scheme:dark){:root{--paper:#0e1020;--sheet:#171a2e;--text:#eef0fa;--mut:#9ea3bd;--line:#2a2e4a;
+  --ink:#8493ff;--on:#0e1020;--omr:#f08fa8;--omrbg:rgba(240,143,168,.1);--ok:#3cc37a;--okbg:rgba(60,195,122,.13);--bad:#f0604f;--badbg:rgba(240,96,79,.13);--warn:#e0a84a}}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+body{margin:0;background:var(--paper);color:var(--text);font:16px/1.6 Lexend,"Noto Sans","Noto Sans Devanagari","Segoe UI",Roboto,system-ui,sans-serif;-webkit-font-smoothing:antialiased}
+button{font:inherit;color:inherit;cursor:pointer}
+:focus-visible{outline:2.5px solid var(--ink);outline-offset:2px;border-radius:6px}
+.paper{max-width:820px;margin:0 auto;background:var(--sheet);padding:34px 40px 120px;min-height:100vh}
+.top{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:34px}
+.brand{display:flex;align-items:center;gap:10px;font-weight:600;font-size:15px}
+.brand i{width:16px;height:16px;border-radius:50%;background:var(--ink);box-shadow:0 0 0 2px var(--sheet),0 0 0 3.5px var(--omr)}
+.acts{display:flex;gap:8px}
+.pill{border:1.5px solid var(--line);background:transparent;border-radius:999px;padding:7px 13px;font-size:13.5px;font-weight:500;white-space:nowrap}
+.kind{color:var(--mut);font-size:14px;margin:0}
+h1{font:600 clamp(30px,6.2vw,46px)/1.08 Fraunces,Georgia,"Times New Roman",serif;letter-spacing:-.02em;margin:6px 0 24px;word-break:break-word}
+.facts{display:grid;grid-template-columns:repeat(4,1fr);border-top:2px solid var(--text);border-bottom:1px solid var(--line)}
+.facts div{padding:12px 4px 11px}.facts div+div{padding-left:14px;border-left:1px solid var(--line)}
+.facts b{display:block;font-size:22px;font-weight:600;line-height:1.2;font-variant-numeric:tabular-nums}.facts span{font-size:12.5px;color:var(--mut)}
+.cand{display:none}
+.inst{margin:22px 0 8px;padding:0 0 0 14px;border-left:3px solid var(--omr);font-size:14.5px;color:var(--mut)}
+.inst ul{margin:0;padding-left:18px}.inst b{color:var(--text);font-weight:600}
+.po{display:none}
+.res{display:none;margin:26px 0 6px;padding:22px;border-radius:22px;background:var(--ink);color:var(--on)}
+.done .res{display:block}
+.res .n{font:600 68px/1 Fraunces,Georgia,serif;letter-spacing:-.03em;font-variant-numeric:tabular-nums}
+.res .n small{font:400 22px Lexend,sans-serif;opacity:.7;letter-spacing:0}
+.res p{margin:6px 0 16px;opacity:.85;font-size:15px}
+.rf{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:16px}
+.rf div{border-radius:14px;padding:10px 12px;background:rgba(255,255,255,.12)}
+@media screen and (prefers-color-scheme:dark){.rf div{background:rgba(14,16,32,.12)}}
+.rf b{display:block;font-size:22px;font-weight:600;font-variant-numeric:tabular-nums;line-height:1.2}.rf span{font-size:12.5px;opacity:.8}
+.chips{display:flex;gap:8px;flex-wrap:wrap}
+.chip{border:1.5px solid currentColor;background:transparent;color:inherit;border-radius:999px;padding:7px 14px;font-size:14px;font-weight:500;opacity:.75}
+.chip.on{background:var(--on);color:var(--ink);border-color:var(--on);opacity:1}
+main{margin-top:14px}
+.q{padding:22px 0 20px;border-bottom:1px solid var(--line);scroll-margin-top:16px}
+.q:last-child{border-bottom:0}
+.qh{display:flex;gap:12px;align-items:baseline}
+.qn{flex:none;min-width:30px;font:600 17px/1.5 Fraunces,Georgia,serif;color:var(--omr);font-variant-numeric:tabular-nums}
+.qh p{margin:0;font-weight:500;font-size:17px;line-height:1.5;white-space:pre-wrap;word-break:break-word}
+.tag{display:none;font-size:12px;font-weight:600;border-radius:999px;padding:1px 9px;margin-left:8px;white-space:nowrap;vertical-align:middle}
+.done .q.r .tag,.done .q.w .tag,.done .q.s .tag{display:inline-block}
+.q.r .tag{background:var(--okbg);color:var(--ok)}.q.w .tag{background:var(--badbg);color:var(--bad)}.q.s .tag{background:var(--omrbg);color:var(--warn)}
+.q.r .tag::after{content:"Correct"}.q.w .tag::after{content:"Wrong"}.q.s .tag::after{content:"Skipped"}
+.opts{list-style:none;margin:12px 0 0 42px;padding:0;display:grid;grid-template-columns:1fr 1fr;gap:6px 14px}
+.opts.one{grid-template-columns:1fr}
+.opt label,.opt>.st{display:flex;gap:11px;align-items:flex-start;padding:7px 10px 7px 7px;border-radius:14px;border:1.5px solid transparent;transition:background .15s,border-color .15s}
+.opt label{cursor:pointer}
+.opt input{position:absolute;opacity:0;width:0;height:0}
+.bul{flex:none;width:28px;height:28px;border-radius:50%;border:1.6px solid var(--omr);background:var(--omrbg);color:var(--omr);display:grid;place-items:center;font-size:12.5px;font-weight:600;text-transform:uppercase;transition:background .15s,color .15s,border-color .15s,transform .2s cubic-bezier(.34,1.56,.64,1)}
+.ot{padding-top:2px;word-break:break-word}
+.opt input:checked~.bul{background:var(--ink);border-color:var(--ink);color:var(--on);transform:scale(1.1)}
+.opt input:checked~.ot{font-weight:500}
+.opt input:focus-visible~.bul{outline:2.5px solid var(--ink);outline-offset:2px}
+.done .opt label{cursor:default}
+.sol{display:none;margin:12px 0 0 42px;padding:10px 14px;border-left:3px solid var(--ok);background:var(--okbg);border-radius:4px 14px 14px 4px;font-size:14.5px}
+.sol b{color:var(--ok);font-weight:600}.why{margin-top:3px;white-space:pre-wrap;word-break:break-word}
+.show .sol{display:block}
+.show .opt.ok label,.show .opt.ok>.st{background:var(--okbg);border-color:var(--ok)}
+.show .opt.ok .bul{background:var(--ok);border-color:var(--ok);color:#fff}
+.done .opt.no label{background:var(--badbg);border-color:var(--bad)}
+.done .opt.no .bul{background:var(--bad);border-color:var(--bad);color:#fff}
+body[data-f="w"] .q:not(.w),body[data-f="s"] .q:not(.s){display:none}
+.key{margin-top:34px;padding-top:22px;border-top:2px solid var(--text)}
+.key h2{font:600 24px/1.2 Fraunces,Georgia,serif;margin:0 0 14px}
+.kg{display:grid;grid-template-columns:repeat(auto-fill,minmax(66px,1fr));gap:6px}
+.k{display:flex;justify-content:space-between;align-items:center;padding:5px 10px;border:1px solid var(--line);border-radius:10px;font-size:13.5px;font-variant-numeric:tabular-nums}
+.k span{color:var(--mut)}.k b{color:var(--ok);text-transform:uppercase;font-weight:600}
+body:not(.show) .key{display:none}
+footer{margin-top:30px;font-size:12.5px;color:var(--mut)}
+.dock{position:fixed;left:0;right:0;bottom:0;z-index:9;padding:10px 14px calc(10px + env(safe-area-inset-bottom));background:var(--sheet);border-top:1px solid var(--line);box-shadow:0 -12px 30px -18px rgba(21,23,42,.35)}
+.dock>div{max-width:820px;margin:0 auto;display:flex;align-items:center;gap:14px}
+.prog{flex:1;min-width:0;font-size:13.5px;color:var(--mut)}.prog b{color:var(--text);font-weight:600;font-variant-numeric:tabular-nums}
+.track{height:4px;border-radius:4px;background:var(--line);margin-top:6px;overflow:hidden}.track i{display:block;height:100%;width:0;background:var(--ink);border-radius:4px;transition:width .35s cubic-bezier(.2,.8,.2,1)}
+.go{border:0;border-radius:999px;background:var(--ink);color:var(--on);padding:13px 22px;font-weight:600;font-size:15.5px;white-space:nowrap}
+@media (max-width:640px){
+  .paper{padding:22px 18px 120px}.top{margin-bottom:26px}
+  .facts{grid-template-columns:repeat(2,1fr)}.facts div:nth-child(3){padding-left:4px;border-left:0}.facts div:nth-child(n+3){border-top:1px solid var(--line)}
+  .opts{grid-template-columns:1fr;margin-left:0}.sol{margin-left:0}.res .n{font-size:56px}
+}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+@page{size:A4;margin:12mm 11mm}
+@media print{
+  :root{--paper:#fff;--sheet:#fff;--text:#111;--mut:#555;--line:#d9dbe3;--ink:#1d2a9c;--omr:#888;--omrbg:transparent}
+  body{font-size:10.5pt;line-height:1.45}
+  .paper{max-width:none;padding:0;min-height:0}
+  .top .acts,.dock,.res,.so,.tag{display:none!important}.po{display:revert}
+  .top{margin-bottom:10px}h1{font-size:22pt;margin-bottom:12px}
+  .cand{display:grid;grid-template-columns:2fr 1.2fr 1fr;gap:18px;margin:14px 0 2px;font-size:10pt;color:var(--mut)}
+  .cand div{display:flex;align-items:flex-end;gap:8px;white-space:nowrap}.cand i{flex:1;border-bottom:1px solid #888;height:1.2em}.cand i.sc{flex:0 0 42px}
+  main{column-count:2;column-gap:9mm;column-rule:1px solid var(--line)}
+  .q{break-inside:avoid;page-break-inside:avoid;padding:8px 0 9px}.qh p,.qn{font-size:10.5pt}
+  .opts{grid-template-columns:1fr;margin-left:26px;gap:1px}.opt label,.opt>.st{padding:1px 0;border:0;background:none!important}
+  .bul{width:17px;height:17px;font-size:8.5pt;border-width:1px;transform:none!important}
+  .opt input:checked~.bul{background:none;color:var(--omr);border-color:var(--omr)}
+  .sol{margin-left:26px;padding:4px 8px;font-size:9.5pt}
+  .show .opt.ok .bul{background:#111;border-color:#111;color:#fff}
+  .key{display:block!important;break-before:page;page-break-before:always;margin-top:0}
+  *{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+}
+"""
 
-    Paper mode: clean exam layout, answers hidden behind a "Show answers" toggle,
-    answer key on its own printed page. Study mode: answers + explanations inline.
-    Prints to A4 in two columns (Save as PDF from any browser).
+_PAPER_JS = """
+(function(){
+var B=document.body,qs=[].slice.call(document.querySelectorAll('.q')),N=qs.length,neg=parseFloat(B.getAttribute('data-neg'))||0;
+var $=function(i){return document.getElementById(i)},KEY='mq-paper:'+B.getAttribute('data-id')+':'+N,done=false;
+function pick(q){var c=q.querySelector('input:checked');return c?+c.value:-1}
+function fmt(x){x=Math.round(x*100)/100;return String(x)}
+function save(){try{localStorage.setItem(KEY,JSON.stringify(qs.map(pick)))}catch(e){}}
+function progress(){var n=0;qs.forEach(function(q){if(pick(q)>=0)n++});$('pn').textContent=n;$('pb').style.width=(N?n/N*100:0)+'%';return n}
+function countUp(el,to){var t0=null,rm=window.matchMedia&&matchMedia('(prefers-reduced-motion: reduce)').matches;if(rm||!window.requestAnimationFrame){el.textContent=fmt(to);return}
+  (function f(t){if(!t0)t0=t;var k=Math.min((t-t0)/900,1),e=1-Math.pow(1-k,4);el.textContent=fmt(k<1?Math.round(to*e):to);if(k<1)requestAnimationFrame(f)})(performance.now())}
+function check(){
+  var r=0,w=0,s=0;done=true;
+  qs.forEach(function(q){var a=+q.getAttribute('data-a'),p=pick(q);q.classList.remove('r','w','s');
+    [].forEach.call(q.querySelectorAll('.opt'),function(li){li.classList.remove('no')});
+    if(p<0){s++;q.classList.add('s')}else if(p===a){r++;q.classList.add('r')}else{w++;q.classList.add('w');var li=q.querySelectorAll('.opt')[p];if(li)li.classList.add('no')}
+    [].forEach.call(q.querySelectorAll('input'),function(i){i.disabled=true})});
+  var score=r-w*neg,pct=N?Math.round(r/N*100):0;
+  B.classList.add('done','show');countUp($('rs'),score);$('rr').textContent=r;$('rw').textContent=w;$('rk').textContent=s;
+  $('rm').textContent=pct>=80?'Excellent. '+pct+'% correct.':pct>=50?'Good effort. '+pct+'% correct.':pct+'% correct. Review the wrong ones below and try again.';
+  $('go').textContent='Try again';$('ans').textContent='Hide answers';filter('a');
+  $('res').scrollIntoView({behavior:'smooth',block:'start'});
+}
+function reset(){
+  done=false;B.classList.remove('done','show');filter('a');
+  qs.forEach(function(q){q.classList.remove('r','w','s');[].forEach.call(q.querySelectorAll('.opt'),function(li){li.classList.remove('no')});
+    [].forEach.call(q.querySelectorAll('input'),function(i){i.disabled=false;i.checked=false;i._on=false})});
+  $('go').textContent='Check my score';$('ans').textContent='Show answers';save();progress();window.scrollTo(0,0);
+}
+function filter(f){B.setAttribute('data-f',f);[].forEach.call(document.querySelectorAll('.chip'),function(c){c.classList.toggle('on',c.getAttribute('data-f')===f)})}
+try{var old=JSON.parse(localStorage.getItem(KEY)||'[]');qs.forEach(function(q,i){var v=old[i];if(v>=0){var el=q.querySelectorAll('input')[v];if(el){el.checked=true;el._on=true}}})}catch(e){}
+qs.forEach(function(q){[].forEach.call(q.querySelectorAll('input'),function(i){i.addEventListener('click',function(){
+  if(i._on){i.checked=false;i._on=false}else{[].forEach.call(q.querySelectorAll('input'),function(o){o._on=false});i._on=true}
+  save();progress()})})});
+$('go').onclick=function(){if(done)return reset();var n=progress();if(n<N&&!confirm((N-n)+' question'+(N-n===1?' is':'s are')+' not answered. Check your score anyway?'))return;check()};
+$('ans').onclick=function(){var on=B.classList.toggle('show');this.textContent=on?'Hide answers':'Show answers'};
+$('pdf').onclick=function(){window.print()};
+[].forEach.call(document.querySelectorAll('.chip'),function(c){c.onclick=function(){filter(c.getAttribute('data-f'))}});
+progress();
+})();
+"""
+
+
+def _build_printable_html(qs: Dict, include_answers_inline: bool = False, bot_username: str = "") -> bytes:
+    """Self-contained HTML exam paper (or solved study sheet).
+
+    Paper mode: a practice test in the file itself. Tap a bubble to mark an answer,
+    "Check my score" marks it with the quiz's negative rate and shows what was wrong.
+    Printing gives a clean two-column A4 paper with the answer key on its own page.
+    Study mode: answers and explanations inline, nothing to tap.
     """
     esc = lambda v: html.escape(str(v if v is not None else ""))
     title = esc(qs.get("title") or "Quiz")
@@ -165,8 +312,9 @@ def _build_printable_html(qs: Dict, include_answers_inline: bool = False, bot_us
     neg_txt = f"−{neg:g}" if neg > 0 else "None"
     total_min = max(1, round(n * secs / 60))
     date_str = datetime.datetime.utcnow().strftime("%d %b %Y")
-    mode_label = "Solved Study Sheet" if include_answers_inline else "Question Paper"
+    mode_label = "Solved study sheet" if include_answers_inline else "Question paper"
     brand = f"@{esc(bot_username)}" if bot_username else "Miss Quiz"
+    paper = not include_answers_inline
 
     items, keys = [], []
     for i, q in enumerate(questions, 1):
@@ -177,36 +325,46 @@ def _build_printable_html(qs: Dict, include_answers_inline: bool = False, bot_us
             cor = 0
         letter = chr(97 + cor) if 0 <= cor < 26 else "?"
         one_col = any(len(o) > 34 for o in opts)
-        lis = "".join(
-            f"<li class=\"opt{' ok' if k == cor else ''}\"><span class=\"bul\">{chr(97 + k)}</span>"
-            f"<span class=\"ot\">{esc(o)}</span></li>"
-            for k, o in enumerate(opts)
-        )
+        lis = []
+        for k, o in enumerate(opts):
+            inner = (f"<span class=\"bul\">{chr(97 + k)}</span><span class=\"ot\">{esc(o)}</span>")
+            body = (f"<label><input type=\"radio\" name=\"q{i}\" value=\"{k}\">{inner}</label>" if paper
+                    else f"<span class=\"st\">{inner}</span>")
+            lis.append(f"<li class=\"opt{' ok' if k == cor else ''}\">{body}</li>")
         exp = str(q.get("explanation") or "").strip()
         ans_txt = esc(opts[cor]) if 0 <= cor < len(opts) else ""
         sol = (f"<div class=\"sol\"><b>Answer ({letter})</b> {ans_txt}"
                + (f"<div class=\"why\">{esc(exp)}</div>" if exp else "") + "</div>")
         items.append(
-            f"<section class=\"q\"><div class=\"qh\"><span class=\"qn\">{i}.</span>"
-            f"<p>{esc(q.get('question'))}</p></div>"
-            f"<ol class=\"opts{' one' if one_col else ''}\">{lis}</ol>{sol}</section>"
+            f"<section class=\"q\" id=\"q{i}\" data-a=\"{cor}\"><div class=\"qh\"><span class=\"qn\">{i}.</span>"
+            f"<p>{esc(q.get('question'))}<span class=\"tag\"></span></p></div>"
+            f"<ol class=\"opts{' one' if one_col else ''}\">{''.join(lis)}</ol>{sol}</section>"
         )
         keys.append(f"<div class=\"k\"><span>{i}</span><b>{letter}</b></div>")
 
-    neg_line = (f"<li>Each correct answer: <b>+1</b> · each wrong answer: <b>{neg_txt}</b>.</li>"
-                if neg > 0 else "<li>Each correct answer: <b>+1</b> · no negative marking.</li>")
-    candidate = "" if include_answers_inline else (
-        "<div class=\"cand\"><div>Name <i></i></div><div>Roll No. <i></i></div>"
-        f"<div>Score <i class=\"s\"></i> / {n}</div></div>"
-    )
-    key_page = "" if include_answers_inline else (
-        f"<section class=\"key\"><h2>Answer Key</h2><div class=\"kg\">{''.join(keys)}</div></section>"
-    )
-    toggle = "" if include_answers_inline else (
-        "<button class=\"ghost\" onclick=\"document.body.classList.toggle('show');"
-        "this.textContent=document.body.classList.contains('show')?'Hide answers':'Show answers'\">"
-        "Show answers</button>"
-    )
+    marks = (f"Each correct answer: <b>+1</b>. Each wrong answer: <b>{neg_txt}</b>."
+             if neg > 0 else "Each correct answer: <b>+1</b>. No negative marking.")
+    if paper:
+        inst = (f"<ul class=\"so\"><li><b>Tap a bubble</b> to mark your answer. Tap it again to clear it.</li>"
+                f"<li>{marks}</li><li>Tap <b>Check my score</b> when you are done.</li></ul>"
+                f"<ul class=\"po\"><li>Choose the single best option for each question.</li>"
+                f"<li>{marks}</li><li>The answer key is on the last page.</li></ul>")
+    else:
+        inst = f"<ul><li>The correct option is marked in green, with the explanation below it.</li><li>{marks}</li></ul>"
+    candidate = ("<div class=\"cand\"><div>Name <i></i></div><div>Roll No. <i></i></div>"
+                 f"<div>Score <i class=\"sc\"></i> / {n}</div></div>") if paper else ""
+    key_page = (f"<section class=\"key\"><h2>Answer key</h2><div class=\"kg\">{''.join(keys)}</div></section>"
+                if paper else "")
+    acts = ("<button class=\"pill\" id=\"ans\" type=\"button\">Show answers</button>" if paper else "") + \
+           "<button class=\"pill\" id=\"pdf\" type=\"button\" onclick=\"window.print()\">Save as PDF</button>"
+    result = ("""<section class="res" id="res" aria-live="polite">
+    <div class="n"><span id="rs">0</span><small> / %d</small></div><p id="rm"></p>
+    <div class="rf"><div><b id="rr">0</b><span>Correct</span></div><div><b id="rw">0</b><span>Wrong</span></div><div><b id="rk">0</b><span>Skipped</span></div></div>
+    <div class="chips"><button class="chip on" data-f="a" type="button">All questions</button><button class="chip" data-f="w" type="button">Wrong only</button><button class="chip" data-f="s" type="button">Skipped only</button></div>
+  </section>""" % n) if paper else ""
+    dock = ("""<div class="dock"><div><div class="prog"><b id="pn">0</b> of %d answered<div class="track"><i id="pb"></i></div></div>
+  <button class="go" id="go" type="button">Check my score</button></div></div>""" % n) if paper else ""
+    doc_id = esc(str(qs.get("id") or qs.get("title") or "quiz"))[:80]
 
     doc_html = f"""<!DOCTYPE html>
 <html lang="en">
@@ -214,104 +372,32 @@ def _build_printable_html(qs: Dict, include_answers_inline: bool = False, bot_us
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{title} · {mode_label}</title>
-<style>
-  :root {{ --ink:#0f172a; --mute:#64748b; --line:#e2e8f0; --acc:#4338ca; --ok:#15803d; --okbg:#f0fdf4; }}
-  * {{ box-sizing:border-box; }}
-  body {{ margin:0; background:#f1f5f9; color:var(--ink);
-         font:15px/1.55 "Segoe UI", Inter, Roboto, "Noto Sans", "Noto Sans Devanagari", system-ui, sans-serif; }}
-  .bar {{ position:sticky; top:0; z-index:5; display:flex; gap:8px; justify-content:flex-end;
-         padding:10px 16px; background:rgba(241,245,249,.92); backdrop-filter:blur(6px); }}
-  .bar button {{ font:inherit; font-weight:600; border-radius:999px; padding:8px 18px; cursor:pointer; border:0; }}
-  .solid {{ background:var(--acc); color:#fff; }}
-  .ghost {{ background:#fff; color:var(--acc); border:1px solid #c7d2fe !important; }}
-  .paper {{ max-width:840px; margin:0 auto 40px; background:#fff; padding:40px 44px;
-           border-radius:14px; box-shadow:0 1px 3px rgba(15,23,42,.06), 0 12px 32px rgba(15,23,42,.06); }}
-  header {{ text-align:center; padding-bottom:18px; border-bottom:2px solid var(--ink); }}
-  .brand {{ font-size:11px; letter-spacing:.28em; text-transform:uppercase; color:var(--acc); font-weight:700; }}
-  h1 {{ margin:6px 0 2px; font-size:26px; line-height:1.25; }}
-  .sub {{ color:var(--mute); font-size:13px; }}
-  .meta {{ display:grid; grid-template-columns:repeat(4,1fr); margin-top:16px;
-          border:1px solid var(--line); border-radius:10px; overflow:hidden; }}
-  .meta div {{ padding:8px 4px; border-right:1px solid var(--line); }}
-  .meta div:last-child {{ border-right:0; }}
-  .meta small {{ display:block; font-size:10px; letter-spacing:.12em; text-transform:uppercase; color:var(--mute); }}
-  .meta b {{ font-size:16px; }}
-  .cand {{ display:grid; grid-template-columns:2fr 1.2fr 1fr; gap:18px; margin:18px 0 4px; font-size:13px; color:var(--mute); }}
-  .cand div {{ display:flex; align-items:flex-end; gap:8px; white-space:nowrap; }}
-  .cand i {{ flex:1; border-bottom:1px solid #94a3b8; height:1.1em; }}
-  .cand i.s {{ flex:0 0 42px; }}
-  .inst {{ margin:16px 0 22px; padding:10px 16px; background:#f8fafc; border-left:3px solid var(--acc);
-          border-radius:0 8px 8px 0; font-size:13px; color:#334155; }}
-  .inst ul {{ margin:4px 0 0; padding-left:18px; }}
-  .q {{ break-inside:avoid; page-break-inside:avoid; padding:12px 0 14px; border-bottom:1px dashed var(--line); }}
-  .q:last-of-type {{ border-bottom:0; }}
-  .qh {{ display:flex; gap:8px; }}
-  .qn {{ font-weight:700; min-width:28px; color:var(--acc); }}
-  .qh p {{ margin:0; font-weight:600; }}
-  .opts {{ list-style:none; margin:8px 0 0 36px; padding:0; display:grid; grid-template-columns:1fr 1fr; gap:4px 18px; }}
-  .opts.one {{ grid-template-columns:1fr; }}
-  .opt {{ display:flex; gap:8px; align-items:flex-start; padding:3px 8px; border-radius:6px; }}
-  .bul {{ flex:0 0 22px; height:22px; border:1px solid #cbd5e1; border-radius:50%; display:inline-flex;
-         align-items:center; justify-content:center; font-size:12px; font-weight:600; color:#475569; }}
-  .sol {{ display:none; margin:8px 0 0 36px; padding:8px 12px; background:var(--okbg); border-radius:8px;
-         color:var(--ok); font-size:13.5px; }}
-  .why {{ color:#334155; margin-top:3px; }}
-  .show .sol {{ display:block; }}
-  .show .opt.ok {{ background:var(--okbg); color:var(--ok); font-weight:600; }}
-  .show .opt.ok .bul {{ background:var(--ok); border-color:var(--ok); color:#fff; }}
-  .key {{ margin-top:28px; padding-top:18px; border-top:2px solid var(--ink); break-before:page; page-break-before:always; }}
-  .key h2 {{ margin:0 0 12px; font-size:18px; text-align:center; letter-spacing:.06em; text-transform:uppercase; }}
-  .kg {{ display:grid; grid-template-columns:repeat(auto-fill,minmax(64px,1fr)); gap:6px; }}
-  .k {{ display:flex; justify-content:space-between; padding:5px 10px; border:1px solid var(--line); border-radius:6px; font-size:13px; }}
-  .k span {{ color:var(--mute); }}
-  .k b {{ color:var(--ok); text-transform:uppercase; }}
-  footer {{ margin-top:26px; text-align:center; font-size:11px; color:var(--mute); }}
-  @media (max-width:640px) {{
-    .paper {{ padding:24px 18px; border-radius:0; }}
-    h1 {{ font-size:21px; }}
-    .meta {{ grid-template-columns:repeat(2,1fr); }}
-    .meta div:nth-child(2) {{ border-right:0; }}
-    .meta div:nth-child(-n+2) {{ border-bottom:1px solid var(--line); }}
-    .cand {{ grid-template-columns:1fr; gap:10px; }}
-    .opts {{ grid-template-columns:1fr; margin-left:28px; }}
-    .sol {{ margin-left:28px; }}
-  }}
-  @page {{ size:A4; margin:12mm 11mm; }}
-  @media print {{
-    body {{ background:#fff; font-size:11.5pt; }}
-    .bar {{ display:none; }}
-    .paper {{ max-width:none; margin:0; padding:0; box-shadow:none; border-radius:0; }}
-    main {{ column-count:2; column-gap:9mm; column-rule:1px solid var(--line); }}
-    .opts {{ grid-template-columns:1fr; margin-left:26px; }}
-    .sol {{ margin-left:26px; }}
-    * {{ -webkit-print-color-adjust:exact; print-color-adjust:exact; }}
-  }}
-</style>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600&family=Lexend:wght@400;500;600&display=swap" rel="stylesheet">
+<style>{_PAPER_CSS}</style>
 </head>
-<body class="{'show' if include_answers_inline else ''}">
-<div class="bar">{toggle}<button class="solid" onclick="window.print()">Save as PDF</button></div>
+<body class="{'' if paper else 'show'}" data-neg="{neg:g}" data-id="{doc_id}" data-f="a">
 <div class="paper">
+  <div class="top"><div class="brand"><i></i>{brand}</div><div class="acts">{acts}</div></div>
   <header>
-    <div class="brand">{brand}</div>
+    <p class="kind">{mode_label} · {date_str}</p>
     <h1>{title}</h1>
-    <div class="sub">{mode_label} · {date_str}</div>
-    <div class="meta">
-      <div><small>Questions</small><b>{n}</b></div>
-      <div><small>Time</small><b>{total_min} min</b></div>
-      <div><small>Max marks</small><b>{n}</b></div>
-      <div><small>Negative</small><b>{neg_txt}</b></div>
+    <div class="facts">
+      <div><b>{n}</b><span>Questions</span></div>
+      <div><b>{total_min} min</b><span>Time</span></div>
+      <div><b>{n}</b><span>Max marks</span></div>
+      <div><b>{neg_txt}</b><span>Negative</span></div>
     </div>
   </header>
   {candidate}
-  <div class="inst"><b>Instructions</b><ul>
-    <li>Choose the single best option for each question.</li>
-    {neg_line}
-    {"" if include_answers_inline else "<li>The answer key is on the last page.</li>"}
-  </ul></div>
+  <div class="inst">{inst}</div>
+  {result}
   <main>{''.join(items)}</main>
   {key_page}
   <footer>Made with {brand} · {n} questions</footer>
 </div>
+{dock}
+{f'<script>{_PAPER_JS}</script>' if paper else ''}
 </body>
 </html>"""
     return doc_html.encode("utf-8")
