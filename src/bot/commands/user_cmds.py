@@ -27,6 +27,12 @@ class UserCommandsMixin(object):
         chat    = update.effective_chat
         is_pm   = chat.type == "private"
 
+        # Deep link in a group: /start host (start screen → Host in Group) → pick a quiz to run
+        if not is_pm and context.args and context.args[0] == "host" and hasattr(self, "cmd_startquiz"):
+            context.args = []
+            await self.cmd_startquiz(update, context)
+            return
+
         # Deep link in a group: /start gq_<quiz id> (quiz card → Start in Group)
         if not is_pm and context.args and context.args[0].startswith("gq_") and hasattr(self, "gq_start_from_link"):
             await self.gq_start_from_link(update, context, context.args[0][3:])

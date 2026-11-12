@@ -354,7 +354,7 @@ class TelegramQuizBot(
             # Row 5: Community (Dark Glass) & Host in Group (Green CTA)
             [btn("Community", "users", None, url=COMMUNITY_URL)]
             + ([btn("Host in Group", "plus", None,
-                    url=f"https://t.me/{username}?startgroup&admin=delete_messages+pin_messages")]
+                    url=f"https://t.me/{username}?startgroup=host&admin=delete_messages+pin_messages")]
                if username else []),
         ]
         if show_admin:
