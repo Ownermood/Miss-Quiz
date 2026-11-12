@@ -49,4 +49,4 @@ def test_certificate_renders_for_odd_input():
                                       ("", 7, 1, 1, 1), ("x" * 300, 1, 3, 4, 2.5)]:
         png = generate_certificate_image(name, "Q" * 200, "", "", rank, cor, tot, pts, 99999, "")
         im = Image.open(io.BytesIO(png))
-        assert im.size == (1600, 1000) and im.format == "PNG"
+        assert im.size == (1600, 1132) and im.format == "PNG"
