@@ -1887,7 +1887,7 @@ async def render_analysis_html(quiz: dict, results: list[dict]) -> tuple[bytes, 
 </div>
 """
 
-    charts_section = f"""
+    charts_section = """
 <div class="container section">
   <div class="section-title"><i class="fa-solid fa-chart-column"></i> Score overview</div>
   <div class="charts-grid">

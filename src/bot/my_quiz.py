@@ -411,7 +411,7 @@ class MyQuizMixin:
     @staticmethod
     def _mq_list_view(sets: List[Dict], page: int, pages: int, total: int = 0) -> Tuple[str, InlineKeyboardMarkup]:
         from src.bot.battle import _tlabel
-        head = (f"📚 <b>YOUR QUIZZES</b>" + (f" · Page {page}/{pages}" if pages > 1 else "") + f"  ·  Total: <b>{total or len(sets)}</b>\n")
+        head = ("📚 <b>YOUR QUIZZES</b>" + (f" · Page {page}/{pages}" if pages > 1 else "") + f"  ·  Total: <b>{total or len(sets)}</b>\n")
         if not sets:
             body = head + "\n<i>You haven't created any quizzes yet. Tap below to build your first quiz!</i>"
             return body, InlineKeyboardMarkup([[_btn("➕ Create New Quiz", "mq_new", "success")],
@@ -896,7 +896,7 @@ class MyQuizMixin:
         rows.append([_btn("⬅️ Back", f"mq_edit:{sid}", "danger"),
                      _btn("➕ Add Questions", f"mq_add:{sid}", "success")])
         text = (
-            f"📝  <b>EDIT QUESTIONS</b>" + (f"  ·  Page {page}/{pages}" if pages > 1 else "") + "\n"
+            "📝  <b>EDIT QUESTIONS</b>" + (f"  ·  Page {page}/{pages}" if pages > 1 else "") + "\n"
             f"<blockquote><b>{html.escape(str(qs.get('title', 'Quiz')))}  ·  {len(questions)} Questions</b></blockquote>\n"
             f"<i>Tap a question below to edit its text, options, answer, or delete it:</i>"
         )

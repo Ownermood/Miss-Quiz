@@ -7,7 +7,6 @@ Uses built-in DejaVu/Liberation Linux fonts with graceful fallback so it works o
 import io
 import re
 from datetime import datetime
-from typing import Optional
 
 from PIL import Image, ImageDraw, ImageFont
 

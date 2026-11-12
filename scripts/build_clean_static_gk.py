@@ -11,7 +11,7 @@ Every single question is validated:
 import re
 import json
 import os
-from typing import List, Dict, Tuple
+from typing import List, Tuple
 
 RAW_FILE = r'C:\Users\Asus\.gemini\antigravity\brain\cdce8e06-0355-44e4-8b50-605c6cf1d061\.user_uploaded\media_1794307152181_e778e698.txt'
 OUT_JSON = r'C:\Users\Asus\.gemini\antigravity\scratch\Miss-Quiz\data\static_gk_1000_clean.json'

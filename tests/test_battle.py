@@ -694,7 +694,6 @@ async def press_mq(app, ctx, u, data):
 
 async def test_create_needs_min_questions_cancel_and_limit():
     from telegram.ext import ApplicationHandlerStop
-    from src.bot import my_quiz
     app, real = _quiz_app()
     ctx, _ = fake_context()
     ctx.bot.send_message = AsyncMock(return_value=SimpleNamespace(message_id=900))

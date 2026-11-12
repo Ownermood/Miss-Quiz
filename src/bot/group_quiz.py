@@ -805,16 +805,16 @@ class GroupQuizMixin:
         ans_list = s.user_history.get(str(user.id), [])
 
         report = [
-            f"📊 <b>Personal Quiz Scorecard</b>",
+            "📊 <b>Personal Quiz Scorecard</b>",
             f"<b>Quiz:</b> {html.escape(s.title)}",
-            f"━━━━━━━━━━━━━━━━━━",
+            "━━━━━━━━━━━━━━━━━━",
             f"🎯 <b>Net Score:</b> <b>{score} pts</b>" + (f" (Negative: -{s.negative_rate})" if s.negative_rate > 0 else ""),
             f"✅ <b>Correct:</b> {correct}",
             f"❌ <b>Wrong:</b> {wrong}",
             f"⏳ <b>Total Attempted:</b> {correct + wrong} / {total}",
             f"📈 <b>Accuracy:</b> {accuracy}%",
             f"⏱️ <b>Total Time:</b> {sc.get('time', 0.0)}s",
-            f"━━━━━━━━━━━━━━━━━━"
+            "━━━━━━━━━━━━━━━━━━"
         ]
 
         wrong_answers = [item for item in ans_list if not item.get("is_correct")]
