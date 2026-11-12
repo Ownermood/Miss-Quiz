@@ -206,8 +206,8 @@ def _lobby_kb(s: Session) -> InlineKeyboardMarkup:
         [InlineKeyboardButton(f"🙋 I'm Ready ({n_ready})", callback_data=f"gq|ready|{c}", style="success")],
         [InlineKeyboardButton("▶️ Start Now", callback_data=f"gq|launch|{c}", style="primary"),
          InlineKeyboardButton("⏰ Start in 30s", callback_data=f"gq|autostart|{c}", style="primary")],
-        [InlineKeyboardButton("⚙️ Settings", callback_data=f"gq|lset|{c}", style="primary"),
-         InlineKeyboardButton("❌ Cancel", callback_data=f"gq|cancel_lobby|{c}", style="danger")],
+        [InlineKeyboardButton("❌ Cancel", callback_data=f"gq|cancel_lobby|{c}", style="danger"),
+         InlineKeyboardButton("⚙️ Settings", callback_data=f"gq|lset|{c}", style="primary")],
     ])
 
 

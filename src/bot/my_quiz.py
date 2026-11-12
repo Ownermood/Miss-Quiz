@@ -892,8 +892,8 @@ class MyQuizMixin:
             label = (label[:38] + "…") if len(label) > 39 else label
             rows.append([_btn(f"{i + 1}. {label}", f"mq_qv:{sid}:{i}", None)])
         rows += page_rows(pages, page, lambda p: f"mq_ql:{sid}:{p}")
-        rows.append([_btn("➕ Add Questions", f"mq_add:{sid}", "success"),
-                     _btn("⬅️ Back", f"mq_edit:{sid}", "danger")])
+        rows.append([_btn("⬅️ Back", f"mq_edit:{sid}", "danger"),
+                     _btn("➕ Add Questions", f"mq_add:{sid}", "success")])
         text = (
             f"📝  <b>EDIT QUESTIONS</b>" + (f"  ·  Page {page}/{pages}" if pages > 1 else "") + "\n"
             f"<blockquote><b>{html.escape(str(qs.get('title', 'Quiz')))}  ·  {len(questions)} Questions</b></blockquote>\n"
@@ -930,8 +930,8 @@ class MyQuizMixin:
             [_btn("✏️ Rewrite", f"mq_qe:{sid}:{idx}", "success"),
              _btn("🔑 Change Answer", f"mq_qa:{sid}:{idx}", None)],
             [_btn("🗑 Delete Question", f"mq_qd:{sid}:{idx}", "danger")],
-            [_btn("📋 All Questions", f"mq_ql:{sid}:{idx // 8 + 1}", None),
-             _btn("⬅️ Back", f"mq_edit:{sid}", "danger")],
+            [_btn("⬅️ Back", f"mq_edit:{sid}", "danger"),
+             _btn("📋 All Questions", f"mq_ql:{sid}:{idx // 8 + 1}", None)],
         ]
         return text, InlineKeyboardMarkup(rows)
 

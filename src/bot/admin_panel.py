@@ -452,8 +452,8 @@ class AdminPanelMixin:
                     await dev.broadcast(_UpdProxy(update, _MsgProxy(msg, "/broadcast", reply_to=msg)), context)
                 await self._reply(update, f"{e('signal')} <b>Send this broadcast?</b>",
                                   reply_markup=InlineKeyboardMarkup([
-                                      [btn("Send now", "check", GREEN, callback_data="ap:bc_yes"),
-                                       btn("Cancel", "cross", RED, callback_data="ap:bc_no")]]))
+                                      [btn("Cancel", "cross", RED, callback_data="ap:bc_no"),
+                                       btn("Send now", "check", GREEN, callback_data="ap:bc_yes")]]))
         elif key == "find":
             ud.pop("ap_await", None)
             f_text, f_kb = self._find_results((msg.text or "").strip(), user.id)
@@ -503,8 +503,8 @@ class AdminPanelMixin:
             lines.append("<b>No admins yet.</b>")
         rows = []
         if self._can_manage_admins(viewer):
-            rows.append([btn("Add Admin", "plus", GREEN, callback_data="ap:adm_add"),
-                         btn("Remove Admin", "trash", RED, callback_data="ap:adm_rm")])
+            rows.append([btn("Remove Admin", "trash", RED, callback_data="ap:adm_rm"),
+                         btn("Add Admin", "plus", GREEN, callback_data="ap:adm_add")])
         rows.append([btn("Back", "back", RED, callback_data="ap:home")])
         return "\n".join(lines), InlineKeyboardMarkup(rows)
 
@@ -802,8 +802,8 @@ class AdminPanelMixin:
         for x in hits[:limit]:
             qid = x.get("id")
             lines.append(f"<b>#{qid}</b> {_h.escape((x.get('question') or '')[:70])}")
-            rows.append([btn(f"Edit #{qid}", "edit", BLUE, callback_data=f"edit_quiz_select_{qid}"),
-                         btn(f"Delete #{qid}", "trash", RED, callback_data=f"dq_ask_{qid}_{user_id}")])
+            rows.append([btn(f"Delete #{qid}", "trash", RED, callback_data=f"dq_ask_{qid}_{user_id}"),
+                         btn(f"Edit #{qid}", "edit", BLUE, callback_data=f"edit_quiz_select_{qid}")])
         return "\n".join(lines), InlineKeyboardMarkup(rows + [again, back])
 
     # ── start photo (stored in settings, cached in memory) ───────────────

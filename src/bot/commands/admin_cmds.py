@@ -283,8 +283,8 @@ class AdminCommandsMixin(object):
         if nav:
             rows.append(nav)
 
-        rows.append([InlineKeyboardButton("🔎 Find by ID / word", callback_data="ap:find", style="primary"),
-                     InlineKeyboardButton("⬅️ Back", callback_data=f"dq_cancel_{user_id}", style="danger")])
+        rows.append([InlineKeyboardButton("⬅️ Back", callback_data=f"dq_cancel_{user_id}", style="danger"),
+                     InlineKeyboardButton("🔎 Find by ID / word", callback_data="ap:find", style="primary")])
         return InlineKeyboardMarkup(rows)
 
     async def _cb_delquiz(self, update: Update, context: ContextTypes.DEFAULT_TYPE):

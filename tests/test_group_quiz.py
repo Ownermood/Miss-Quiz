@@ -320,7 +320,7 @@ async def test_lobby_pinned_notice_deleted_settings_page_and_unpin_on_cancel():
     assert s.pinned and app.real.list_quiz_sessions()[0]["pinned"] is True
     kb = gq._lobby_kb(s)
     assert [[b.text for b in r] for r in kb.inline_keyboard] == [
-        ["🙋 I'm Ready (1)"], ["▶️ Start Now", "⏰ Start in 30s"], ["⚙️ Settings", "❌ Cancel"]]
+        ["🙋 I'm Ready (1)"], ["▶️ Start Now", "⏰ Start in 30s"], ["❌ Cancel", "⚙️ Settings"]]
     await press(app, c, host, f"gq|lset|{GROUP}")
     assert s.lobby_page == "settings"
     await press(app, c, host, f"gq|tog_neg|{GROUP}")
@@ -337,3 +337,19 @@ async def test_lobby_pinned_notice_deleted_settings_page_and_unpin_on_cancel():
     await press(app, c, host, f"gq|cancel_lobby|{GROUP}")
     c.bot.unpin_chat_message.assert_awaited_once()
     assert not gq.is_active(GROUP)
+
+
+async def test_host_in_group_link_opens_quiz_picker_for_admins():
+    from src.bot.handlers_main import TelegramQuizBot
+    b = TelegramQuizBot(MagicMock(), db_manager=MagicMock())
+    b.application = MagicMock()
+    b.application.bot.username = "MissQuiz_Bot"
+    urls = [x.url for r in b._start_kb().inline_keyboard for x in r if x.url and "startgroup" in x.url]
+    assert urls and all("startgroup=host&admin=" in u for u in urls)         # has a start parameter
+    b.cmd_startquiz = AsyncMock()
+    c, _, _ = ctx(admins=(1,))
+    c.args = ["host"]
+    upd = group_upd(user(1))
+    upd.effective_user.language_code = "en"
+    await b.cmd_start(upd, c)
+    b.cmd_startquiz.assert_awaited_once()                                    # → quiz picker (admin check inside)

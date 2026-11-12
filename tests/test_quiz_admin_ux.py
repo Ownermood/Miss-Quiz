@@ -66,8 +66,8 @@ async def test_delquiz_with_id_goes_straight_to_confirm(bot):
 
 def test_find_by_id_and_by_words(bot):
     text, kb = bot._find_results("5", ADMIN)
-    assert "#5" in text and kb.inline_keyboard[0][0].callback_data == "edit_quiz_select_5"
-    assert kb.inline_keyboard[0][1].callback_data == f"dq_ask_5_{ADMIN}"
+    assert "#5" in text and kb.inline_keyboard[0][1].callback_data == "edit_quiz_select_5"   # main action right
+    assert kb.inline_keyboard[0][0].callback_data == f"dq_ask_5_{ADMIN}"                     # delete left
     text, _ = bot._find_results("france capital", ADMIN)
     assert "#6" in text and "#5" not in text
     text, kb = bot._find_results("zzz", ADMIN)

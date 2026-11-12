@@ -527,7 +527,7 @@ async def test_botstats_live_text_and_back_to_panel(bot):
     text, kb = bot._edit.await_args.args[1], bot._edit.await_args.args[2]
     assert "accuracy 70%" in text and "Answers (last hour) › 3" in text and "Updated" in text
     assert "Paused (not admin) › 1" in text
-    assert [b.callback_data for b in kb.inline_keyboard[0]] == ["bs_refresh", "ap:home"]
+    assert [b.callback_data for b in kb.inline_keyboard[0]] == ["ap:home", "bs_refresh"]
 
 def test_emoji_test_pages_cover_every_mapped_emoji(bot, monkeypatch):
     monkeypatch.setenv("PREMIUM_EMOJI", "1")

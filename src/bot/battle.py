@@ -537,8 +537,8 @@ class BattleMixin:
         kb = InlineKeyboardMarkup([
             [send],
             [InlineKeyboardButton("📋 Copy link", copy_text=CopyTextButton(link), style="primary")],
-            [InlineKeyboardButton("✏️ Change", callback_data=f"bt_ch:{b.id}", style="primary"),
-             InlineKeyboardButton("❌ Cancel", callback_data=f"bt_dec:{b.id}", style="danger")],
+            [InlineKeyboardButton("❌ Cancel", callback_data=f"bt_dec:{b.id}", style="danger"),
+             InlineKeyboardButton("✏️ Change", callback_data=f"bt_ch:{b.id}", style="primary")],
         ])
         return text, kb
 

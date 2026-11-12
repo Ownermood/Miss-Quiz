@@ -481,8 +481,8 @@ class QuizCommandsMixin(object):
         )
 
         kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🔄 Refresh", callback_data="bs_refresh", style="primary"),
-             InlineKeyboardButton("⬅️ Back", callback_data="ap:home", style="danger")],   # back to Admin Panel
+            [InlineKeyboardButton("⬅️ Back", callback_data="ap:home", style="danger"),
+             InlineKeyboardButton("🔄 Refresh", callback_data="bs_refresh", style="primary")],   # back to Admin Panel
         ])
 
         await self._edit(wait, text, kb)
