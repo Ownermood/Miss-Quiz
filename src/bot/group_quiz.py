@@ -615,8 +615,15 @@ class GroupQuizMixin:
         msg = (f"🏆 Play “{s.title}” in your group with Miss Quiz! "
                f"{len(s.questions)} questions · {s.secs}s each. Tap the link and pick your group 👇")
         share = "https://t.me/share/url?url=" + quote(link, safe="") + "&text=" + quote(msg)
-        return InlineKeyboardMarkup([
-            [InlineKeyboardButton("🔁 Play again", callback_data=f"gq|again|{s.chat_id}", style="success"),
+        nxt = []
+        if s.set_id and s.part_start >= 0:              # big quiz in parts → continue in one tap
+            start = s.part_start + min(s.idx, len(s.questions))
+            size = max(1, len(s.questions))
+            nxt = [[InlineKeyboardButton(f"▶️ Next part · from Q{start + 1}",
+                                         callback_data=f"gq|next|{s.chat_id}|{start}|{size}", style="success")]]
+        return InlineKeyboardMarkup(nxt + [
+            [InlineKeyboardButton("🔁 Play again", callback_data=f"gq|again|{s.chat_id}",
+                                  style=None if nxt else "success"),
              InlineKeyboardButton("📤 Share Quiz", url=share, style="primary")],
             [InlineKeyboardButton("🌐 Download HTML Report", callback_data=f"gq|html|{s.chat_id}", style="primary")],
         ])
@@ -1059,6 +1066,35 @@ class GroupQuizMixin:
             except Exception as ex:
                 logger.error(f"[GQUIZ] HTML report failed: {ex}", exc_info=True)
                 await query.answer("Please start me in DM first so I can send the file!", show_alert=True)
+            return
+
+        if action == "next":                               # gq|next|chat|start|size
+            if not await self._gq_is_admin(context, chat_id, user):
+                await query.answer("Only group admins can start the next part.", show_alert=True)
+                return
+            if is_active(chat_id):
+                await query.answer("A quiz is already running here.", show_alert=True)
+                return
+            last = getattr(self, "_gq_last", {}).get(chat_id)
+            sid = getattr(last, "set_id", "") if last else ""
+            if not sid:
+                await query.answer("Start it again with /startquiz.", show_alert=True)
+                return
+            qs = await self._gq_db("get_quiz_set", sid)
+            if not isinstance(qs, dict) or not qs.get("questions"):
+                await query.answer("That quiz is no longer available.", show_alert=True)
+                return
+            allq = list(qs["questions"])
+            start = int(parts[3]) if len(parts) > 3 and parts[3].isdigit() else 0
+            size = int(parts[4]) if len(parts) > 4 and parts[4].isdigit() else 25
+            if start >= len(allq):
+                await query.answer("🎉 All questions done! Use /startquiz → Start again from Q1.", show_alert=True)
+                return
+            chunk = allq[start:start + size]
+            await query.answer("Next part! 🚀")
+            await self._gq_begin(context, chat_id, last.thread_id, user,
+                                 f"{qs.get('title') or 'Quiz'} · Q{start + 1}–Q{start + len(chunk)}",
+                                 chunk, int(qs.get("secs") or BOT_SECS), sid, part_start=start)
             return
 
         if action == "again":

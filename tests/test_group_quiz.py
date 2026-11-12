@@ -382,3 +382,26 @@ async def test_reply_accepts_keyboard_in_parse_mode_slot():
     await b._reply(upd, "hi", kb)
     kw = msg.reply_text.await_args.kwargs
     assert kw["parse_mode"] == ParseMode.HTML and kw["reply_markup"] is kb
+
+
+async def test_next_part_button_continues_big_quiz_in_one_tap():
+    app = App()
+    c, polls, sent = ctx(admins=(1,))
+    sid = app.real.create_quiz_set(1, "Master of gk", questions(60), 20)
+    admin = user(1, "Admin")
+    await press(app, c, admin, f"gq|part|1|{sid}|25|0")
+    gq.ACTIVE[GROUP].secs = 0.01
+    await answer_all(app, polls, {7: 0}, 25)
+    await wait_done()
+    kb = c.bot.send_message.await_args.kwargs["reply_markup"]
+    first = kb.inline_keyboard[0][0]
+    assert first.text == "▶️ Next part · from Q26" and first.callback_data == f"gq|next|{GROUP}|25|25"
+    q = await press(app, c, user(2), first.callback_data)                 # member can't
+    assert q.answer.await_args.kwargs.get("show_alert") is True and not gq.is_active(GROUP)
+    await press(app, c, admin, first.callback_data)
+    s = gq.ACTIVE[GROUP]
+    assert s.part_start == 25 and len(s.questions) == 25 and "Q26–Q50" in s.title
+    s.status = "stopped"; s.wake.set()
+    await wait_done()
+    q = await press(app, c, admin, f"gq|next|{GROUP}|60|25")              # nothing left
+    assert "All questions done" in q.answer.await_args.args[0]
