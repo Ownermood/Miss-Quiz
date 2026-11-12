@@ -1,48 +1,54 @@
 """
-Royal Certificate of Excellence Generator (Pillow / PIL) — Miss Quiz Bot.
-Generates high-resolution (1280x820) achievement certificates for Top 3 Group Quiz Winners.
-Uses built-in DejaVu/Liberation Linux fonts with graceful fallback so it works on any VPS.
+Winner certificate (Pillow) for the Top 3 of a Group Quiz — Miss Quiz Bot.
+
+Design: a night-ink "answer sheet". A big OMR bubble holds the rank in a metal
+ring (gold / silver / bronze), the winner's name is set large in Fraunces, and an
+OMR strip at the bottom is filled as far as the player's accuracy.
+
+Fonts are bundled in assets/fonts (SIL OFL). If they are missing it falls back to
+system DejaVu so it still renders on any VPS. Never raises on odd names:
+fancy Unicode letters (𝐁𝐨𝐥𝐝, 𝙼𝚘𝚗𝚘, ꜱᴍᴀʟʟ ᴄᴀᴘꜱ) are folded to plain letters,
+Hindi names use Noto Sans Devanagari, emoji-only names fall back to a symbol font.
 """
 
 import io
+import math
 import re
+import unicodedata
 from datetime import datetime
+from pathlib import Path
 
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
+_FONT_DIR = Path(__file__).resolve().parents[2] / "assets" / "fonts"
+_SYS_BOLD = ["/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+             "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+             "C:/Windows/Fonts/arialbd.ttf"]
+_SYS_REG = ["/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+            "C:/Windows/Fonts/arial.ttf"]
 
-_FONT_PATHS_BOLD = [
-    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-    "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
-    "/usr/share/fonts/truetype/freefont/FreeSansBold.ttf",
-    "C:/Windows/Fonts/arialbd.ttf",
-    "C:/Windows/Fonts/segoeuib.ttf",
-]
+S = 2                      # supersample factor (drawn at 2x, downscaled → smooth circles)
+W, H = 1600, 1000          # output size
 
-_FONT_PATHS_REGULAR = [
-    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-    "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
-    "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
-    "C:/Windows/Fonts/arial.ttf",
-    "C:/Windows/Fonts/segoeui.ttf",
-]
+INK = (16, 22, 74)
+TEXT = (244, 245, 251)
+MUTED = (166, 172, 214)
+OMR = (231, 128, 154)
 
-_FONT_PATHS_SERIF = [
-    "/usr/share/fonts/truetype/dejavu/DejaVuSerif-Bold.ttf",
-    "/usr/share/fonts/truetype/liberation/LiberationSerif-Bold.ttf",
-    "C:/Windows/Fonts/georgiab.ttf",
-    "C:/Windows/Fonts/timesbd.ttf",
-]
+THEMES = {
+    1: {"metal": (240, 189, 79), "glow": (240, 189, 79), "place": "First place", "verb": "first", "sfx": "st"},
+    2: {"metal": (206, 214, 232), "glow": (150, 170, 230), "place": "Second place", "verb": "second", "sfx": "nd"},
+    3: {"metal": (222, 145, 92), "glow": (222, 120, 80), "place": "Third place", "verb": "third", "sfx": "rd"},
+}
 
-_FONT_PATHS_ITALIC = [
-    "/usr/share/fonts/truetype/dejavu/DejaVuSerif-Italic.ttf",
-    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Oblique.ttf",
-    "C:/Windows/Fonts/georgiai.ttf",
-    "C:/Windows/Fonts/ariali.ttf",
-]
+_SMALLCAPS = str.maketrans("ᴀʙᴄᴅᴇꜰɢʜɪᴊᴋʟᴍɴᴏᴘǫʀꜱᴛᴜᴠᴡʏᴢ", "ABCDEFGHIJKLMNOPQRSTUVWYZ")
+_font_cache: dict = {}
 
 
-def _load_font(paths, size: int):
+# ── fonts ────────────────────────────────────────────────────────────────────
+
+def _sys(paths, size):
     for p in paths:
         try:
             return ImageFont.truetype(p, size)
@@ -54,18 +60,128 @@ def _load_font(paths, size: int):
         return ImageFont.load_default()
 
 
-def _clean_render_text(text: str, fallback: str = "Champion") -> str:
-    """Keep printable Latin/Devanagari/basic punctuation and strip astral emojis
-    that standard TrueType fonts render as empty tofu boxes."""
-    if not text:
-        return fallback
-    # Strip surrogate/astral emojis and variation selectors
-    cleaned = "".join(
-        ch for ch in str(text)
-        if (0x20 <= ord(ch) <= 0x024F) or (0x0900 <= ord(ch) <= 0x097F) or ch in "’‘“”–—•·"
-    )
-    cleaned = re.sub(r"\s+", " ", cleaned).strip()
-    return cleaned if cleaned else fallback
+def _font(name: str, size: int, **axes):
+    """Bundled variable font at a size with axis values (e.g. Weight=700)."""
+    key = (name, size, tuple(sorted(axes.items())))
+    if key in _font_cache:
+        return _font_cache[key]
+    f = None
+    try:
+        f = ImageFont.truetype(str(_FONT_DIR / f"{name}.ttf"), size * S)
+        if axes:
+            vals = []
+            for a in f.get_variation_axes():
+                nm = a["name"].decode() if isinstance(a["name"], bytes) else str(a["name"])
+                v = axes.get(nm.replace(" ", ""), a.get("default", a["minimum"]))
+                vals.append(max(a["minimum"], min(a["maximum"], v)))
+            f.set_variation_by_axes(vals)
+    except Exception:
+        f = _sys(_SYS_BOLD if axes.get("Weight", 400) >= 600 else _SYS_REG, size * S)
+    _font_cache[key] = f
+    return f
+
+
+def _symbol_font(size):
+    return _sys(_SYS_BOLD, size * S)
+
+
+def _has_glyph(font, ch: str) -> bool:
+    try:
+        notdef = font.getmask("\uffff").tobytes()
+        return ch.isspace() or font.getmask(ch).tobytes() != notdef
+    except Exception:
+        return True
+
+
+# ── text cleaning ────────────────────────────────────────────────────────────
+
+def _clean_render_text(text, fallback: str = "") -> str:
+    """Fold fancy Unicode letters to plain ones and drop emoji / control chars."""
+    t = unicodedata.normalize("NFKC", str(text or "")).translate(_SMALLCAPS)
+    out = []
+    for ch in t:
+        cp = ord(ch)
+        cat = unicodedata.category(ch)
+        if cp > 0xFFFF or 0xFE00 <= cp <= 0xFE0F or cat in ("Cc", "Cf", "Co", "Cs", "Cn"):
+            continue
+        if 0x2600 <= cp <= 0x27BF and not (0x2660 <= cp <= 0x2667):   # misc emoji-ish symbols (keep ♠♡♢♣)
+            continue
+        out.append(ch)
+    cleaned = re.sub(r"\s+", " ", "".join(out)).strip()
+    return cleaned or fallback
+
+
+def _is_deva(s: str) -> bool:
+    return any(0x0900 <= ord(c) <= 0x097F for c in s)
+
+
+def _fit_name(name: str, max_w: int):
+    """Pick font for the name (Latin serif / Devanagari / symbol) and shrink to fit."""
+    for size in range(124, 54, -4):
+        if _is_deva(name):
+            f = _font("NotoSansDevanagari", int(size * .82), Weight=700)
+        else:
+            f = _font("Fraunces", size, Weight=650, OpticalSize=144, Softness=60, Wonky=1)
+        txt = "".join(c for c in name if _has_glyph(f, c)).strip()
+        if not any(c.isalnum() for c in txt):
+            f, txt = _symbol_font(int(size * .8)), name
+        if f.getlength(txt) <= max_w * S:
+            return f, txt
+    while txt and f.getlength(txt + "…") > max_w * S:
+        txt = txt[:-1]
+    return f, txt.rstrip() + "…"
+
+
+def _wrap(text: str, font, max_w: int, max_lines: int = 2):
+    words, lines, cur = text.split(), [], ""
+    for w in words:
+        trial = (cur + " " + w).strip()
+        if font.getlength(trial) <= max_w * S or not cur:
+            cur = trial
+        else:
+            lines.append(cur)
+            cur = w
+    if cur:
+        lines.append(cur)
+    if len(lines) > max_lines:
+        lines = lines[:max_lines]
+        last = lines[-1]
+        while last and font.getlength(last + "…") > max_w * S:
+            last = last[:-1]
+        lines[-1] = last.rstrip() + "…"
+    return lines
+
+
+def _fmt_time(secs: float) -> str:
+    secs = max(0, int(round(float(secs or 0))))
+    h, rem = divmod(secs, 3600)
+    m, s = divmod(rem, 60)
+    if h:
+        return f"{h}:{m:02d}:{s:02d}"
+    if m:
+        return f"{m}:{s:02d}"
+    return f"{s}s"
+
+
+def _fmt_num(x: float) -> str:
+    x = round(float(x), 2)
+    return str(int(x)) if x == int(x) else f"{x:.2f}".rstrip("0").rstrip(".")
+
+
+# ── drawing helpers (logical coords, scaled by S) ────────────────────────────
+
+def _c(*v):
+    return [int(round(a * S)) for a in v]
+
+
+def _circle(d, cx, cy, r, **kw):
+    if "width" in kw:
+        kw["width"] = max(1, int(round(kw["width"] * S)))
+    d.ellipse(_c(cx - r, cy - r, cx + r, cy + r), **kw)
+
+
+def _text(d, xy, s, font, fill, anchor="la"):
+    d.text(_c(*xy), s, font=font, fill=fill, anchor=anchor)
 
 
 def generate_certificate_image(
@@ -80,147 +196,109 @@ def generate_certificate_image(
     time_secs: float,
     bot_username: str = "MissQuizBot",
 ) -> bytes:
-    """Render a 1280x820 high-resolution PNG certificate for rank 1, 2, or 3."""
-    W, H = 1280, 820
-    img = Image.new("RGB", (W, H), "#FFFFFF")
-    draw = ImageDraw.Draw(img)
-
-    # Rank theme colors (1st: Royal Gold, 2nd: Platinum Silver, 3rd: Amber Bronze)
-    themes = {
-        1: {
-            "label": "First Place",
-            "badge": "#1 CHAMPION",
-            "accent": (217, 155, 22),      # Gold
-            "accent_light": (254, 243, 199),
-            "hdr_left": (30, 27, 75),      # Deep royal indigo
-            "hdr_right": (67, 56, 202),    # Electric indigo
-        },
-        2: {
-            "label": "Second Place",
-            "badge": "#2 RUNNER-UP",
-            "accent": (100, 116, 139),     # Platinum slate
-            "accent_light": (241, 245, 249),
-            "hdr_left": (15, 23, 42),
-            "hdr_right": (51, 65, 85),
-        },
-        3: {
-            "label": "Third Place",
-            "badge": "#3 MEDALIST",
-            "accent": (180, 83, 9),        # Bronze amber
-            "accent_light": (254, 243, 199),
-            "hdr_left": (41, 37, 36),
-            "hdr_right": (120, 53, 15),
-        },
-    }
-    th = themes.get(rank_pos, themes[1])
-    acc_color = th["accent"]
-
-    # 1. Top Gradient Banner (height: 150px)
-    BANNER_H = 150
-    r1, g1, b1 = th["hdr_left"]
-    r2, g2, b2 = th["hdr_right"]
-    for x in range(W):
-        t = x / max(1, W - 1)
-        col = (int(r1 + (r2 - r1) * t), int(g1 + (g2 - g1) * t), int(b1 + (b2 - b1) * t))
-        draw.line([(x, 0), (x, BANNER_H)], fill=col)
-
-    # Gold/Rank accent bar under banner
-    draw.rectangle([0, BANNER_H, W, BANNER_H + 6], fill=acc_color)
-
-    # 2. Subtle Watermark Seal in center of white body
-    cx, cy = W // 2, 460
-    for rad in (170, 156, 140):
-        draw.ellipse([cx - rad, cy - rad, cx + rad, cy + rad], outline=(241, 245, 249), width=3)
-
-    # 3. Ornamental Outer Border on Certificate Body
-    draw.rectangle([28, BANNER_H + 24, W - 28, H - 24], outline=(226, 232, 240), width=2)
-    draw.rectangle([36, BANNER_H + 32, W - 36, H - 32], outline=acc_color, width=2)
-
-    # Fonts
-    f_brand = _load_font(_FONT_PATHS_BOLD, 34)
-    f_brand_sub = _load_font(_FONT_PATHS_REGULAR, 15)
-    f_badge = _load_font(_FONT_PATHS_BOLD, 20)
-    f_cert_title = _load_font(_FONT_PATHS_BOLD, 28)
-    f_awarded = _load_font(_FONT_PATHS_REGULAR, 20)
-    f_winner = _load_font(_FONT_PATHS_SERIF, 54)
-    f_desc_bold = _load_font(_FONT_PATHS_BOLD, 22)
-    f_meta = _load_font(_FONT_PATHS_REGULAR, 18)
-    f_box_lbl = _load_font(_FONT_PATHS_BOLD, 15)
-    f_box_val = _load_font(_FONT_PATHS_BOLD, 34)
-    f_sig = _load_font(_FONT_PATHS_ITALIC, 28)
-    f_foot = _load_font(_FONT_PATHS_REGULAR, 16)
-    f_foot_bold = _load_font(_FONT_PATHS_BOLD, 16)
-
-    # 4. Header Content (Left: Miss Quiz Logo + Brand, Right: Rank Pill)
-    # Left logo badge
-    draw.rounded_rectangle([54, 34, 134, 114], radius=20, fill=(255, 255, 255))
-    draw.text((94, 74), "MQ", font=_load_font(_FONT_PATHS_BOLD, 36), fill=th["hdr_left"], anchor="mm")
-
-    draw.text((154, 55), "MISS QUIZ", font=f_brand, fill=(255, 255, 255), anchor="lm")
-    draw.text((154, 94), "OFFICIAL TOURNAMENT CERTIFICATE", font=f_brand_sub, fill=(203, 213, 225), anchor="lm")
-
-    # Right rank pill in header
-    draw.rounded_rectangle([W - 290, 42, W - 56, 108], radius=16, fill=acc_color)
-    draw.text((W - 173, 75), th["badge"], font=f_badge, fill=(255, 255, 255), anchor="mm")
-
-    # 5. Certificate Title
-    draw.text((cx, 215), "C E R T I F I C A T E   O F   A C H I E V E M E N T", font=f_cert_title, fill=(30, 41, 59), anchor="mm")
-    draw.line([(cx - 190, 242), (cx + 190, 242)], fill=acc_color, width=3)
-
-    draw.text((cx, 278), "This certificate is proudly awarded to", font=f_awarded, fill=(100, 116, 139), anchor="mm")
-
-    # 6. Winner Name
-    clean_winner = _clean_render_text(player_name, "Quiz Champion")[:32]
-    draw.text((cx, 342), clean_winner, font=f_winner, fill=(15, 23, 42), anchor="mm")
-
-    # 7. Quiz & Group Details
-    clean_quiz = _clean_render_text(quiz_title, "Live Group Quiz")[:48]
-    clean_group = _clean_render_text(group_title, "Telegram Group")[:38]
-    clean_host = _clean_render_text(host_name, "Admin")[:28]
-
-    desc_line = f"For achieving {th['label']} in  “{clean_quiz}”"
-    draw.text((cx, 410), desc_line, font=f_desc_bold, fill=(51, 65, 85), anchor="mm")
-
-    sub_line = f"Hosted by {clean_host}  •  Group: {clean_group}"
-    draw.text((cx, 446), sub_line, font=f_meta, fill=(100, 116, 139), anchor="mm")
-
-    # 8. Four Premium Stat Cards (SCORE | ACCURACY | TIME | RANK)
+    """Render a 1600x1000 PNG certificate for rank 1, 2 or 3."""
+    th = THEMES.get(rank_pos, THEMES[1])
+    metal = th["metal"]
     total_q = max(1, int(total_q))
-    accuracy = round(100 * correct / total_q)
-    cards = [
-        ("SCORE", f"{correct}/{total_q}", (15, 23, 42)),
-        ("ACCURACY", f"{accuracy}%", (22, 163, 74)),
-        ("SPEED TIME", f"{round(float(time_secs), 1)}s", (37, 99, 235)),
-        ("RANK", th["label"], acc_color),
+    correct = max(0, min(int(correct), total_q))
+    acc = correct / total_q
+
+    img = Image.new("RGB", (W * S, H * S), INK)
+
+    # glow behind the big bubble + faint answer-sheet grid
+    glow = Image.new("RGBA", img.size, (0, 0, 0, 0))
+    gd = ImageDraw.Draw(glow)
+    _circle(gd, 400, 500, 330, fill=th["glow"] + (70,))
+    glow = glow.filter(ImageFilter.GaussianBlur(140 * S))
+    img.paste(glow, (0, 0), glow)
+
+    grid = Image.new("RGBA", img.size, (0, 0, 0, 0))
+    gr = ImageDraw.Draw(grid)
+    for gy in range(22, H, 44):
+        for gx in range(22 + (22 if (gy // 44) % 2 else 0), W, 44):
+            _circle(gr, gx, gy, 9, outline=(255, 255, 255, 13), width=1.4)
+    img.paste(grid, (0, 0), grid)
+    d = ImageDraw.Draw(img)
+
+    # ── top bar: brand + label
+    _circle(d, 76, 76, 15, fill=(58, 79, 224))
+    _circle(d, 76, 76, 19, outline=OMR, width=2.5)
+    _text(d, (106, 76), "Miss Quiz", _font("Lexend", 30, Weight=600), TEXT, "lm")
+    _text(d, (W - 64, 76), "Group Quiz · Certificate of achievement", _font("Lexend", 21, Weight=400), MUTED, "rm")
+
+    # ── left: the rank bubble
+    bx, by, br = 400, 510, 240
+    for k in range(48):                          # ring of tiny answer bubbles around it
+        a = k / 48 * math.tau - math.pi / 2
+        px, py = bx + math.cos(a) * (br + 46), by + math.sin(a) * (br + 46)
+        filled = k < round(acc * 48)
+        _circle(d, px, py, 6.5, fill=metal if filled else None, outline=metal if filled else OMR, width=1.6)
+    _circle(d, bx, by, br, fill=tuple(int(c * .16 + i * .84) for c, i in zip(metal, INK)))
+    _circle(d, bx, by, br, outline=metal, width=12)
+    num_f = _font("Fraunces", 330, Weight=800, OpticalSize=144, Softness=100, Wonky=1)
+    sfx_f = _font("Fraunces-Italic", 64, Weight=500, OpticalSize=72, Softness=100)
+    num = str(rank_pos if rank_pos in THEMES else 1)
+    nw = num_f.getlength(num) / S
+    _text(d, (bx - 18, by + 8), num, num_f, metal, "mm")
+    _text(d, (bx - 18 + nw / 2 + 4, by - 92), th["sfx"], sfx_f, metal, "ls")
+    _text(d, (bx, by + br + 104), th["place"], _font("Lexend", 30, Weight=500), metal, "mm")
+
+    # ── right: who, what, where
+    rx, rmax = 770, 770
+    _text(d, (rx, 236), "Awarded to", _font("Lexend", 26, Weight=300), MUTED, "ls")
+    name = _clean_render_text(player_name, "Quiz Champion")
+    nf, ntxt = _fit_name(name, rmax)
+    _text(d, (rx - 4, 360), ntxt, nf, TEXT, "ls")
+
+    quiz = _clean_render_text(quiz_title, "Live Group Quiz")
+    group = _clean_render_text(group_title, "")
+    host = _clean_render_text(host_name, "")
+    _text(d, (rx, 428), f"for finishing {th['verb']} in", _font("Lexend", 25, Weight=300), MUTED, "ls")
+    qf = _font("Lexend", 34, Weight=600)
+    y = 476
+    for ln in _wrap(quiz, qf, rmax, 2):
+        _text(d, (rx, y), ln, qf, TEXT, "ls")
+        y += 46
+    where = " · ".join(p for p in (group, f"hosted by {host}" if host else "") if p)
+    if where:
+        wf = _font("Lexend", 23, Weight=400)
+        _text(d, (rx, y + 4), _wrap(where, wf, rmax, 1)[0], wf, MUTED, "ls")
+
+    # ── stats
+    sy = 640
+    d.line(_c(rx, sy, rx + rmax, sy), fill=(60, 66, 120), width=2 * S)
+    stats = [
+        ("Score", _fmt_num(score_pts), f"/{total_q}"),
+        ("Correct", str(correct), ""),
+        ("Accuracy", f"{round(acc * 100)}", "%"),
+        ("Time", _fmt_time(time_secs), ""),
     ]
+    vf, sf, lf = _font("Lexend", 50, Weight=600), _font("Lexend", 24, Weight=400), _font("Lexend", 21, Weight=300)
+    colw = rmax / 4
+    for i, (lbl, val, suf) in enumerate(stats):
+        x = rx + i * colw
+        _text(d, (x, sy + 78), val, vf, metal if i == 0 else TEXT, "ls")
+        if suf:
+            _text(d, (x + vf.getlength(val) / S + 4, sy + 78), suf, sf, MUTED, "ls")
+        _text(d, (x, sy + 114), lbl, lf, MUTED, "ls")
 
-    box_w, box_h = 250, 136
-    gap = 28
-    total_row_w = 4 * box_w + 3 * gap
-    start_x = (W - total_row_w) // 2
-    box_y = 492
+    # ── OMR strip: filled as far as the accuracy
+    n, gap = 30, rmax / 30
+    filled = round(acc * n)
+    for k in range(n):
+        cx = rx + gap / 2 + k * gap
+        if k < filled:
+            _circle(d, cx, 846, 9.5, fill=metal)
+        else:
+            _circle(d, cx, 846, 9.5, outline=OMR, width=1.6)
 
-    for i, (lbl, val, val_col) in enumerate(cards):
-        bx = start_x + i * (box_w + gap)
-        # Card background & border
-        draw.rounded_rectangle([bx, box_y, bx + box_w, box_y + box_h], radius=16, fill=(248, 250, 252), outline=(226, 232, 240), width=2)
-        # Bottom accent bar on each stat card
-        draw.rounded_rectangle([bx + 36, box_y + box_h - 6, bx + box_w - 36, box_y + box_h], radius=3, fill=val_col)
-        draw.text((bx + box_w // 2, box_y + 38), lbl, font=f_box_lbl, fill=(100, 116, 139), anchor="mm")
-        draw.text((bx + box_w // 2, box_y + 86), val, font=f_box_val, fill=val_col, anchor="mm")
+    # ── footer
+    ff = _font("Lexend", 20, Weight=400)
+    _text(d, (rx, 924), datetime.now().strftime("Issued %d %b %Y"), ff, MUTED, "ls")
+    tag = "@" + (bot_username or "MissQuizBot").lstrip("@")
+    _text(d, (rx + rmax, 924), tag, _font("Lexend", 20, Weight=500), TEXT, "rs")
 
-    # 9. Footer (Signature, Date, Bot handle)
-    foot_y = 725
-    draw.text((145, foot_y - 12), "Miss Quiz Official", font=f_sig, fill=(51, 65, 85), anchor="mm")
-    draw.line([(65, foot_y + 12), (225, foot_y + 12)], fill=(203, 213, 225), width=2)
-    draw.text((145, foot_y + 30), "AUTHORIZED SIGNATURE", font=_load_font(_FONT_PATHS_BOLD, 12), fill=(148, 163, 184), anchor="mm")
-
-    date_str = datetime.now().strftime("%b %d, %Y")
-    draw.text((cx, foot_y + 10), f"Issued on {date_str}", font=f_foot, fill=(100, 116, 139), anchor="mm")
-
-    bot_tag = f"@{bot_username.lstrip('@')}" if bot_username else "@MissQuizBot"
-    draw.text((W - 70, foot_y + 10), f"Powered by {bot_tag}", font=f_foot_bold, fill=(51, 65, 85), anchor="rm")
-
+    out = img.resize((W, H), Image.LANCZOS)
     buf = io.BytesIO()
-    img.save(buf, format="PNG", optimize=True)
+    out.save(buf, format="PNG", optimize=True)
     return buf.getvalue()
