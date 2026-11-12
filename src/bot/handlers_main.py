@@ -218,7 +218,35 @@ class TelegramQuizBot(
         loop.create_task(self._send_owner_alert())
         if self.application is not None:                       # group quizzes running before a restart
             loop.create_task(self.gq_resume_all(self.application.bot))
+            loop.create_task(self._fill_missing_group_titles())
         loop.create_task(self._send_startup_broadcast())
+
+    async def _fill_missing_group_titles(self, limit: int = 100) -> int:
+        """Groups saved without a name (older bug) get their title from Telegram once."""
+        if not self.db or not hasattr(self.db, "groups_col"):
+            return 0
+        try:
+            docs = await asyncio.to_thread(lambda: list(self.db.groups_col.find(
+                {"active_status": {"$ne": "inactive"}, "$or": [{"title": ""}, {"title": None},
+                                                               {"title": {"$exists": False}}]},
+                {"chat_id": 1, "_id": 0}).limit(limit)))
+        except Exception as e:
+            logger.debug(f"[TITLES] lookup failed: {e}")
+            return 0
+        fixed = 0
+        for d in docs:
+            try:
+                chat = await self.application.bot.get_chat(d["chat_id"])
+                if chat.title:
+                    await asyncio.to_thread(self.db.groups_col.update_one, {"chat_id": d["chat_id"]},
+                                            {"$set": {"title": chat.title, "username": chat.username or ""}})
+                    fixed += 1
+            except Exception as e:
+                logger.debug(f"[TITLES] {d['chat_id']}: {e}")
+            await asyncio.sleep(0.2)                      # gentle on Telegram's rate limit
+        if fixed:
+            logger.info(f"[TITLES] filled {fixed} group name(s)")
+        return fixed
 
     async def _send_owner_alert(self):
         """Send system-status report to owner (and developers)."""

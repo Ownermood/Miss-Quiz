@@ -937,17 +937,23 @@ class DatabaseManager:
         next_due = (now + timedelta(minutes=quiz_interval_minutes)).isoformat()
         data = {
             "chat_id":       chat_id,
-            "title":         title,
-            "username":      username,
             "last_active":   now_iso,
             "last_seen":     now_iso,
             "active_status": "active",
         }
+        on_insert = {}
+        # a caller that doesn't know the name (e.g. a poll answer) must not wipe a saved one
+        for fld, val in (("title", title), ("username", username)):
+            if val:
+                data[fld] = val
+            else:
+                on_insert[fld] = ""
         self.groups_col.update_one(
             {"chat_id": chat_id},
             {
                 "$set": data,
                 "$setOnInsert": {
+                    **on_insert,
                     "joined_at":         now_iso,
                     "quiz_start_time":   now_iso,
                     "next_quiz_due_at":  next_due,
