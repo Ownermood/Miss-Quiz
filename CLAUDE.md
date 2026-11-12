@@ -36,7 +36,7 @@ src/bot/my_quiz.py          Create Own Quiz / /myquiz (MyQuizMixin): DM mein tex
 src/bot/tracking.py         User/group tracking
 src/bot/ui.py               UI strings, LINE/THIN, mention helpers
 src/utils/scheduler.py      AutoQuizScheduler. Har group ko auto quiz bhejta hai
-src/utils/certificate.py    Group Quiz Top-3 certificate PNG (1600x1132, Pillow; asli chhape certificate jaisa: ivory paper, guilloche border, script naam, foil seal). Fonts assets/fonts mein (OFL; na mile to DejaVu). Fancy Unicode naam (𝙺𝚞𝚕𝚊 → Kula) plain ho jaate, Hindi = Noto Devanagari, emoji-only → "Quiz Champion"
+src/utils/certificate.py    Group Quiz Top-3 certificate PNG (1600x1132, Pillow; dark award style: charcoal + laal curved panel, gold title, gold script naam, rank ke rang ki foil seal). Fonts assets/fonts mein (OFL; na mile to DejaVu). Fancy Unicode naam (𝙺𝚞𝚕𝚊 → Kula) plain ho jaate, Hindi = Noto Devanagari, emoji-only → "Quiz Champion"
 src/web/app.py              Flask: / (landing page, templates/landing.html, `BOT_USERNAME`), /health, /admin, /webhook, /api/*
 src/web/miniapp.py          Telegram Mini App (/app + /app/api/quiz|check|submit): quiz_sets ko Practice/Exam mein khelo. Har call pe initData HMAC verify (24h, fail-closed); answer pehle kabhi nahi jaata; submit pe plays +1 (20s mein ek baar). Quiz card pe 📱 Open in App sirf DM + `MINI_APP_URL` (https) set ho to. Page: templates/miniapp.html (Telegram theme rang, sab text escape)
 templates/admin.html, static/js/admin.js   Web admin panel
