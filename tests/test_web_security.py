@@ -143,3 +143,19 @@ def test_application_uses_longer_timeouts():
     from src.bot.handlers_main import TelegramQuizBot
     app = TelegramQuizBot._build_application("123:abc")
     assert app.bot.request._client.timeout.connect == 20
+
+
+def test_landing_page_renders_with_safe_bot_links(monkeypatch):
+    from src.web.app import app
+    monkeypatch.setenv("BOT_USERNAME", "@Miss_Quiz\"><script>x")
+    r = app.test_client().get("/")
+    assert r.status_code == 200 and b"Fill the" in r.data
+    assert b"https://t.me/Miss_Quizscriptx?startgroup=true" in r.data
+    assert b"<script>x" not in r.data
+
+
+def test_landing_page_without_bot_username_uses_community(monkeypatch):
+    from src.web.app import app
+    monkeypatch.delenv("BOT_USERNAME", raising=False)
+    r = app.test_client().get("/")
+    assert r.status_code == 200 and b"t.me/VillanCommunity" in r.data and b"t.me/?" not in r.data

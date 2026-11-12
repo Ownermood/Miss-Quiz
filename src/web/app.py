@@ -164,7 +164,12 @@ def init_bot_webhook(webhook_url: str):
 
 @app.route('/')
 def index():
-    return jsonify({'status': 'ok', 'bot': 'Miss Quiz Bot'})
+    """Public landing page. Links use BOT_USERNAME (letters, digits, _ only)."""
+    from src.bot.ui import COMMUNITY_URL
+    bot = ''.join(ch for ch in os.getenv('BOT_USERNAME', '').lstrip('@') if ch.isascii() and (ch.isalnum() or ch == '_'))[:32]
+    dm_url = f'https://t.me/{bot}' if bot else COMMUNITY_URL
+    group_url = f'https://t.me/{bot}?startgroup=true' if bot else COMMUNITY_URL
+    return render_template('landing.html', dm_url=dm_url, group_url=group_url, community_url=COMMUNITY_URL)
 
 
 @app.route('/health')
