@@ -116,7 +116,7 @@ h2{font:800 clamp(40px,6.4vw,92px)/.95 var(--display);letter-spacing:-.04em;marg
 .bar{background:#fff;padding:30px 16px 12px;display:flex;align-items:center;gap:10px;font:500 14px/1.2 var(--body);color:#15172a;border-bottom:1px solid #e5e8ef}
 .bar i{width:34px;height:34px;border-radius:50%;background:var(--ink);flex:none;display:grid;place-items:center;color:#fff;font:800 13px var(--display);font-style:normal}
 .bar small{display:block;color:#7b8194;font-size:12px;font-weight:400}
-.views{position:relative;flex:1}
+.views{position:relative;flex:1;overflow:hidden}
 .view{position:absolute;inset:0;padding:14px 12px;display:flex;flex-direction:column;justify-content:flex-end;gap:8px;color:#15172a;font-size:13px}
 .view:not(:first-child){visibility:hidden}
 .msg{background:#fff;border-radius:16px 16px 16px 4px;padding:11px 12px;box-shadow:0 1px 1px rgba(0,0,0,.06);max-width:92%}
@@ -145,9 +145,17 @@ h2{font:800 clamp(40px,6.4vw,92px)/.95 var(--display);letter-spacing:-.04em;marg
 .done i{width:34px;height:34px;border-radius:50%;background:var(--ok);flex:none;display:grid;place-items:center;color:#fff;font-style:normal;font-weight:700}
 @media (max-width:900px){
   .story{grid-template-columns:1fr;margin-top:30px}
-  .stage{order:-1;top:72px;height:auto;z-index:2;padding:8px 0 14px;background:linear-gradient(var(--paper) 82%,transparent)}
-  .phone{width:min(220px,58vw)}
-  .step{min-height:62vh;justify-content:flex-start;padding-top:8vh}
+  .stage{order:-1;top:64px;height:auto;z-index:2;padding:6px 0 10px;background:var(--paper)}
+  .stage::after{content:"";position:absolute;left:0;right:0;top:100%;height:36px;background:linear-gradient(var(--paper),transparent);pointer-events:none}
+  .phone{width:min(196px,52vw);border-radius:34px;padding:8px}
+  .scr{inset:8px;border-radius:27px}
+  .bar{padding:20px 10px 8px;font-size:12px}.bar i{width:26px;height:26px;font-size:10.5px}.bar small{font-size:10.5px}
+  .view{padding:10px 8px;gap:6px;font-size:11px}
+  .msg{padding:8px 9px;border-radius:13px 13px 13px 4px}.msg .n{font-size:10.5px}
+  .po{padding:4px 6px;font-size:10.5px;margin-bottom:3px}
+  .vs b{font-size:30px}.av{width:32px;height:32px;font-size:12px}
+  .lb div{padding:5px 0;font-size:11px}.file{width:48px;height:60px;font-size:9.5px}
+  .step{min-height:58vh;justify-content:flex-start;padding-top:6vh}
 }
 
 /* app section */
