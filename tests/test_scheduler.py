@@ -212,3 +212,50 @@ def test_blocked_user_keeps_data():
     assert db.remove_inactive_user(1) is True
     doc = db.users_col.find_one({"user_id": 1})
     assert doc["xp"] == 500 and doc["pm_accessible"] is False
+
+
+# ── broadcasts delete themselves before Telegram's 48h limit ─────────────────
+
+def _bc_db():
+    import mongomock
+    from src.core.database import DatabaseManager
+    db = DatabaseManager.__new__(DatabaseManager)
+    db.db = mongomock.MongoClient().quizdb
+    db.broadcasts_col = db.db.broadcasts
+    return db
+
+
+async def test_broadcast_expiry_deletes_due_skips_new_and_too_old(monkeypatch):
+    from datetime import datetime
+    import src.utils.scheduler as sm
+    monkeypatch.setattr(sm.asyncio, "sleep", AsyncMock())
+    db = _bc_db()
+    now = datetime.utcnow()
+    db.broadcasts_col.insert_many([
+        {"id": 1, "broadcast_id": "due", "created_at": (now - timedelta(hours=47, minutes=5)).isoformat(),
+         "messages": {"111": 5, "-1002": 9}},
+        {"id": 2, "broadcast_id": "new", "created_at": (now - timedelta(hours=3)).isoformat(),
+         "messages": {"111": 6}},
+        {"id": 3, "broadcast_id": "old", "created_at": (now - timedelta(hours=60)).isoformat(),
+         "messages": {"111": 1}},
+    ])
+    bot = MagicMock()
+    tg = bot.application.bot
+    tg.delete_message = AsyncMock(side_effect=[True, BadRequest("message to delete not found")])
+    sch = AutoQuizScheduler(bot, MagicMock(), db_manager=db, interval_minutes=60)
+
+    await sch._expire_broadcasts()
+    calls = [(c.kwargs["chat_id"], c.kwargs["message_id"]) for c in tg.delete_message.await_args_list]
+    assert calls == [(111, 5), (-1002, 9)]                      # only the due one; old one not tried
+    b1, b2, b3 = (db.broadcasts_col.find_one({"id": i}) for i in (1, 2, 3))
+    assert b1["auto_deleted"] and b1["auto_delete"]["deleted"] == 1 and b1["auto_delete"]["failed"] == 1
+    assert b1["messages"] == {}
+    assert "auto_deleted" not in b2 and b2["messages"] == {"111": 6}
+    assert b3["auto_deleted"] and b3["auto_delete"]["note"] == "too old"
+
+    await sch._expire_broadcasts()                              # second run: nothing is deleted again
+    assert tg.delete_message.await_count == 2
+
+
+def test_broadcast_expiry_job_registered_and_under_telegram_limit():
+    assert 0 < AutoQuizScheduler.BROADCAST_DELETE_AFTER_H < AutoQuizScheduler.TELEGRAM_DELETE_LIMIT_H

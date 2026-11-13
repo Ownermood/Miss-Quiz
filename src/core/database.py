@@ -805,6 +805,18 @@ class DatabaseManager:
         result = self.broadcasts_col.delete_one({"id": bid})
         return result.deleted_count > 0
 
+    def get_broadcasts_to_expire(self, older_than_iso: str, limit: int = 20) -> List[Dict]:
+        """Broadcasts sent at or before `older_than_iso` whose messages were not auto-deleted yet."""
+        return list(self.broadcasts_col.find(
+            {"created_at": {"$lte": older_than_iso}, "auto_deleted": {"$ne": True}},
+            {"_id": 0}).sort("created_at", ASCENDING).limit(limit))
+
+    def mark_broadcast_auto_deleted(self, bid: int, deleted: int, failed: int, note: str = "") -> None:
+        """Record the auto-delete result. `messages` is cleared so nothing tries again."""
+        self.broadcasts_col.update_one({"id": bid}, {"$set": {
+            "auto_deleted": True, "auto_deleted_at": datetime.utcnow().isoformat(),
+            "auto_delete": {"deleted": deleted, "failed": failed, "note": note}, "messages": {}}})
+
     # ── Activities ────────────────────────────────────────────────────────────
 
     def log_activity(self, activity_type: str = None, data: Dict = None, **kwargs):

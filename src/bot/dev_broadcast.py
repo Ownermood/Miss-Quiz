@@ -571,6 +571,9 @@ class BroadcastCommandsMixin:
                 logger.info(f"Saved broadcast {broadcast_id} to database with {len(sent_messages)} messages")
 
             # Build result message
+            from src.utils.scheduler import AutoQuizScheduler
+            _h = AutoQuizScheduler.BROADCAST_DELETE_AFTER_H
+            auto_line = f"🕒  Deletes itself in {_h:g}h\n" if _h > 0 and sent_messages else ""
             LINE = "━" * 38
             extra = ""
             if skipped_count > 0:
@@ -590,6 +593,7 @@ class BroadcastCommandsMixin:
                 f"</blockquote>\n\n"
                 f"{LINE}\n"
                 f"🗑️  Undo: Admin Panel → Undo Broadcast\n"
+                f"{auto_line}"
                 f"{LINE}"
             )
 

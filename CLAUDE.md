@@ -195,6 +195,7 @@ Pakke bugs aur sirf "possible risks" alag-alag likho.
 ## 9. Pata hai jo problems hain
 
 - Broadcast ab HTML mode mein hai (`text_html`/`caption_html`): Telegram ki native formatting chalti hai, haath se likha Markdown (`*bold*`) nahi.
+- Broadcast apne aap 47h baad har chat se delete (`scheduler._expire_broadcasts`, har 10 min; `BROADCAST_DELETE_AFTER_H`, 0 = band). 48h ke baad Telegram delete nahi karne deta, isliye 47. Jo pehle se 48h+ purane hain unhe sirf mark karta hai (Telegram call nahi). Confirm preview plain text mein dikhta hai, bhejte waqt HTML.
 - `/api/metrics` missing aur panel broadcast button ka mismatch (Phase 0 ke bache items).
 - `datetime.utcnow()` deprecated hai (DB mein naive ISO strings save hote hain). Badalne se stored format badlega, isliye soch ke migrate karna.
 - `send_poll` timeout pe Telegram ne poll shayad bhej diya ho; 2 min retry se ek extra poll reh sakta hai jo track nahi hota. Rare, accept kiya.

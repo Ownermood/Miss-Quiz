@@ -19,6 +19,7 @@ next_quiz_due_at is advanced by `interval` minutes.  This means:
 """
 
 import asyncio
+import os
 import logging
 import time
 from datetime import datetime, timedelta
@@ -119,6 +120,17 @@ class AutoQuizScheduler:
             replace_existing=True,
             next_run_time=datetime.now() + timedelta(minutes=10),
         )
+
+        # Broadcasts delete themselves before Telegram's 48h delete limit
+        if self.BROADCAST_DELETE_AFTER_H > 0:
+            self.scheduler.add_job(
+                self._expire_broadcasts,
+                trigger="interval",
+                minutes=10,
+                id="broadcast_expiry",
+                replace_existing=True,
+                next_run_time=datetime.now() + timedelta(minutes=3),
+            )
 
         # "Make me admin" alerts for groups where auto quiz is paused
         self.scheduler.add_job(
@@ -291,6 +303,46 @@ class AutoQuizScheduler:
             logger.info(f"[HOUSEKEEPING] dropped {len(old)} old polls from memory")
         except Exception as e:
             logger.error(f"[HOUSEKEEPING] failed: {e}", exc_info=True)
+
+    # Telegram lets a bot delete a message only while it is under 48h old, so the
+    # default is 47h. BROADCAST_DELETE_AFTER_H=0 turns auto-delete off.
+    try:
+        BROADCAST_DELETE_AFTER_H = max(0.0, min(47.5, float(os.getenv("BROADCAST_DELETE_AFTER_H", "47"))))
+    except ValueError:
+        BROADCAST_DELETE_AFTER_H = 47.0
+    TELEGRAM_DELETE_LIMIT_H = 48
+
+    async def _expire_broadcasts(self):
+        """Delete every message of broadcasts older than BROADCAST_DELETE_AFTER_H."""
+        if not self.db or not hasattr(self.db, "get_broadcasts_to_expire"):
+            return
+        try:
+            now = datetime.utcnow()
+            due = await asyncio.to_thread(
+                self.db.get_broadcasts_to_expire,
+                (now - timedelta(hours=self.BROADCAST_DELETE_AFTER_H)).isoformat())
+            tg = self.bot.application.bot
+            too_old = (now - timedelta(hours=self.TELEGRAM_DELETE_LIMIT_H)).isoformat()
+            for b in due:
+                msgs = b.get("messages") or {}
+                if str(b.get("created_at", "")) < too_old:
+                    # already past Telegram's limit (bot was down, or sent before this feature)
+                    await asyncio.to_thread(self.db.mark_broadcast_auto_deleted, b["id"], 0, len(msgs), "too old")
+                    continue
+                ok = bad = 0
+                for chat_id, mid in msgs.items():
+                    try:
+                        await tg.delete_message(chat_id=int(chat_id), message_id=int(mid))
+                        ok += 1
+                    except Exception as e:
+                        bad += 1
+                        logger.debug(f"[BROADCAST-EXPIRY] {chat_id}/{mid}: {e}")
+                    await asyncio.sleep(0.05)
+                await asyncio.to_thread(self.db.mark_broadcast_auto_deleted, b["id"], ok, bad)
+                logger.info(f"[BROADCAST-EXPIRY] broadcast {b.get('broadcast_id', b['id'])}: "
+                            f"deleted {ok}, failed {bad}")
+        except Exception as e:
+            logger.error(f"[BROADCAST-EXPIRY] failed: {e}", exc_info=True)
 
     async def _send_admin_reminders(self):
         """Ask non-admin groups to promote the bot: one alert every
