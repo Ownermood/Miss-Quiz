@@ -115,8 +115,11 @@ class BroadcastCommandsMixin:
 
                 if media_type:
                     confirm_text += f"Type: {media_preview}\n"
-                    if media_caption:
-                        confirm_text += f"Caption: {media_caption[:100]}{'...' if len(media_caption) > 100 else ''}\n"
+                    # preview as plain text: this reply is sent without parse_mode, so
+                    # caption_html would show raw <b>/<tg-emoji> tags
+                    cap_plain = (replied_message.caption or "").strip()
+                    if cap_plain:
+                        confirm_text += f"Caption: {cap_plain[:100]}{'...' if len(cap_plain) > 100 else ''}\n"
                     confirm_text += "\n"
                 else:
                     confirm_text += "Forwarding message to:\n"
@@ -164,8 +167,13 @@ class BroadcastCommandsMixin:
                 groups = await asyncio.to_thread(self.db.get_active_groups)
                 total_targets = len(users) + len(groups)
 
+                # Preview as plain text (what the admin typed). The HTML version is what gets
+                # sent; shown here without parse_mode it printed raw <tg-emoji>/<b> tags.
+                preview = raw_plain.strip()
+                if reply_markup:
+                    preview = re.sub(r'\[\[(.*?)\]\]\s*$', '', preview, flags=re.DOTALL).strip()
                 confirm_text = "📢 Broadcast Confirmation\n\n"
-                confirm_text += f"Message: {cleaned_text[:200]}{'...' if len(cleaned_text) > 200 else ''}\n\n"
+                confirm_text += f"Message: {preview[:200]}{'...' if len(preview) > 200 else ''}\n\n"
 
                 if reply_markup:
                     button_count = sum(len(row) for row in reply_markup.inline_keyboard)

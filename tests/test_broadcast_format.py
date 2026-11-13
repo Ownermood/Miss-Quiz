@@ -50,3 +50,23 @@ async def test_placeholders_are_html_escaped():
     out = await dev.replace_placeholders("Hi {first_name}", 1, MagicMock(),
                                          user_data={"first_name": "<b>A&B</b>"}, bot_name_cache="Bot")
     assert out == "Hi &lt;b&gt;A&amp;B&lt;/b&gt;"
+
+
+async def test_confirm_preview_is_plain_text_not_raw_html(monkeypatch):
+    """Live: preview showed '<tg-emoji emoji-id=…> <b>Roses…</b> I&#x27;ll' as literal text."""
+    text = "😎 Roses are red, CLAT clear karna hai? Baby, I'll be right there for you 🌹"
+    ents = [MessageEntity("custom_emoji", 0, 2, custom_emoji_id="5424663180838182778"),
+            MessageEntity("bold", 3, len(text) - 3)]
+    upd = make_update(text, ents)
+    ctx = MagicMock()
+    ctx.args = text.split()
+    ctx.user_data = {}
+    reply = AsyncMock()
+    monkeypatch.setattr(Message, "reply_text", reply)
+    await make_dev().broadcast(upd, ctx)
+
+    preview = reply.call_args.args[0]
+    assert "Message: 😎 Roses are red, CLAT clear karna hai? Baby, I'll be right there for you 🌹" in preview
+    assert "<" not in preview and "&#x27;" not in preview
+    saved = ctx.user_data["broadcast_message"]                  # what gets sent keeps the formatting
+    assert "<tg-emoji" in saved and "<b>" in saved
