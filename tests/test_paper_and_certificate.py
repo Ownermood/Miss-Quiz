@@ -50,3 +50,20 @@ def test_certificate_renders_for_odd_input():
         png = generate_certificate_image(name, "Q" * 200, "", "", rank, cor, tot, pts, 99999, "")
         im = Image.open(io.BytesIO(png))
         assert im.size == (1600, 1132) and im.format == "PNG"
+
+
+def test_lookalike_fancy_names_and_glyph_check():
+    from src.utils import certificate as c
+    assert c._clean_render_text("Ꭰαяк Ꭵмρυℓѕє ⛓️") == "Dark impulse"       # live: printed as tofu boxes
+    assert c._clean_render_text("Иван Петров") == "Иван Петров"            # real Cyrillic name untouched
+    assert c._clean_render_text("Αλέξανδρος") == "Αλέξανδρος"
+    script = c._font("PinyonScript", 60)
+    assert c._has_glyphs(script, "Dark") and not c._has_glyphs(script, "Ꭰ")
+    for name in ("Иван Петров", "Αλέξανδρος", ".~.~", "Ꭰ ꭰ ᏹ"):
+        f = c._name_font(c._clean_render_text(name, "Quiz Champion"), 100)
+        assert c._has_glyphs(f, c._clean_render_text(name, "Quiz Champion")) or "DejaVu" in getattr(f, "path", "")
+
+
+def test_anonymous_admin_host_is_not_printed():
+    png = generate_certificate_image("Ishan", "Quiz", "Total Mock 2027", "Group", 2, 14, 30, 14, 143, "MissQuiz_Bot")
+    assert Image.open(io.BytesIO(png)).size == (1600, 1132)

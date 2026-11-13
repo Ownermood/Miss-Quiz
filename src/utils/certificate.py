@@ -50,6 +50,33 @@ THEMES = {
 }
 
 _SMALLCAPS = str.maketrans("ᴀʙᴄᴅᴇꜰɢʜɪᴊᴋʟᴍɴᴏᴘǫʀꜱᴛᴜᴠᴡʏᴢ", "ABCDEFGHIJKLMNOPQRSTUVWYZ")
+# Look-alike letters people use for "fancy" names (Ꭰαяк Ꭵмρυℓѕє → Dark impulse).
+# Applied only when EVERY non-Latin letter in the name is in this table, so a real
+# Russian or Greek name is left as it is.
+_LOOKALIKE = {
+    # Greek
+    "α": "a", "β": "b", "ε": "e", "ι": "i", "κ": "k", "ν": "v", "ο": "o", "ρ": "p", "τ": "t", "υ": "u",
+    "χ": "x", "γ": "y", "ω": "w", "η": "n", "σ": "o", "ς": "c", "ϲ": "c", "Α": "A", "Β": "B", "Ε": "E", "Ζ": "Z",
+    "Η": "H", "Ι": "I", "Κ": "K", "Μ": "M", "Ν": "N", "Ο": "O", "Ρ": "P", "Τ": "T", "Χ": "X", "Υ": "Y",
+    # Cyrillic
+    "а": "a", "в": "b", "е": "e", "к": "k", "м": "m", "н": "h", "о": "o", "р": "p", "с": "c", "т": "t",
+    "у": "y", "х": "x", "я": "r", "ѕ": "s", "і": "i", "ј": "j", "є": "e", "ԁ": "d", "ɢ": "G", "ʀ": "R",
+    "ᴋ": "K", "п": "n", "и": "u", "ь": "b", "А": "A", "В": "B", "Е": "E", "К": "K", "М": "M", "Н": "H",
+    "О": "O", "Р": "P", "С": "C", "Т": "T", "Х": "X", "Ү": "Y", "Ѕ": "S", "І": "I", "Ј": "J", "Я": "R",
+    # Cherokee
+    "Ꭰ": "D", "Ꭱ": "R", "Ꭲ": "T", "Ꭵ": "i", "Ꭹ": "y", "Ꭺ": "A", "Ꭻ": "J", "Ꭼ": "E", "Ꮃ": "W", "Ꮇ": "M",
+    "Ꮋ": "H", "Ꮐ": "G", "Ꮓ": "Z", "Ꮤ": "W", "Ꮪ": "S", "Ꮯ": "C", "Ꮮ": "L", "Ꮶ": "K", "Ꮲ": "P", "Ᏼ": "B",
+    "Ꮩ": "V", "Ꮒ": "h", "Ꭷ": "o",
+    # Latin variants
+    "ɑ": "a", "ɐ": "a", "ɛ": "e", "ɨ": "i", "ɴ": "N", "ʏ": "Y", "ʟ": "L", "ɾ": "r", "ʋ": "u", "ɱ": "m",
+}
+
+
+def _fold_lookalikes(t: str) -> str:
+    odd = [c for c in t if c.isalpha() and not ("a" <= c.lower() <= "z") and not (0x0900 <= ord(c) <= 0x097F)]
+    if odd and all(c in _LOOKALIKE for c in odd):
+        return "".join(_LOOKALIKE.get(c, c) for c in t)
+    return t
 _font_cache: dict = {}
 _paper_cache: list = []
 # lining figures (Cormorant's default old-style 1 reads like an I); needs libraqm
@@ -97,12 +124,27 @@ def _font(name: str, size: int, weight: int = 0):
     return f
 
 
+def _glyph_print(font, ch: str) -> bytes:
+    """Pixels of one character as this font draws it (used to spot the 'missing glyph' box)."""
+    l, t, r, b = font.getbbox(ch)
+    im = Image.new("L", (max(1, r - l) + 2, max(1, b - t) + 2))
+    ImageDraw.Draw(im).text((1 - l, 1 - t), ch, font=font, fill=255)
+    return bytes(str(im.size), "ascii") + im.tobytes()
+
+
+_notdef_cache: dict = {}
+
+
 def _has_glyphs(font, text: str) -> bool:
+    """False if any character would come out as the font's empty box (tofu)."""
     try:
-        notdef = font.getmask("\uffff").tobytes()
-        return all(c.isspace() or font.getmask(c).tobytes() != notdef for c in text)
+        key = id(font)
+        if key not in _notdef_cache:
+            _notdef_cache[key] = {_glyph_print(font, "\ue000"), _glyph_print(font, "\U0010fffd")}
+        notdef = _notdef_cache[key]
+        return all(c.isspace() or _glyph_print(font, c) not in notdef for c in text)
     except Exception:
-        return True
+        return False
 
 
 # ── text helpers ─────────────────────────────────────────────────────────────
@@ -119,7 +161,7 @@ def _clean_render_text(text, fallback: str = "") -> str:
         if 0x2600 <= cp <= 0x27BF and not (0x2660 <= cp <= 0x2667):   # misc emoji-ish symbols (keep ♠♡♢♣)
             continue
         out.append(ch)
-    cleaned = re.sub(r"\s+", " ", "".join(out)).strip()
+    cleaned = re.sub(r"\s+", " ", _fold_lookalikes("".join(out))).strip()
     return cleaned or fallback
 
 
@@ -411,6 +453,8 @@ def generate_certificate_image(
     quiz = _clean_render_text(quiz_title, "Group Quiz")
     group = _clean_render_text(group_title, "")
     host = _clean_render_text(host_name, "")
+    if host.lower() in ("group", "channel", "groupanonymousbot") or host == group:
+        host = ""                                   # anonymous admin: Telegram calls the sender "Group"
     _tracked_l(d, x0, 668, f"FOR SECURING {th['place'].upper()} IN", _font("Cinzel", 17, 700), WHITE, 3)
     qf = _font("NotoSansDevanagari", 26, 600) if _is_deva(quiz) else _font("Cormorant", 36, 700)
     y = 714
