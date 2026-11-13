@@ -623,12 +623,16 @@ _U_INLINE_ANS = re.compile(
     re.IGNORECASE)
 
 
+_U_KEY_BLANK = re.compile(r"(?<!\d)\d{1,4}\s*[\.\):\-]?\s*\(\s*\)")   # '174.( )' — answer missing in the key
+_U_WRAP_PAREN = re.compile(r"^(\(\d{1,3}\))\s*(\([A-Ja-j]\)\s*\S.*)$")  # '(2)(D) Art 136(1)' — '(2)' wrapped from above
+
+
 def _u_is_key_line(ln: str) -> bool:
     """Linear-time check whether a line consists solely of answer-key pairs ('1-a 2-b 3-c' / '1. B')."""
     if not _U_KEY_ITEM.search(ln):
         return False
-    rem = _U_KEY_ITEM.sub("", ln)
-    return not re.sub(r"[\s,;|.\-–—]+", "", rem)
+    rem = _U_KEY_ITEM.sub("", _U_KEY_BLANK.sub(" ", ln))
+    return not re.sub(r"[\s,;|.\-–—()]+", "", rem)
 
 
 def _u_strip_symbols(line: str) -> str:
@@ -703,11 +707,22 @@ def _u_split_inline(line: str) -> List[str]:
         if seq_start is None:
             out.extend(_u_split_trailing_qnum(part)); continue
         seq = [ms[seq_start]]
+        # labels in one row share a style: '(A) … (B) …' or 'A. … B. …' — so the initials in
+        # '(A) Dr. B. R. Ambedkar' or '(C) N. D. Deva Gowda' are not read as option B / D
+        style = lambda m: (m.group(0).strip()[:1] in "([", m.group(0).strip()[-1:])
         for m in ms[seq_start + 1:]:
-            if ord(m.group(1).lower()) == ord(seq[-1].group(1).lower()) + 1:
+            if ord(m.group(1).lower()) == ord(seq[-1].group(1).lower()) + 1 and style(m) == style(seq[0]):
                 seq.append(m)
         if len(seq) < 2:
-            out.extend(_u_split_trailing_qnum(part)); continue
+            m0 = seq[0]
+            # '65. Lower House is called as— (A) Legislative Assembly' (B)–(D) on the next lines
+            if (m0.group(1).lower() == "a" and m0.group(0).lstrip()[:1] in "(["
+                    and re.search(r"[?:\-–—]\s*$", part[:m0.start()]) and part[:m0.start()].strip()):
+                out.append(part[:m0.start()].strip())
+                out.extend(_u_split_trailing_qnum(part[m0.start():].strip()))
+            else:
+                out.extend(_u_split_trailing_qnum(part))
+            continue
         cuts = [m.start() for m in seq] + [len(part)]
         head = part[:cuts[0]].strip()
         if head:
@@ -953,6 +968,10 @@ def _u_parse_blocks(
                           and (cur["q"] or cur["kind"] == "num") and not (cur["kind"] is None and m_q and m_q.group(2) and expected == 0 and not cur["q"]))
             else:
                 is_opt = (idx == expected) or (expected == 0 and idx == 0)
+                if (not is_opt and kind == "letter" and cur["kind"] == "letter" and idx is not None
+                        and 2 <= expected < 10 and cur["ans"] is None and line.lstrip()[:1] in "(["
+                        and (idx == expected - 1 or idx > expected)):
+                    is_opt = True    # typo in the source: '(B) x (B) y' or '(C) x (f) y' → next option by position
         if is_opt:
             body = m_opt.group(2).strip()
             mk = _U_MARK.search(body)
@@ -1086,6 +1105,10 @@ def universal_parse(text: str) -> Tuple[List[Dict], List[Dict]]:
     raw_lines: List[str] = []
     for ln in text.split("\n"):
         c = _u_clean_line(ln)
+        m = _U_WRAP_PAREN.match(c) if c else None
+        if m and raw_lines and raw_lines[-1].strip():
+            raw_lines[-1] = raw_lines[-1].rstrip() + m.group(1)   # 'Article 136' + '(2)'
+            c = m.group(2)
         raw_lines.extend(_u_split_inline(c) if c else [""])
 
     key_hdr_indices = [i for i, line in enumerate(raw_lines) if _U_KEY_HDR.match(line)]

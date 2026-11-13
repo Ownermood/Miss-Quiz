@@ -322,3 +322,66 @@ Q21. B
     # a real domain inside a question is kept
     qs, _ = _up("1. The website of NITI Aayog is niti.gov.in. Which body did it replace?\nA. Planning Commission\nB. RBI\nAnswer: A")
     assert "niti.gov.in" in qs[0]["question"]
+
+
+# ── "400 Questions on Constitution" PDF (live import: 380 detected, 21 not understood) ──
+from src.bot.quiz_parser import universal_parse as _up
+
+
+def _q(n, q, opts):
+    return f"{n}. {q}\n" + "\n".join(opts)
+
+
+def test_lone_inline_A_after_question_dash():
+    t = _q(65, "In the Parliament, Lower House is called as— (A) Legislative Assembly",
+           ["(B) Legislative Council", "(C) Rajya Sabha", "(D) Lok Sabha"]) + "\nAnswers\n65.(D)"
+    items, probs = _up(t)
+    assert probs == [] and items[0]["options"] == ["Legislative Assembly", "Legislative Council", "Rajya Sabha", "Lok Sabha"]
+    assert items[0]["correct_answer"] == 3
+
+
+def test_lone_A_inside_question_text_is_not_split():
+    items, _ = _up("1. Under clause (a) of Article 19 which right is given?\n(A) Speech\n(B) Vote\nAnswer: A")
+    assert items[0]["question"].startswith("Under clause (a) of Article 19") and items[0]["options"] == ["Speech", "Vote"]
+
+
+def test_key_row_with_blank_answer_and_missing_space():
+    body = "\n".join(_q(n, f"Question {n}?", ["(A) a", "(B) b", "(C) c", "(D) d"]) for n in range(171, 181))
+    body += "\n" + "\n".join(_q(n, f"Question {n}?", ["(A) a", "(B) b", "(C) c", "(D) d"]) for n in (399, 400))
+    t = body + "\nAnswers\n171.(C) 172.(B) 173.(D) 174.( ) 175.(B) 176.(D) 177.(C) 178.(A) 179.(C) 180.(A)\n399.(D)400.(B)"
+    items, probs = _up(t)
+    assert [p["where"] for p in probs] == ["Q174"]
+    assert [i["correct_answer"] for i in items] == [2, 1, 3, 1, 3, 2, 0, 2, 0, 3, 1]
+
+
+def test_wrapped_bracket_number_joins_previous_option():
+    t = _q(319, "Under which Article is the Election Commission a Tribunal—",
+           ["(A) Article 136", "(B) Article 136(3)", "(C) Article 136", "(2)(D) Article 136(1)"]) + "\nAnswers\n319.(D)"
+    items, probs = _up(t)
+    assert probs == [] and len(items) == 1
+    assert items[0]["options"] == ["Article 136", "Article 136(3)", "Article 136(2)", "Article 136(1)"]
+
+
+def test_option_label_typos_keep_four_options():
+    t = (_q(96, "Deputy PM?", ["(A) Nehru", "(B) Patel", "(D) Azad", "(D) Nanda"]) + "\n"
+         + _q(197, "Financial year starts—", ["(A) 1 April", "(B) 2 April", "(C) 1 March", "(f) 15 March"]) + "\n"
+         + _q(350, "Claims of SC and ST—", ["(A) Article 336", "(B) Article 335", "(B) Article 338", "(D) Article 339"])
+         + "\nAnswers\n96.(D) 197.(A) 350.(B)")
+    items, probs = _up(t)
+    assert probs == [] and [len(i["options"]) for i in items] == [4, 4, 4]
+    assert items[0]["options"][3] == "Nanda" and items[2]["options"][2] == "Article 338"
+    assert [i["correct_answer"] for i in items] == [3, 0, 1]
+
+
+def test_initials_in_option_are_not_split():
+    t = _q(50, "Chairman of the Drafting Committee—", ["(A) Dr. B. R. Ambedkar", "(B) K. M. Munshi",
+           "(C) N. D. Deva Gowda", "(D) None"]) + "\nAnswers\n50.(A)"
+    items, probs = _up(t)
+    assert probs == [] and items[0]["options"] == ["Dr. B. R. Ambedkar", "K. M. Munshi", "N. D. Deva Gowda", "None"]
+
+
+def test_same_style_inline_options_still_split():
+    items, _ = _up("1. Capital of India? (A) Delhi (B) Mumbai (C) Pune (D) Agra\nAnswer: A")
+    assert items[0]["options"] == ["Delhi", "Mumbai", "Pune", "Agra"]
+    items, _ = _up("1. Capital of India? A. Delhi B. Mumbai C. Pune\nAnswer: A")
+    assert items[0]["options"] == ["Delhi", "Mumbai", "Pune"]
