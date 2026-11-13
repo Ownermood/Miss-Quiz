@@ -605,3 +605,23 @@ async def test_panel_reload_result_keeps_back_button():
     await msg.edit_text("Reloaded 10 questions", parse_mode="HTML")       # like cmd_reload's _edit
     kb = edited.edit_text.await_args.kwargs["reply_markup"]
     assert buttons(kb) == ["ap:home"]
+
+
+async def test_broadcast_raw_send_goes_out_exactly_as_written(monkeypatch):
+    """Owner's broadcast: own premium emoji, own bold/plain mix, blank lines, buttons — untouched."""
+    from telegram import InlineKeyboardButton as B, InlineKeyboardMarkup as M
+    from src.bot.premium import RAW_KEY
+    kb = M([[B("🔥 Join", url="https://t.me/x"), B("Back", url="https://t.me/y")]])
+    text = ('<tg-emoji emoji-id="5424663180838182778">😎</tg-emoji> <b>Roses</b> are red\n\n\n'
+            'plain line 🌹 <i>italic</i>')
+    out = await _capture_post(monkeypatch, True, text=text, parse_mode="HTML", reply_markup=kb, **{RAW_KEY: True})
+    assert out["text"] == text                                  # no auto-bold, no gap squeeze, 🌹 not swapped
+    assert RAW_KEY not in out                                    # flag never reaches Telegram
+    assert "link_preview_options" not in out
+    b1, b2 = out["reply_markup"].inline_keyboard[0]
+    assert b1.text == "🔥 Join" and not b1.icon_custom_emoji_id and b2.style is None
+
+
+async def test_normal_message_still_styled_after_raw_change(monkeypatch):
+    out = await _capture_post(monkeypatch, True, text="Hi 🌹", parse_mode="HTML")
+    assert out["text"].startswith("<b>") and "tg-emoji" in out["text"]

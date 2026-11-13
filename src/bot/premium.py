@@ -432,12 +432,20 @@ def style_markup(markup):
     return InlineKeyboardMarkup(rows) if changed else markup
 
 
+# Pass as api_kwargs=RAW_SEND to send a request exactly as written: no auto-bold,
+# no emoji swap to our packs, no button recolouring (used for admin broadcasts).
+RAW_KEY = "mq_raw"
+RAW_SEND = {RAW_KEY: True}
+
+
 def make_premium_bot_class():
     from telegram.ext import ExtBot
 
     class PremiumExtBot(ExtBot):
         async def _do_post(self, endpoint, data, *args, **kwargs):
             from telegram.error import BadRequest
+            if isinstance(data, dict) and data.pop(RAW_KEY, None):
+                return await super()._do_post(endpoint, data, *args, **kwargs)
             original = dict(data) if isinstance(data, dict) else data
             try:
                 data = style_request(data, endpoint)
