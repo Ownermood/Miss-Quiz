@@ -89,3 +89,42 @@ async def test_startup_fills_missing_group_titles():
     assert await b._fill_missing_group_titles() == 1
     assert db.groups_col.find_one({"chat_id": -1})["title"] == "CLATIANS CV"
     b.application.bot.get_chat.assert_awaited_once()                    # named group untouched
+
+
+def _real_db():
+    import mongomock
+    db = DatabaseManager.__new__(DatabaseManager)
+    db.db = mongomock.MongoClient().quizdb
+    db.questions_col = db.db.questions
+    db.questions_col.create_index("id", unique=True)
+    return db
+
+
+def test_batch_counter_behind_existing_ids_still_saves_everything():
+    """Live bug: counter was behind max(id) → 273 of 380 PDF questions rejected with E11000."""
+    db = _real_db()
+    db.questions_col.insert_many([{"id": i, "question": f"old {i}"} for i in range(1, 501)])
+    db.db["_counters"].insert_one({"_id": "questions", "seq": 100})       # behind by 400
+    qs = [{"question": f"new {k}", "options": ["a", "b"], "correct_answer": 0} for k in range(380)]
+    count, pairs, errs = db.add_questions_batch(qs)
+    assert (count, errs) == (380, [])
+    assert [i for i, _ in pairs] == list(range(380))
+    ids = [qid for _, qid in pairs]
+    assert len(set(ids)) == 380 and min(ids) == 501
+    assert db.questions_col.count_documents({}) == 880
+    assert db.questions_col.find_one({"id": 50})["question"] == "old 50"   # old ones untouched
+
+
+def test_batch_error_count_is_not_capped():
+    db = _real_db()
+    db.questions_col.insert_one({"id": 1, "question": "x"})
+    bad = [{"question": f"q{k}", "options": ["a", "b"], "correct_answer": 0} for k in range(12)]
+    orig = db.questions_col.insert_many
+
+    def boom(docs, ordered=False):
+        raise BulkWriteError({"nInserted": 0, "writeErrors": [
+            {"index": k, "code": 121, "errmsg": "validation"} for k in range(len(docs))]})
+    db.questions_col.insert_many = boom
+    count, pairs, errs = db.add_questions_batch(bad)
+    db.questions_col.insert_many = orig
+    assert count == 0 and pairs == [] and len(errs) == 12

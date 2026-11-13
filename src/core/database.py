@@ -113,6 +113,14 @@ class DatabaseManager:
         )
         return counter["seq"]
 
+    def _sync_question_counter(self) -> None:
+        """Make sure the questions counter is never behind the highest stored id.
+        If it falls behind (restore, manual insert, old import), new questions get ids
+        that already exist and Mongo rejects them with E11000."""
+        top = self.questions_col.find_one({"id": {"$type": "number"}}, {"id": 1, "_id": 0}, sort=[("id", DESCENDING)])
+        if top and isinstance(top.get("id"), (int, float)):
+            self.db["_counters"].update_one({"_id": "questions"}, {"$max": {"seq": int(top["id"])}}, upsert=True)
+
     def _next_id_batch(self, name: str, count: int) -> int:
         """Atomically reserve `count` sequential IDs in one round trip.
         Returns the first ID of the allocated block."""
@@ -156,50 +164,66 @@ class DatabaseManager:
             return {}
 
     def add_questions_batch(self, questions: List[Dict]) -> tuple:
-        """Bulk-insert questions in a single MongoDB round trip.
-        Returns (inserted_count, [(batch_index, new_id), ...], errors_list).
-        Uses ordered=False so a bad document doesn't abort the whole batch;
-        on partial failure only the pairs of documents that were actually
-        inserted are returned (failed positions come from writeErrors[].index)."""
+        """Bulk-insert questions. Returns (inserted_count, [(batch_index, new_id), ...], errors_list).
+        ordered=False so one bad document doesn't stop the rest. A document rejected only
+        because its new id already exists (counter behind) is retried with a fresh id.
+        errors_list has one entry per question that was finally not saved."""
         if not questions:
             return 0, [], []
-        n = len(questions)
-        try:
-            first_id = self._next_id_batch("questions", n)
-        except Exception as e:
-            logger.error(f"add_questions_batch: counter allocation failed: {e}")
-            return 0, [], [str(e)]
+        now = datetime.utcnow().isoformat()
 
-        now  = datetime.utcnow().isoformat()
-        docs    = []
-        new_ids = []
-        for i, q in enumerate(questions):
-            qid = first_id + i
-            docs.append({
+        def _doc(q, qid):
+            d = {
                 "id":             qid,
                 "question":       q.get("question", ""),
                 "options":        q.get("options", []),
                 "correct_answer": q.get("correct_answer", 0),
                 "category":       q.get("category", "General"),
                 "created_at":     now,
-            })
+            }
             if q.get("explanation"):
-                docs[-1]["explanation"] = q["explanation"]
-            new_ids.append((i, qid))
+                d["explanation"] = q["explanation"]
+            return d
 
-        try:
-            self.questions_col.insert_many(docs, ordered=False)
-            return n, new_ids, []
-        except BulkWriteError as exc:
-            write_errors = exc.details.get("writeErrors", [])
-            failed = {e.get("index") for e in write_errors}
-            ok     = [pair for pair in new_ids if pair[0] not in failed]
-            errs   = [str(e) for e in write_errors[:5]]
-            logger.error(f"add_questions_batch: partial write inserted={len(ok)}/{n}: {exc}")
-            return len(ok), ok, errs
-        except Exception as exc:
-            logger.error(f"add_questions_batch: insert_many failed: {exc}")
-            return 0, [], [str(exc)]
+        pending = list(range(len(questions)))      # batch indexes still to save
+        saved: List[tuple] = []
+        errs: List[str] = []
+        for attempt in range(3):
+            try:
+                self._sync_question_counter()
+                first_id = self._next_id_batch("questions", len(pending))
+            except Exception as e:
+                logger.error(f"add_questions_batch: counter allocation failed: {e}")
+                errs += [str(e)] * len(pending)
+                break
+            pairs = [(i, first_id + k) for k, i in enumerate(pending)]
+            docs = [_doc(questions[i], qid) for i, qid in pairs]
+            try:
+                self.questions_col.insert_many(docs, ordered=False)
+                saved += pairs
+                pending = []
+                break
+            except BulkWriteError as exc:
+                write_errors = exc.details.get("writeErrors", [])
+                bad = {e.get("index"): e for e in write_errors}
+                saved += [p for k, p in enumerate(pairs) if k not in bad]
+                retry = [pairs[k][0] for k, e in bad.items()
+                         if e.get("code") == 11000 and "id" in (e.get("keyPattern") or {"id": 1})]
+                errs += [str(e)[:300] for k, e in bad.items() if pairs[k][0] not in retry]
+                logger.warning(f"add_questions_batch: attempt {attempt + 1}: {len(bad)} rejected, "
+                               f"{len(retry)} id clashes to retry")
+                pending = retry
+                if not pending:
+                    break
+            except Exception as exc:
+                logger.error(f"add_questions_batch: insert_many failed: {exc}")
+                errs += [str(exc)[:300]] * len(pending)
+                pending = []
+                break
+        if pending:                                   # still clashing after retries
+            errs += ["E11000 duplicate id (retries exhausted)"] * len(pending)
+        saved.sort()
+        return len(saved), saved, errs
 
     def update_question(self, qid: int, question: str, options: list,
                         correct_answer: int, category: str = None) -> bool:
