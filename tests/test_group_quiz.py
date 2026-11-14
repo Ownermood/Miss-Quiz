@@ -568,3 +568,32 @@ async def test_no_owner_bypass_when_owner_id_unset(monkeypatch):
     c, _, _ = ctx(admins=(1,))
     assert app._is_bot_owner(0) is False
     assert await app._gq_is_admin(c, GROUP, user(0, "x")) is False
+
+
+async def test_anonymous_admin_menu_usable_by_real_admin_not_by_members():
+    """Live: '/start@MissQuiz_Bot' sent as the group (anonymous admin) → every button said
+    'This menu isn't yours', because the command came from GroupAnonymousBot."""
+    app = App()
+    c, polls, sent = ctx(admins=(1,))
+    sid = app.real.create_quiz_set(5, "GK Bank", questions(300), 20)
+    anon = group_upd(user(gq.GroupQuizMixin.ANON_ADMIN_BOT, "Group"))
+    anon.effective_message.sender_chat = SimpleNamespace(id=GROUP)
+    await app.gq_start_from_link(anon, c, sid)
+    text, kb = app.replies[-1]
+    datas = [b.callback_data for r in kb.inline_keyboard for b in r]
+    assert "Total › 300" in text and f"gq|from|0|{sid}|0" in datas          # owner 0 = any admin
+
+    q = await press(app, c, user(77, "Member"), f"gq|from|0|{sid}|0")       # not an admin
+    assert q.answer.await_args.kwargs.get("show_alert") is True and not q.message.edit_text.await_args
+    q = await press(app, c, user(77, "Member"), "gq|close|0")
+    assert q.answer.await_args.kwargs.get("show_alert") is True and not q.message.delete.await_args
+
+    q = await press(app, c, user(1, "RealAdmin"), f"gq|from|0|{sid}|0")     # the real admin behind it
+    assert "Where should this quiz start?" in q.message.edit_text.await_args.args[0]
+    await press(app, c, user(1, "RealAdmin"), f"gq|part|0|{sid}|25|200")
+    assert gq.is_active(GROUP) and gq.ACTIVE[GROUP].part_start == 200
+
+
+def test_menu_owner_is_the_user_for_normal_messages():
+    upd = group_upd(user(9, "A"))
+    assert gq.GroupQuizMixin._gq_menu_owner(upd) == 9

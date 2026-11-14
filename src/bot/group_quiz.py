@@ -242,6 +242,19 @@ class GroupQuizMixin:
         else:
             await self._gq_db("delete_quiz_session", s.chat_id)
 
+    ANON_ADMIN_BOT = 1087968824          # Telegram's GroupAnonymousBot (sender of anonymous admin messages)
+
+    @classmethod
+    def _gq_menu_owner(cls, update) -> int:
+        """Who may press a picker. Anonymous admin ('send as group'): Telegram hides the real
+        user in the command but shows it in the button press, so nobody would match.
+        0 = any group admin (still checked on every press)."""
+        user, chat, msg = update.effective_user, update.effective_chat, update.effective_message
+        sc = getattr(msg, "sender_chat", None)
+        if (user and user.id == cls.ANON_ADMIN_BOT) or (sc is not None and chat is not None and sc.id == chat.id):
+            return 0
+        return user.id if user else 0
+
     async def _gq_is_admin(self, context, chat_id: int, user, msg=None) -> bool:
         if msg is not None and getattr(getattr(msg, "sender_chat", None), "id", None) == chat_id:
             return True                                    # anonymous group admin
@@ -319,13 +332,14 @@ class GroupQuizMixin:
         if arg:
             await self._gq_start_set(update, context, arg.removeprefix("gq_"))
             return
+        owner = self._gq_menu_owner(update)
         sets = await self._gq_db("list_quiz_sets", user.id, 8, 0, default=[])
         rows = [[InlineKeyboardButton(f"📝 {x.get('title', 'Quiz')[:28]} · {x.get('count', 0)}Q",
-                                      callback_data=f"gq|set|{user.id}|{x['id']}", style="primary")]
+                                      callback_data=f"gq|set|{owner}|{x['id']}", style="primary")]
                 for x in (sets if isinstance(sets, list) else [])]
-        rows.append([InlineKeyboardButton(f"🤖 {n} Q", callback_data=f"gq|bot|{user.id}|{n}", style="primary")
+        rows.append([InlineKeyboardButton(f"🤖 {n} Q", callback_data=f"gq|bot|{owner}|{n}", style="primary")
                      for n in BOT_COUNTS])
-        rows.append([InlineKeyboardButton("❌ Cancel", callback_data=f"gq|close|{user.id}", style="danger")])
+        rows.append([InlineKeyboardButton("❌ Cancel", callback_data=f"gq|close|{owner}", style="danger")])
         await self._reply(update, "👥 <b>UNIVERSAL GROUP QUIZ</b>\n<i>Pick one of your quizzes, or bot questions.</i>",
                           reply_markup=InlineKeyboardMarkup(rows))
 
@@ -357,7 +371,7 @@ class GroupQuizMixin:
         if isinstance(qs, dict) and len(qs.get("questions") or []) > PART_ASK:
             chat_id = update.effective_chat.id
             if not auto_part:
-                text, kb = await self._gq_part_view(update.effective_user.id, set_id, qs, chat_id)
+                text, kb = await self._gq_part_view(self._gq_menu_owner(update), set_id, qs, chat_id)
                 await self._reply(update, text, reply_markup=kb)
                 return
             allq = list(qs["questions"])
@@ -1037,8 +1051,11 @@ class GroupQuizMixin:
 
         if action in ("set", "bot", "close", "part", "from", "at"):      # picker: only who opened it
             owner = int(parts[2]) if len(parts) > 2 and parts[2].lstrip("-").isdigit() else 0
-            if user.id != owner and not self._is_bot_owner(user.id):
+            if owner and user.id != owner and not self._is_bot_owner(user.id):
                 await query.answer("This menu isn't yours — send /startquiz.", show_alert=True)
+                return
+            if not owner and not await self._gq_is_admin(context, chat_id, user):   # anonymous admin's menu
+                await query.answer("Only group admins can use this.", show_alert=True)
                 return
             if action == "close":
                 await query.answer()
