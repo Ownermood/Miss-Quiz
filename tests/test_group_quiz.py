@@ -405,3 +405,50 @@ async def test_next_part_button_continues_big_quiz_in_one_tap():
     await wait_done()
     q = await press(app, c, admin, f"gq|next|{GROUP}|60|25")              # nothing left
     assert "All questions done" in q.answer.await_args.args[0]
+
+
+# ── rich final result (Bot API 10.1 sendRichMessage) ─────────────────────────
+
+def test_rich_result_table_top10_rest_collapsed_and_escaped():
+    app = App()
+    s = Session(chat_id=1, title="GK <Mock> & more", questions=questions(10), secs=10, started_by=1, idx=10,
+                negative_rate=0.25)
+    for uid in range(1, 26):
+        s.scores[str(uid)] = {"name": f"N<{uid}>", "correct": uid % 11, "wrong": 10 - uid % 11,
+                              "score": uid % 11 - 0.25 * (10 - uid % 11), "time": 60 + uid}
+    doc = app._gq_result_rich_html(s, stopped=False)
+    assert "GK &lt;Mock&gt; &amp; more" in doc and "N&lt;3&gt;" in doc and "<Mock>" not in doc
+    top, rest = doc.split("<details>")
+    assert top.count("<tr>") == 1 + 10 and rest.count("<tr>") == 1 + 15        # header + rows
+    assert "All players (25)" in rest and "Negative −0.25" in doc
+    assert 'align="left" valign="middle"' in doc                                  # every cell needs both
+    assert app._gq_result_rich_html(Session(chat_id=1, title="x", questions=questions(2), secs=5,
+                                            started_by=1), False) is None
+
+
+def test_rich_result_small_group_has_no_collapsed_list():
+    app = App()
+    s = Session(chat_id=1, title="t", questions=questions(5), secs=10, started_by=1, idx=5)
+    s.scores = {"1": {"name": "A", "correct": 5, "wrong": 0, "time": 5.0}}
+    doc = app._gq_result_rich_html(s, stopped=True)
+    assert "<details>" not in doc and "Stopped after 5 of 5" in doc and "🥇" in doc
+
+
+async def test_finish_sends_rich_and_skips_plain_or_falls_back(monkeypatch):
+    for ok, env, expect_plain in ((True, "1", False), (False, "1", True), (True, "0", True)):
+        monkeypatch.setenv("RICH_MESSAGES", env)
+        app = App()
+        c, polls, sent = ctx()
+        c.bot.do_api_request = AsyncMock(return_value={"message_id": 9}) if ok \
+            else AsyncMock(side_effect=Exception("Bad Request: method not found"))
+        s = Session(chat_id=GROUP, title="Mock", questions=questions(3), secs=1, started_by=1, idx=3,
+                    status="running", certificates=False,
+                    scores={"7": {"name": "P7", "correct": 3, "wrong": 0, "time": 3.0}})
+        gq.ACTIVE[GROUP] = s
+        await app._gq_finish(c, s)
+        plain = any("FINAL RESULT" in t for t in sent)
+        assert plain is expect_plain, (ok, env)
+        if env == "1":
+            kw = c.bot.do_api_request.await_args.kwargs["api_kwargs"]
+            assert c.bot.do_api_request.await_args.args[0] == "sendRichMessage"
+            assert kw["chat_id"] == GROUP and "<table" in kw["rich_message"]["html"] and kw["reply_markup"]

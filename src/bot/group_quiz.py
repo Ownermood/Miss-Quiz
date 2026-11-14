@@ -665,6 +665,83 @@ class GroupQuizMixin:
         texts[-1] += foot
         return texts
 
+    # ── Rich result (Bot API 10.1 sendRichMessage): real table, collapsed full list ──
+    RICH_TOP = 10           # rows in the open table; the rest go in a collapsed "All players"
+    RICH_MAX_ROWS = 400     # Telegram allows 500 blocks per rich message (each table row is one)
+
+    def _gq_result_rich_html(self, s: Session, stopped: bool) -> Optional[str]:
+        """Final result as Rich HTML. Podium first (celebrate the top 3), a short table of the
+        top 10, the rest folded away so lower ranks aren't put on show. None = nobody played."""
+        rank = s.ranking()
+        if not rank:
+            return None
+        total = max(1, min(s.idx, len(s.questions)))
+        neg = s.negative_rate > 0
+
+        def mm(sec):
+            sec = max(0, int(round(float(sec or 0))))
+            return f"{sec // 60}:{sec % 60:02d}" if sec >= 60 else f"{sec}s"
+
+        def pts(sc):
+            v = round(float(sc.get("score", sc["correct"])), 2)
+            return str(int(v)) if v == int(v) else f"{v:g}"
+
+        def row(i, uid, sc):
+            acc = round(100 * sc["correct"] / total)
+            return (f"<tr><td align=\"center\" valign=\"middle\">{_medal(i)}</td>"
+                    f"<td align=\"left\" valign=\"middle\">{UI.mention(uid, sc.get('name') or 'Player')}</td>"
+                    f"<td align=\"right\" valign=\"middle\"><b>{pts(sc)}</b>/{total}</td>"
+                    f"<td align=\"right\" valign=\"middle\">{acc}%</td>"
+                    f"<td align=\"right\" valign=\"middle\">{mm(sc.get('time', 0))}</td></tr>")
+
+        head_row = ("<tr><th align=\"center\" valign=\"middle\">#</th><th align=\"left\" valign=\"middle\">Player</th>"
+                    "<th align=\"right\" valign=\"middle\">Score</th><th align=\"right\" valign=\"middle\">Accuracy</th>"
+                    "<th align=\"right\" valign=\"middle\">Time</th></tr>")
+        rows = [row(i, uid, sc) for i, (uid, sc) in enumerate(rank[:self.RICH_MAX_ROWS])]
+        out = [f"<h2>🏆 Final result</h2><p><b>{html.escape(s.title)}</b></p>"]
+        if stopped:
+            out.append(f"<p><i>Stopped after {s.idx} of {len(s.questions)} questions.</i></p>")
+        podium = []
+        for i, (uid, sc) in enumerate(rank[:3]):
+            podium.append(f"<li>{_medal(i)} {UI.mention(uid, sc.get('name') or 'Player')} — "
+                          f"<b>{pts(sc)}</b>/{total} · {round(100 * sc['correct'] / total)}% · {mm(sc.get('time', 0))}</li>")
+        out.append("<h3>🎉 Winners</h3><ul>" + "".join(podium) + "</ul>")
+        out.append("<h3>📊 Leaderboard</h3><table bordered striped compact>" + head_row
+                   + "".join(rows[:self.RICH_TOP]) + "</table>")
+        if len(rows) > self.RICH_TOP:
+            out.append(f"<details><summary>📋 All players ({len(rank)})</summary>"
+                       "<table bordered striped compact>" + head_row + "".join(rows[self.RICH_TOP:]) + "</table></details>")
+        if len(rank) > self.RICH_MAX_ROWS:
+            out.append(f"<p><i>+{len(rank) - self.RICH_MAX_ROWS} more players. Full list: 🌐 Download HTML Report.</i></p>")
+        foot = f"👥 Players {len(rank)} · ❓ Questions {total}" + (f" · ⚖️ Negative −{s.negative_rate:g}" if neg else "")
+        out.append(f"<hr/><footer>{foot}<br/>💡 Send /result to get your wrong answers in DM.</footer>")
+        doc = "".join(out)
+        try:
+            from src.bot.premium import premium_on, premiumize_html
+            if premium_on():
+                doc = premiumize_html(doc)
+        except Exception:
+            pass
+        return doc
+
+    async def _gq_send_rich(self, context, s: Session, rich_html: str, kb=None) -> bool:
+        """sendRichMessage via a raw API call (python-telegram-bot 22.8 has no wrapper yet).
+        False on any failure, so the caller falls back to the plain HTML result."""
+        import os
+        if os.getenv("RICH_MESSAGES", "1").strip().lower() in ("0", "false", "no", "off"):
+            return False
+        kw = {"chat_id": s.chat_id, "rich_message": {"html": rich_html, "skip_entity_detection": True}}
+        if s.thread_id:
+            kw["message_thread_id"] = s.thread_id
+        if kb is not None:
+            kw["reply_markup"] = kb
+        try:
+            await context.bot.do_api_request("sendRichMessage", api_kwargs=kw)
+            return True
+        except Exception as e:
+            logger.warning(f"[GQUIZ] rich result not sent in {s.chat_id}, using plain result: {e}")
+            return False
+
     async def _gq_finish(self, context, s: Session) -> None:
         if ACTIVE.get(s.chat_id) is s:
             ACTIVE.pop(s.chat_id, None)
@@ -680,9 +757,11 @@ class GroupQuizMixin:
         if not hasattr(self, "_gq_last"):
             self._gq_last: Dict[int, Session] = {}
         self._gq_last[s.chat_id] = s
-        texts = self._gq_result_texts(s, stopped)
-        for k, text in enumerate(texts):
-            await self._gq_send(context, s, text, self._gq_share_kb(context, s) if k == len(texts) - 1 else None)
+        rich = self._gq_result_rich_html(s, stopped)
+        if not (rich and await self._gq_send_rich(context, s, rich, self._gq_share_kb(context, s))):
+            texts = self._gq_result_texts(s, stopped)
+            for k, text in enumerate(texts):
+                await self._gq_send(context, s, text, self._gq_share_kb(context, s) if k == len(texts) - 1 else None)
         await self._gq_edit_ctrl(context, s, "🏁 <b>Finished.</b>" if not stopped else "⏹ <b>Stopped.</b>")
 
         # Send Top-3 Winner Certificate Image Cards when certificates=True
