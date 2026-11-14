@@ -601,7 +601,7 @@ _U_OPT = re.compile(
     r"^(?:option\s*)?[\(\[]?\s*([A-Ja-j]|[1-9]|10|i{1,3}|iv|v|vi{0,3}|ix|x|[" + _HI_LETTERS + r"])\s*[\)\]\.:\-–]\s*(.*)$",
     re.IGNORECASE)
 _U_ANS = re.compile(
-    r"^(?:the\s+)?(?:correct\s*(?:answer|option|ans|choice|response)?|right\s*(?:answer|option|choice)"
+    r"^(?:the\s+)?(?:correct\s*(?:answer|option|ans|choice|response|(?=[:\-–—=]))|right\s*(?:answer|option|choice)"
     r"|ans(?:wer)?s?|उत्तर|सही\s*उत्तर|key)\s*(?:is)?\s*[:\-–—=\.\)>→⇒➜]*\s*(.+)$",
     re.IGNORECASE)
 _U_EXP = re.compile(
@@ -625,6 +625,11 @@ _U_INLINE_ANS = re.compile(
 
 _U_KEY_BLANK = re.compile(r"(?<!\d)\d{1,4}\s*[\.\):\-]?\s*\(\s*\)")   # '174.( )' — answer missing in the key
 _U_WRAP_PAREN = re.compile(r"^(\(\d{1,3}\))\s*(\([A-Ja-j]\)\s*\S.*)$")  # '(2)(D) Art 136(1)' — '(2)' wrapped from above
+
+
+def _u_label_style(line: str) -> str:
+    """'(a) x' → 'br', 'A. x' / 'a) x' → 'dot' (how an option label is written)."""
+    return "br" if line.lstrip()[:1] in "([" else "dot"
 
 
 def _u_is_key_line(ln: str) -> bool:
@@ -955,6 +960,12 @@ def _u_parse_blocks(
             # roman lists: '(i)' starts one; afterwards i/v/x keep the roman meaning
             if lab.lower() in _ROMAN and (cur["kind"] == "roman" or (expected == 0 and lab.lower() == "i")):
                 kind = "roman"
+            if (kind == "letter" and cur["kind"] == "letter" and lab.lower() == "a" and len(cur["opts"]) >= 2
+                    and cur["ans"] is None and cur.get("ostyle") == "dot" and _u_label_style(line) == "br"):
+                # 'List II  A. … B. … C. …' then '(a) 1-D, 2-C…': the A–D lines were the list, options start now
+                cur["q"] += [f"{chr(65 + k)}. {o}" for k, o in enumerate(cur["opts"])]
+                cur["opts"], cur["kind"], cur["marked"], cur["ostyle"] = [], None, None, None
+                expected = 0
             if kind == "letter" and cur["kind"] == "num" and cur["opts"] and lab.lower() == "a":
                 # '1. … 2. … 3. …' were statements; the real options start at (a)
                 cur["q"] += [f"{k + 1}. {o}" for k, o in enumerate(cur["opts"])]
@@ -979,6 +990,8 @@ def _u_parse_blocks(
                 body = body[:mk.start()].strip()
                 cur["marked"] = len(cur["opts"])
             cur["kind"] = cur["kind"] or kind
+            if not cur["opts"]:
+                cur["ostyle"] = _u_label_style(line)
             cur["opts"].append(body)
             cur["in_exp"] = False; blank_before = False; continue
 
@@ -992,11 +1005,18 @@ def _u_parse_blocks(
                 new_q(int(num), "")
                 blank_before = False; continue
 
+        m_bare = re.match(r"^(\d{1,4})\s+([A-Z\u0900-\u097F].*)$", line)
+        if (m_bare and cur is not None and cur["num"] and int(m_bare.group(1)) == cur["num"] + 1
+                and len(cur["opts"]) >= 2):
+            new_q(int(m_bare.group(1)), m_bare.group(2).strip())   # '702  The members…' (dot missing in the source)
+            blank_before = False; continue
+
         # plain text line
         if cur and cur["in_exp"]:
             cur["exp"].append(line)
         elif cur is not None and cur["kind"] == "num" and cur["opts"] and cur["ans"] is None \
-                and line.rstrip().endswith("?") and re.match(r"(?i)(which|how many|select|choose)\b", line):
+                and ((line.rstrip().endswith("?") and re.match(r"(?i)(which|how many|select|choose)\b", line))
+                     or re.match(r"(?i)(?:the\s+)?(?:in)?correct\s+(?:statements?|answer|options?|codes?|pairs?)\b", line)):
             # '1. … 2. … 3. …' were statements and this is the question about them
             cur["q"] += [f"{k + 1}. {o}" for k, o in enumerate(cur["opts"])] + [line]
             cur["opts"], cur["kind"], cur["marked"] = [], None, None
@@ -1109,7 +1129,10 @@ def universal_parse(text: str) -> Tuple[List[Dict], List[Dict]]:
         if m and raw_lines and raw_lines[-1].strip():
             raw_lines[-1] = raw_lines[-1].rstrip() + m.group(1)   # 'Article 136' + '(2)'
             c = m.group(2)
-        raw_lines.extend(_u_split_inline(c) if c else [""])
+        if c and _u_is_key_line(c):
+            raw_lines.append(c)        # '14. (a) 15. (a) 16. (b)' is an answer-key row, not options a/b to split
+        else:
+            raw_lines.extend(_u_split_inline(c) if c else [""])
 
     key_hdr_indices = [i for i, line in enumerate(raw_lines) if _U_KEY_HDR.match(line)]
 

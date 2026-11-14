@@ -385,3 +385,47 @@ def test_same_style_inline_options_still_split():
     assert items[0]["options"] == ["Delhi", "Mumbai", "Pune", "Agra"]
     items, _ = _up("1. Capital of India? A. Delhi B. Mumbai C. Pune\nAnswer: A")
     assert items[0]["options"] == ["Delhi", "Mumbai", "Pune"]
+
+
+# ── "Constitutional law MCQ's" PDF (live import: 410 of 1000, 589 "no answer found") ──
+
+def test_spaced_key_row_is_not_split_as_options():
+    body = "\n".join(_q(n, f"Question number {n}?", ["(a) w", "(b) x", "(c) y", "(d) z"]) for n in range(11, 21))
+    t = body + "\nANSWERS\n11. (c) 12. (b) 13. (d) 14. (a) 15. (a) 16. (b) 17. (a) 18. (d) 19. (b) 20. (a)"
+    items, probs = _up(t)
+    assert probs == [] and [i["correct_answer"] for i in items] == [2, 1, 3, 0, 0, 1, 0, 3, 1, 0]
+
+
+def test_correct_statements_line_is_not_an_answer():
+    t = ("838. Previous?\n(a) w\n(b) x\n(c) y\n(d) z\n839. Money Bill\n1. cannot be introduced in the Council of States\n2. needs the President's certificate\n"
+         "3. can be amended by the Council of States\nThe correct statement(s) is/are\n"
+         "(a) 1, 2 (b) 2, 3\n(c) 1, 2, 3 (d) 3\nANSWERS\n838. (b) 839. (a)")
+    items, probs = _up(t)
+    assert probs == [] and items[1]["options"] == ["1, 2", "2, 3", "1, 2, 3", "3"]
+    assert "The correct statement(s) is/are" in items[1]["question"] and items[1]["correct_answer"] == 0
+
+
+def test_number_without_dot_after_previous_options():
+    t = (_q(701, "Who drafted it?", ["(a) A", "(b) B", "(c) C", "(d) D"])
+         + "\n702  The members of the Assembly were\n(a) elected\n(b) nominated\n(c) both\n(d) none"
+         + "\nANSWERS\n701. (a) 702. (a)")
+    items, probs = _up(t)
+    assert probs == [] and len(items) == 2 and items[1]["question"].startswith("The members")
+    assert items[0]["options"][-1] == "D"
+
+
+def test_list_one_list_two_letters_stay_in_question():
+    t = ("788. Previous?\n(a) w\n(b) x\n(c) y\n(d) z\n789. Relate the following:\nList I\n1. 42nd Amendment\n2. 61st Amendment\nList II\n"
+         "A. Voting age reduced\nB. Constitutional watershed\n"
+         "(a) 1 – B, 2 – A\n(b) 1 – A, 2 – B\n(c) 1 – A, 2 – A\n(d) 1 – B, 2 – B\nANSWERS\n788. (b) 789. (a)")
+    items, probs = _up(t)
+    assert probs == [] and items[1]["options"] == ["1 – B, 2 – A", "1 – A, 2 – B", "1 – A, 2 – A", "1 – B, 2 – B"]
+    assert "A. Voting age reduced" in items[1]["question"] and "B. Constitutional watershed" in items[1]["question"]
+
+
+def test_wrapped_option_starting_with_initials_is_not_a_new_list():
+    t = ("882. Which case?\n(a) T. K. Rangarajan vs TN\n(b) Dwarka Prasad vs B. D.\nAgarwal\n"
+         "(c) Union of India vs Rajiv Kumar,\nA.I.T.U.C. vs Union of India\n(d) A. K. Puriwar vs Muthy\nANSWERS\n882. (a)")
+    items, probs = _up(t)
+    assert probs == [] and len(items[0]["options"]) == 4
+    assert items[0]["options"][2] == "Union of India vs Rajiv Kumar, A.I.T.U.C. vs Union of India"
