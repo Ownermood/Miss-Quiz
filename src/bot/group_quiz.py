@@ -168,6 +168,8 @@ def _kb(s: Session) -> InlineKeyboardMarkup:
 
 PART_ASK      = 50       # a quiz bigger than this is played in parts (e.g. 200 today, next 200 tomorrow)
 PART_SIZES    = (25, 50, 100, 200)
+JUMP_STEP     = 200       # "📍 Start from…" offers Q1, Q201, Q401, …
+JUMP_PER_PAGE = 24
 SCHEDULE_PART = 100      # a scheduled big quiz plays its next 100 questions
 USE_LOBBY     = True     # "I'm ready" lobby before a group quiz (tests switch it off)
 LOBBY_TIMEOUT = 120      # auto-start lobby after 120s if host hasn't tapped Start Now
@@ -457,16 +459,22 @@ class GroupQuizMixin:
             except Exception:
                 pass
 
-    async def _gq_part_view(self, uid: int, sid: str, qs: Dict, chat_id: int, start: Optional[int] = None):
-        """Big quiz → choose how many to play now; continues where this group stopped."""
+    async def _gq_part_view(self, uid: int, sid: str, qs: Dict, chat_id: int, start: Optional[int] = None,
+                            jumped: bool = False):
+        """Big quiz → choose how many to play now; continues where this group stopped.
+        jumped=True: the admin picked `start` with 📍 Start from… (progress line stays the real one)."""
         total = len(qs.get("questions") or [])
+        played = max(0, min(int(((qs.get("progress") or {}).get(str(chat_id))) or 0), total))
         if start is None:
-            start = int(((qs.get("progress") or {}).get(str(chat_id))) or 0)
+            start = played
         start = max(0, min(start, total))
         title = html.escape(str(qs.get("title") or "Quiz"))
-        done = f"Q1–Q{start}" if start else "none yet"
+        done_at = played if jumped else start
+        done = f"Q1–Q{done_at}" if done_at else "none yet"
+        nxt = (f"📍 Start › Q{start + 1}" if jumped else
+               "▶️ Next › " + (f"from Q{start + 1}" if start < total else "all done 🎉"))
         text = (f"📚 <b>{title}</b>\n<blockquote>❓ Total › {total} questions\n"
-                f"✅ Played here › {done}\n▶️ Next › " + (f"from Q{start + 1}" if start < total else "all done 🎉") +
+                f"✅ Played here › {done}\n{nxt}"
                 "</blockquote>\n<i>How many questions now? The rest stay for next time.</i>")
         left = total - start
         sizes = [n for n in PART_SIZES if n < left] + ([left] if 0 < left <= PART_SIZES[-1] else [])
@@ -476,7 +484,32 @@ class GroupQuizMixin:
         rows = [btns[k:k + 2] for k in range(0, len(btns), 2)]
         if start:
             rows.append([InlineKeyboardButton("🔁 Start again from Q1", callback_data=f"gq|part|{uid}|{sid}|0|0")])
+        if total > PART_SIZES[-1]:
+            rows.append([InlineKeyboardButton("📍 Start from…", callback_data=f"gq|from|{uid}|{sid}|0")])
         rows.append([InlineKeyboardButton("❌ Cancel", callback_data=f"gq|close|{uid}", style="danger")])
+        return text, InlineKeyboardMarkup(rows)
+
+    def _gq_from_view(self, uid: int, sid: str, qs: Dict, page: int = 0):
+        """Grid of starting points (every JUMP_STEP questions) for a big quiz."""
+        total = len(qs.get("questions") or [])
+        starts = list(range(0, total, JUMP_STEP))
+        pages = max(1, -(-len(starts) // JUMP_PER_PAGE))
+        page = max(0, min(page, pages - 1))
+        shown = starts[page * JUMP_PER_PAGE:(page + 1) * JUMP_PER_PAGE]
+        title = html.escape(str(qs.get("title") or "Quiz"))
+        text = (f"📍 <b>{title}</b>\n<blockquote>❓ Total › {total} questions</blockquote>\n"
+                f"<i>Where should this quiz start?</i>")
+        btns = [InlineKeyboardButton(f"Q{st + 1}", callback_data=f"gq|at|{uid}|{sid}|{st}") for st in shown]
+        rows = [btns[k:k + 3] for k in range(0, len(btns), 3)]
+        nav = []
+        if page > 0:
+            nav.append(InlineKeyboardButton("◀️ Prev", callback_data=f"gq|from|{uid}|{sid}|{page - 1}"))
+        if page < pages - 1:
+            nav.append(InlineKeyboardButton("More ▶️", callback_data=f"gq|from|{uid}|{sid}|{page + 1}"))
+        if nav:
+            rows.append(nav)
+        rows.append([InlineKeyboardButton("Back", callback_data=f"gq|at|{uid}|{sid}|-1"),
+                     InlineKeyboardButton("❌ Cancel", callback_data=f"gq|close|{uid}", style="danger")])
         return text, InlineKeyboardMarkup(rows)
 
     async def _gq_launch_from_lobby(self, context, s: Session) -> None:
@@ -1002,7 +1035,7 @@ class GroupQuizMixin:
         msg = query.message
         chat_id = msg.chat.id if msg else 0
 
-        if action in ("set", "bot", "close", "part"):      # picker: only who opened it
+        if action in ("set", "bot", "close", "part", "from", "at"):      # picker: only who opened it
             owner = int(parts[2]) if len(parts) > 2 and parts[2].lstrip("-").isdigit() else 0
             if user.id != owner:
                 await query.answer("This menu isn't yours — send /startquiz.", show_alert=True)
@@ -1021,6 +1054,21 @@ class GroupQuizMixin:
                 await query.answer("Only group admins can start a quiz.", show_alert=True)
                 return
             arg = parts[3] if len(parts) > 3 else ""
+            if action in ("from", "at"):                     # gq|from|uid|sid|page · gq|at|uid|sid|start(-1 = back)
+                qs = await self._gq_db("get_quiz_set", arg)
+                if not isinstance(qs, dict) or not qs.get("questions"):
+                    await query.answer("That quiz is no longer available.", show_alert=True)
+                    return
+                num = int(parts[4]) if len(parts) > 4 and parts[4].lstrip("-").isdigit() else 0
+                await query.answer()
+                if action == "from":
+                    text, kb = self._gq_from_view(user.id, arg, qs, num)
+                elif num < 0:
+                    text, kb = await self._gq_part_view(user.id, arg, qs, chat_id)
+                else:
+                    text, kb = await self._gq_part_view(user.id, arg, qs, chat_id, start=num, jumped=True)
+                await msg.edit_text(text, parse_mode=ParseMode.HTML, reply_markup=kb)
+                return
             if action == "part":                             # gq|part|uid|sid|count|start
                 qs = await self._gq_db("get_quiz_set", arg)
                 if not isinstance(qs, dict) or not qs.get("questions"):

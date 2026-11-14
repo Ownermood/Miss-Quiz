@@ -489,3 +489,54 @@ async def test_rich_retries_without_premium_before_plain(monkeypatch):
     assert await app._gq_send_rich(c, s, "<p>🏆 hi</p>") is True
     first, second = (call.kwargs["api_kwargs"]["rich_message"]["html"] for call in c.bot.do_api_request.await_args_list)
     assert "tg-emoji" in first and "tg-emoji" not in second
+
+
+async def test_big_quiz_start_from_any_point():
+    """2217-question bank: '📍 Start from…' → Q1/Q201/…/Q2201 → size picker → plays from there."""
+    app = App()
+    c, polls, sent = ctx(admins=(1,))
+    sid = app.real.create_quiz_set(1, "GK Bank", questions(2217), 20)
+    admin = user(1, "Admin")
+    q = await press(app, c, admin, f"gq|set|1|{sid}")
+    kb = q.message.edit_text.await_args.kwargs["reply_markup"]
+    btn = [b for r in kb.inline_keyboard for b in r if b.text == "📍 Start from…"]
+    assert btn and btn[0].callback_data == f"gq|from|1|{sid}|0"
+
+    q = await press(app, c, admin, f"gq|from|1|{sid}|0")                  # grid of starting points
+    kb = q.message.edit_text.await_args.kwargs["reply_markup"]
+    labels = [b.text for r in kb.inline_keyboard for b in r]
+    assert labels[:3] == ["Q1", "Q201", "Q401"] and "Q2201" in labels and "More ▶️" not in labels
+    assert all(len(b.callback_data.encode()) <= 64 for r in kb.inline_keyboard for b in r)
+
+    q = await press(app, c, admin, f"gq|at|1|{sid}|1000")                  # chose Q1001
+    text = q.message.edit_text.await_args.args[0]
+    labels = [b.text for r in q.message.edit_text.await_args.kwargs["reply_markup"].inline_keyboard for b in r]
+    assert "📍 Start › Q1001" in text and "Played here › none yet" in text   # real progress, not 1000
+    assert "▶️ 25 Q · Q1001–Q1025" in labels
+
+    q = await press(app, c, user(2), f"gq|at|1|{sid}|1000")                # someone else's menu
+    assert q.answer.await_args.kwargs.get("show_alert") is True
+    q = await press(app, c, admin, f"gq|at|1|{sid}|-1")                    # Back → normal menu
+    assert "Next › from Q1" in q.message.edit_text.await_args.args[0]
+
+    await press(app, c, admin, f"gq|part|1|{sid}|25|1000")
+    s = gq.ACTIVE[GROUP]
+    assert s.part_start == 1000 and len(s.questions) == 25 and "Q1001–Q1025" in s.title
+    assert {q["question"] for q in s.questions} == {f"Q{i}?" for i in range(1000, 1025)}   # exactly that slice
+
+
+def test_start_from_grid_pages_for_huge_quiz_and_small_quiz_has_no_button():
+    app = App()
+    qs = {"title": "Huge", "questions": questions(10_000)}
+    text, kb = app._gq_from_view(1, "ab12", qs, 0)
+    labels = [b.text for r in kb.inline_keyboard for b in r]
+    assert labels.count("More ▶️") == 1 and "◀️ Prev" not in labels and labels[0] == "Q1"
+    text, kb = app._gq_from_view(1, "ab12", qs, 2)
+    labels = [b.text for r in kb.inline_keyboard for b in r]
+    assert labels[0] == f"Q{2 * gq.JUMP_PER_PAGE * gq.JUMP_STEP + 1}" and "◀️ Prev" in labels and "More ▶️" not in labels
+
+
+async def test_small_quiz_has_no_start_from_button():
+    app = App()
+    _, kb = await app._gq_part_view(1, "ab12", {"title": "Small", "questions": questions(150)}, GROUP)
+    assert "📍 Start from…" not in [b.text for r in kb.inline_keyboard for b in r]
