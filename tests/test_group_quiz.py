@@ -292,7 +292,7 @@ async def test_big_quiz_plays_in_parts_and_continues_next_time():
     text = msg.edit_text.await_args.args[0]
     kb = msg.edit_text.await_args.kwargs["reply_markup"]
     labels = [b.text for r in kb.inline_keyboard for b in r]
-    assert "Total › 300" in text and "▶️ 200 Q · Q1–Q200" in labels and not gq.is_active(GROUP)
+    assert "Total › 300" in text and "▶️ Q1–Q200" in labels and not gq.is_active(GROUP)
     await press(app, c, admin, f"gq|part|1|{sid}|200|0")
     s = gq.ACTIVE[GROUP]
     assert len(s.questions) == 200 and s.part_start == 0 and "Q1–Q200" in s.title
@@ -302,7 +302,7 @@ async def test_big_quiz_plays_in_parts_and_continues_next_time():
     assert app.real.get_quiz_set(sid)["progress"][str(GROUP)] == 200          # saved for next time
     text, kb = await app._gq_part_view(1, sid, app.real.get_quiz_set(sid), GROUP)
     labels = [b.text for r in kb.inline_keyboard for b in r]
-    assert "from Q201" in text and "▶️ 100 Q · Q201–Q300" in labels and "🔁 Start again from Q1" in labels
+    assert "from Q201" in text and "▶️ Q201–Q300" in labels and "🔁 Start again from Q1" in labels
     q = await press(app, c, user(2), f"gq|part|1|{sid}|100|200")           # someone else's menu
     assert q.answer.await_args.kwargs.get("show_alert") is True
 
@@ -512,7 +512,7 @@ async def test_big_quiz_start_from_any_point():
     text = q.message.edit_text.await_args.args[0]
     labels = [b.text for r in q.message.edit_text.await_args.kwargs["reply_markup"].inline_keyboard for b in r]
     assert "📍 Start › Q1001" in text and "Played here › none yet" in text   # real progress, not 1000
-    assert "▶️ 25 Q · Q1001–Q1025" in labels
+    assert "▶️ Q1001–Q1025" in labels
 
     q = await press(app, c, user(2), f"gq|at|1|{sid}|1000")                # someone else's menu
     assert q.answer.await_args.kwargs.get("show_alert") is True

@@ -478,7 +478,7 @@ class GroupQuizMixin:
                 "</blockquote>\n<i>How many questions now? The rest stay for next time.</i>")
         left = total - start
         sizes = [n for n in PART_SIZES if n < left] + ([left] if 0 < left <= PART_SIZES[-1] else [])
-        btns = [InlineKeyboardButton(f"▶️ {n} Q · Q{start + 1}–Q{start + n}",
+        btns = [InlineKeyboardButton(f"▶️ Q{start + 1}–Q{start + n}",
                                      callback_data=f"gq|part|{uid}|{sid}|{n}|{start}", style="primary")
                 for n in sizes]
         rows = [btns[k:k + 2] for k in range(0, len(btns), 2)]
