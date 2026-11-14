@@ -53,6 +53,7 @@ tests/                      ~320 tests (pytest, mongomock): web security, schedu
 
 **Auth layers:**
 - Bot: `_is_owner()` / `_is_authorized()` (`handlers_main.py`), `check_access()` (`dev_commands.py`). Owner + WIFU + `developers` collection.
+- Group admin check (`BattleMixin._bt_is_group_admin`, Group Quiz + Battle sab yahi use karte): **OWNER_ID / WIFU_ID har group mein admin maane jaate** (`_is_bot_owner`), aur kisi ka bhi khola picker daba sakte. OWNER_ID=0 → koi bypass nahi.
 - Web API: `_check_api_auth()` (`src/web/app.py`). Fail-closed: `ADMIN_API_KEY` set nahi to API band. Sirf header `X-Admin-Key`, constant-time compare. Panel (`admin.js`) key sessionStorage mein rakhta hai.
 - Webhook: hamesha verify hota hai. Secret `config.webhook_secret(token)` se aata hai: `WEBHOOK_SECRET_TOKEN` ya bot token se derived (HMAC). Wahi `set_webhook` ko jaata hai.
 

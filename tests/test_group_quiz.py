@@ -540,3 +540,31 @@ async def test_small_quiz_has_no_start_from_button():
     app = App()
     _, kb = await app._gq_part_view(1, "ab12", {"title": "Small", "questions": questions(150)}, GROUP)
     assert "📍 Start from…" not in [b.text for r in kb.inline_keyboard for b in r]
+
+
+async def test_bot_owner_runs_everything_in_any_group(monkeypatch):
+    import src.core.config as cfg
+    monkeypatch.setattr(cfg, "OWNER_ID", 4242)
+    monkeypatch.setattr(cfg, "WIFU_ID", None)
+    app = App()
+    c, polls, sent = ctx(admins=(1,))                      # 4242 is NOT an admin of this group
+    sid = app.real.create_quiz_set(1, "Bank", questions(300), 20)
+    owner, stranger = user(4242, "Owner"), user(77, "Member")
+    assert await app._gq_is_admin(c, GROUP, owner) is True
+    assert await app._gq_is_admin(c, GROUP, stranger) is False
+    q = await press(app, c, owner, f"gq|at|1|{sid}|200")   # menu opened by admin 1, pressed by owner
+    assert "📍 Start › Q201" in q.message.edit_text.await_args.args[0]
+    q = await press(app, c, stranger, f"gq|at|1|{sid}|200")
+    assert q.answer.await_args.kwargs.get("show_alert") is True
+    await press(app, c, owner, f"gq|part|1|{sid}|25|200")
+    assert gq.is_active(GROUP) and gq.ACTIVE[GROUP].part_start == 200
+
+
+async def test_no_owner_bypass_when_owner_id_unset(monkeypatch):
+    import src.core.config as cfg
+    monkeypatch.setattr(cfg, "OWNER_ID", 0)
+    monkeypatch.setattr(cfg, "WIFU_ID", None)
+    app = App()
+    c, _, _ = ctx(admins=(1,))
+    assert app._is_bot_owner(0) is False
+    assert await app._gq_is_admin(c, GROUP, user(0, "x")) is False

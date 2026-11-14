@@ -1037,7 +1037,7 @@ class GroupQuizMixin:
 
         if action in ("set", "bot", "close", "part", "from", "at"):      # picker: only who opened it
             owner = int(parts[2]) if len(parts) > 2 and parts[2].lstrip("-").isdigit() else 0
-            if user.id != owner:
+            if user.id != owner and not self._is_bot_owner(user.id):
                 await query.answer("This menu isn't yours — send /startquiz.", show_alert=True)
                 return
             if action == "close":

@@ -434,7 +434,16 @@ class BattleMixin:
         return text, InlineKeyboardMarkup(rows)
 
     @staticmethod
+    def _is_bot_owner(uid) -> bool:
+        """Bot owner (OWNER_ID) or WIFU_ID: may run everything in any group, admin or not.
+        OWNER_ID unset (0) → nobody gets this (fail-closed)."""
+        from src.core.config import OWNER_ID, WIFU_ID
+        return bool(uid) and uid in {i for i in (OWNER_ID, WIFU_ID) if i}
+
+    @staticmethod
     async def _bt_is_group_admin(context, chat_id: int, uid: int) -> bool:
+        if BattleMixin._is_bot_owner(uid):
+            return True
         try:
             m = await context.bot.get_chat_member(chat_id, uid)
             return getattr(m, "status", "") in ("administrator", "creator")
