@@ -845,6 +845,32 @@ class AdminCommandsMixin(object):
             ) if not t.cancelled() and t.exception() else None
         )
 
+    @staticmethod
+    def _import_report_rich(mention, fname, detected, imported, dups, problems, failed, rate,
+                            total_q, elapsed, dup_list, errors) -> str:
+        """Import report as a Rich Message: counts in a table, EVERY problem / duplicate in
+        folded lists (the plain report only had room for the first 10 / 5)."""
+        from src.bot.rich import SAFE_CHARS, esc, folded_list, kv_table
+        out = ["<h3>📊 Import report</h3>", f"<p>By {mention} · 📄 <code>{esc(fname)}</code></p>",
+               kv_table([("🔎 Detected", f"<b>{detected}</b>"), ("✅ Imported", f"<b>{imported}</b>"),
+                         ("♻️ Duplicates", f"<b>{dups}</b>"), ("⚠️ Not understood", f"<b>{len(problems)}</b>"),
+                         ("❌ Failed", f"<b>{failed}</b>"), ("📈 Success", f"<b>{rate}%</b>"),
+                         ("📦 Total in bot", f"<b>{total_q}</b>"), ("⏱ Time", f"<b>{elapsed:.1f}s</b>")])]
+        budget = SAFE_CHARS - sum(map(len, out)) - 1500
+        if problems:
+            items = [f"<b>{esc(p.get('where'))}</b> — {esc(p.get('reason'))}" for p in problems]
+            blk, used = folded_list(f"⚠️ Fix these ({len(problems)})", items, int(budget * .7), is_open=True)
+            out.append(blk); budget -= used
+        if dup_list:
+            items = [f"{esc(d.get('where'))} — {esc(d.get('reason'))}" for d in dup_list]
+            blk, used = folded_list(f"♻️ Duplicates ({len(dup_list)})", items, max(0, budget - 800))
+            out.append(blk); budget -= used
+        if errors:
+            items = [f"<code>{esc(str(e)[:120])}</code>" for e in errors[:20]]
+            out.append(folded_list(f"❌ Errors ({len(errors)})", items, max(0, budget))[0])
+        out.append("<footer>Use /quiz to test your new questions!</footer>")
+        return "".join(out)
+
     async def _run_import_background(
         self,
         text:    str,
@@ -911,7 +937,13 @@ class AdminCommandsMixin(object):
                 InlineKeyboardButton("🎓 Play Quiz", callback_data="play_quiz"),
             ]])
             if msg:
-                await self._edit(msg, text_out, kb)
+                rich = self._import_report_rich(mention, fname, detected, imported, dups, problems, failed,
+                                                rate, total_q, elapsed, dup_list, errors)
+                from src.bot.rich import send_rich
+                sent = await send_rich(msg.get_bot(), msg.chat_id, rich, reply_markup=kb,
+                                       edit_message_id=msg.message_id, tag="IMPORT")
+                if not sent:
+                    await self._edit(msg, text_out, kb)
 
         except Exception as e:
             logger.error(f"[IMPORT] _run_import_background failed: {e}", exc_info=True)

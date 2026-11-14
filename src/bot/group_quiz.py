@@ -668,6 +668,7 @@ class GroupQuizMixin:
     # ── Rich result (Bot API 10.1 sendRichMessage): real table, collapsed full list ──
     RICH_TOP = 10           # rows in the open table; the rest go in a collapsed "All players"
     RICH_MAX_ROWS = 400     # Telegram allows 500 blocks per rich message (each table row is one)
+    RICH_MAX_CHARS = 30000  # Telegram limit is 32,768 characters; keep room for premium-emoji tags
 
     def _gq_result_rich_html(self, s: Session, stopped: bool) -> Optional[str]:
         """Final result as Rich HTML. Podium first (celebrate the top 3), a short table of the
@@ -697,7 +698,12 @@ class GroupQuizMixin:
         head_row = ("<tr><th align=\"center\" valign=\"middle\">#</th><th align=\"left\" valign=\"middle\">Player</th>"
                     "<th align=\"right\" valign=\"middle\">Score</th><th align=\"right\" valign=\"middle\">Accuracy</th>"
                     "<th align=\"right\" valign=\"middle\">Time</th></tr>")
-        rows = [row(i, uid, sc) for i, (uid, sc) in enumerate(rank[:self.RICH_MAX_ROWS])]
+        rows, size = [], 0
+        for i, (uid, sc) in enumerate(rank[:self.RICH_MAX_ROWS]):
+            r = row(i, uid, sc)
+            if size + len(r) > self.RICH_MAX_CHARS - 4000:          # header, podium, footer
+                break
+            rows.append(r); size += len(r)
         out = [f"<h2>🏆 Final result</h2><p><b>{html.escape(s.title)}</b></p>"]
         if stopped:
             out.append(f"<p><i>Stopped after {s.idx} of {len(s.questions)} questions.</i></p>")
@@ -709,38 +715,20 @@ class GroupQuizMixin:
         out.append("<h3>📊 Leaderboard</h3><table bordered striped compact>" + head_row
                    + "".join(rows[:self.RICH_TOP]) + "</table>")
         if len(rows) > self.RICH_TOP:
-            out.append(f"<details><summary>📋 All players ({len(rank)})</summary>"
+            out.append(f"<details><summary>📋 Ranks {self.RICH_TOP + 1}–{len(rows)} ({len(rows) - self.RICH_TOP} more)</summary>"
                        "<table bordered striped compact>" + head_row + "".join(rows[self.RICH_TOP:]) + "</table></details>")
-        if len(rank) > self.RICH_MAX_ROWS:
-            out.append(f"<p><i>+{len(rank) - self.RICH_MAX_ROWS} more players. Full list: 🌐 Download HTML Report.</i></p>")
+        if len(rank) > len(rows):
+            out.append(f"<p><i>+{len(rank) - len(rows)} more players. Full list: 🌐 Download HTML Report.</i></p>")
         foot = f"👥 Players {len(rank)} · ❓ Questions {total}" + (f" · ⚖️ Negative −{s.negative_rate:g}" if neg else "")
-        out.append(f"<hr/><footer>{foot}<br/>💡 Send /result to get your wrong answers in DM.</footer>")
-        doc = "".join(out)
-        try:
-            from src.bot.premium import premium_on, premiumize_html
-            if premium_on():
-                doc = premiumize_html(doc)
-        except Exception:
-            pass
-        return doc
+        # no <br> in Rich HTML (unsupported tag → whole message rejected): one line per block
+        out.append(f"<hr/><p>{foot}</p><footer>💡 Send /result to get your wrong answers in DM.</footer>")
+        return "".join(out)
 
     async def _gq_send_rich(self, context, s: Session, rich_html: str, kb=None) -> bool:
-        """sendRichMessage via a raw API call (python-telegram-bot 22.8 has no wrapper yet).
-        False on any failure, so the caller falls back to the plain HTML result."""
-        import os
-        if os.getenv("RICH_MESSAGES", "1").strip().lower() in ("0", "false", "no", "off"):
-            return False
-        kw = {"chat_id": s.chat_id, "rich_message": {"html": rich_html, "skip_entity_detection": True}}
-        if s.thread_id:
-            kw["message_thread_id"] = s.thread_id
-        if kb is not None:
-            kw["reply_markup"] = kb
-        try:
-            await context.bot.do_api_request("sendRichMessage", api_kwargs=kw)
-            return True
-        except Exception as e:
-            logger.warning(f"[GQUIZ] rich result not sent in {s.chat_id}, using plain result: {e}")
-            return False
+        """sendRichMessage (src/bot/rich.py). False on any failure → caller sends the plain result."""
+        from src.bot.rich import send_rich
+        return await send_rich(context.bot, s.chat_id, rich_html, reply_markup=kb,
+                               thread_id=s.thread_id, tag="GQUIZ")
 
     async def _gq_finish(self, context, s: Session) -> None:
         if ACTIVE.get(s.chat_id) is s:

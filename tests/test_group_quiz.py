@@ -420,7 +420,7 @@ def test_rich_result_table_top10_rest_collapsed_and_escaped():
     assert "GK &lt;Mock&gt; &amp; more" in doc and "N&lt;3&gt;" in doc and "<Mock>" not in doc
     top, rest = doc.split("<details>")
     assert top.count("<tr>") == 1 + 10 and rest.count("<tr>") == 1 + 15        # header + rows
-    assert "All players (25)" in rest and "Negative −0.25" in doc
+    assert "Ranks 11–25 (15 more)" in rest and "Negative −0.25" in doc
     assert 'align="left" valign="middle"' in doc                                  # every cell needs both
     assert app._gq_result_rich_html(Session(chat_id=1, title="x", questions=questions(2), secs=5,
                                             started_by=1), False) is None
@@ -452,3 +452,40 @@ async def test_finish_sends_rich_and_skips_plain_or_falls_back(monkeypatch):
             kw = c.bot.do_api_request.await_args.kwargs["api_kwargs"]
             assert c.bot.do_api_request.await_args.args[0] == "sendRichMessage"
             assert kw["chat_id"] == GROUP and "<table" in kw["rich_message"]["html"] and kw["reply_markup"]
+
+
+# Tags Telegram's Rich HTML accepts (Bot API 10.3 "Rich HTML style"); anything else rejects the message.
+RICH_TAGS = {"b", "strong", "i", "em", "u", "ins", "s", "strike", "del", "code", "mark", "sub", "sup",
+             "tg-spoiler", "a", "tg-reference", "tg-emoji", "img", "tg-time", "tg-math", "h1", "h2", "h3",
+             "h4", "h5", "h6", "p", "pre", "footer", "hr", "ul", "ol", "li", "input", "blockquote", "cite",
+             "aside", "video", "audio", "tg-document", "figure", "figcaption", "tg-map", "tg-collage",
+             "tg-slideshow", "table", "caption", "tr", "th", "td", "details", "summary", "tg-math-block",
+             "tg-button", "tg-button-row"}
+
+
+def test_rich_result_uses_only_supported_tags_and_fits_limit(monkeypatch):
+    import re
+    from src.bot.premium import premiumize_html
+    monkeypatch.setenv("PREMIUM_EMOJI", "1")
+    app = App()
+    s = Session(chat_id=1, title="Big", questions=questions(10), secs=10, started_by=1, idx=10)
+    for uid in range(1, 451):
+        s.scores[str(uid)] = {"name": f"Player number {uid} 🔥", "correct": uid % 11,
+                              "wrong": 10 - uid % 11, "time": uid}
+    doc = app._gq_result_rich_html(s, stopped=True)
+    tags = {t.lower() for t in re.findall(r"<\s*/?\s*([a-zA-Z0-9-]+)", premiumize_html(doc))}
+    assert tags <= RICH_TAGS, tags - RICH_TAGS
+    assert len(premiumize_html(doc)) < 32768 and doc.count("<tr>") <= 500
+    assert "more players. Full list" in doc                     # the rest pointed to the HTML report
+
+
+async def test_rich_retries_without_premium_before_plain(monkeypatch):
+    monkeypatch.setenv("PREMIUM_EMOJI", "1")
+    monkeypatch.setenv("RICH_MESSAGES", "1")
+    app = App()
+    c, _, _ = ctx()
+    c.bot.do_api_request = AsyncMock(side_effect=[Exception("Bad Request: DOCUMENT_INVALID"), {"message_id": 3}])
+    s = Session(chat_id=GROUP, title="t", questions=questions(2), secs=1, started_by=1, idx=2)
+    assert await app._gq_send_rich(c, s, "<p>🏆 hi</p>") is True
+    first, second = (call.kwargs["api_kwargs"]["rich_message"]["html"] for call in c.bot.do_api_request.await_args_list)
+    assert "tg-emoji" in first and "tg-emoji" not in second
